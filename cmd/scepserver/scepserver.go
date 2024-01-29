@@ -14,11 +14,11 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/micromdm/scep/v2/csrverifier"
-	executablecsrverifier "github.com/micromdm/scep/v2/csrverifier/executable"
-	scepdepot "github.com/micromdm/scep/v2/depot"
-	"github.com/micromdm/scep/v2/depot/file"
-	scepserver "github.com/micromdm/scep/v2/server"
+	"github.com/procube-open/scep/v2/csrverifier"
+	executablecsrverifier "github.com/procube-open/scep/v2/csrverifier/executable"
+	scepdepot "github.com/procube-open/scep/v2/depot"
+	"github.com/procube-open/scep/v2/depot/file"
+	scepserver "github.com/procube-open/scep/v2/server"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -45,7 +45,7 @@ func main() {
 		flVersion           = flag.Bool("version", false, "prints version information")
 		flHTTPAddr          = flag.String("http-addr", envString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
 		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "8080"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
-		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "depot"), "path to ca folder")
+		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
 		flCAPass            = flag.String("capass", envString("SCEP_CA_PASS", ""), "passwd for the ca.key")
 		flClDuration        = flag.String("crtvalid", envString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
 		flClAllowRenewal    = flag.String("allowrenew", envString("SCEP_CERT_RENEW", "14"), "do not allow renewal until n days before expiry, set to 0 to always allow")
@@ -54,6 +54,8 @@ func main() {
 		flDebug             = flag.Bool("debug", envBool("SCEP_LOG_DEBUG"), "enable debug logging")
 		flLogJSON           = flag.Bool("log-json", envBool("SCEP_LOG_JSON"), "output JSON logs")
 		flSignServerAttrs   = flag.Bool("sign-server-attrs", envBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
+		flIDMURL            = flag.String("idm-url", envString("SCEP_IDM_URL", ""), "URL of IDManager")
+		flInterfaceName     = flag.String("interface-name", envString("SCEP_INTERFACE_NAME", ""), "interface name of IDManager")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -147,9 +149,18 @@ func main() {
 		if *flSignServerAttrs {
 			signerOpts = append(signerOpts, scepdepot.WithSeverAttrs())
 		}
-		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...))
+
+		var idmUrl string
+		if *flIDMURL != "" && *flInterfaceName != "" {
+			idmUrl = *flIDMURL + "/IDManager/" + *flInterfaceName
+		}
+
+		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...), idmUrl)
 		if *flChallengePassword != "" {
 			signer = scepserver.StaticChallengeMiddleware(*flChallengePassword, signer)
+		}
+		if idmUrl != "" {
+			signer = scepserver.IDMChallengeMiddleware(idmUrl, signer)
 		}
 		if csrVerifier != nil {
 			signer = csrverifier.Middleware(csrVerifier, signer)
@@ -187,11 +198,11 @@ func main() {
 
 func caMain(cmd *flag.FlagSet) int {
 	var (
-		flDepotPath  = cmd.String("depot", "depot", "path to ca folder")
+		flDepotPath  = cmd.String("depot", "idm-depot", "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
 		flYears      = cmd.Int("years", 10, "default CA years")
 		flKeySize    = cmd.Int("keySize", 4096, "rsa key size")
-		flCommonName = cmd.String("common_name", "MICROMDM SCEP CA", "common name (CN) for CA cert")
+		flCommonName = cmd.String("common_name", "PROCUBE SCEP CA", "common name (CN) for CA cert")
 		flOrg        = cmd.String("organization", "scep-ca", "organization for CA cert")
 		flOrgUnit    = cmd.String("organizational_unit", "SCEP CA", "organizational unit (OU) for CA cert")
 		flPassword   = cmd.String("key-password", "", "password to store rsa key")

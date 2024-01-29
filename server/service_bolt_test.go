@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	challengestore "github.com/micromdm/scep/v2/challenge/bolt"
-	scepdepot "github.com/micromdm/scep/v2/depot"
-	boltdepot "github.com/micromdm/scep/v2/depot/bolt"
-	"github.com/micromdm/scep/v2/scep"
-	scepserver "github.com/micromdm/scep/v2/server"
+	challengestore "github.com/procube-open/scep/v2/challenge/bolt"
+	scepdepot "github.com/procube-open/scep/v2/depot"
+	boltdepot "github.com/procube-open/scep/v2/depot/bolt"
+	"github.com/procube-open/scep/v2/scep"
+	scepserver "github.com/procube-open/scep/v2/server"
 
 	"github.com/boltdb/bolt"
 )
@@ -30,7 +30,7 @@ func TestCaCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = boltDepot.CreateOrLoadCA(key, 5, "MicroMDM", "US")
+	_, err = boltDepot.CreateOrLoadCA(key, 5, "PROCUBE", "US")
 	if err != nil {
 		t.Fatal(err)
 	}

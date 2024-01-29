@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/micromdm/scep/v2/cryptoutil"
-	"github.com/micromdm/scep/v2/depot"
-	"github.com/micromdm/scep/v2/scep"
+	"github.com/procube-open/scep/v2/cryptoutil"
+	"github.com/procube-open/scep/v2/depot"
+	"github.com/procube-open/scep/v2/scep"
 )
 
 func testParsePKIMessage(t *testing.T, data []byte) *scep.PKIMessage {
@@ -245,8 +245,8 @@ func createCaCertWithKeyUsage(t *testing.T, keyUsage x509.KeyUsage) (*x509.Certi
 	}
 	caCert := depot.NewCACert(
 		depot.WithCountry("US"),
-		depot.WithOrganization("MICROMDM"),
-		depot.WithCommonName("MICROMDM SCEP CA"),
+		depot.WithOrganization("PROCUBE"),
+		depot.WithCommonName("PROCUBE SCEP CA"),
 		depot.WithKeyUsage(keyUsage),
 	)
 	crtBytes, err := caCert.SelfSign(rand.Reader, &key.PublicKey, key)

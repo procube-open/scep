@@ -6,7 +6,8 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/micromdm/scep/v2/scep"
+	"github.com/procube-open/scep/v2/idm"
+	"github.com/procube-open/scep/v2/scep"
 )
 
 // CSRSignerContext is a handler for signing CSRs by a CA/RA.
@@ -30,7 +31,7 @@ func (f CSRSignerContextFunc) SignCSRContext(ctx context.Context, m *scep.CSRReq
 // SignCSR should take the CSR in the CSRReqMessage and return a
 // Certificate signed by the CA.
 type CSRSigner interface {
-	SignCSR(*scep.CSRReqMessage) (*x509.Certificate, error)
+	SignCSR(*scep.CSRReqMessage, string) (*x509.Certificate, error)
 }
 
 // CSRSignerFunc is an adapter for CSR signing by the CA/RA.
@@ -60,9 +61,22 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 	}
 }
 
+// IDMChallengeMiddleware
+func IDMChallengeMiddleware(url string, next CSRSignerContext) CSRSignerContextFunc {
+	// challengeBytes := []byte(challenge)
+
+	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
+		_, err := idm.GETInterface(url, m.ChallengePassword)
+		if err != nil {
+			return nil, errors.New("invalid challenge or url")
+		}
+		return next.SignCSRContext(ctx, m)
+	}
+}
+
 // SignCSRAdapter adapts a next (i.e. no context) to a context signer.
-func SignCSRAdapter(next CSRSigner) CSRSignerContextFunc {
+func SignCSRAdapter(next CSRSigner, idmUrl string) CSRSignerContextFunc {
 	return func(_ context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		return next.SignCSR(m)
+		return next.SignCSR(m, idmUrl)
 	}
 }

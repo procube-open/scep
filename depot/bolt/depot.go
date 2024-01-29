@@ -10,7 +10,7 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/micromdm/scep/v2/depot"
+	"github.com/procube-open/scep/v2/depot"
 
 	"github.com/boltdb/bolt"
 )
@@ -260,7 +260,7 @@ func (db *Depot) CreateOrLoadCA(key *rsa.PrivateKey, years int, org, country str
 	newCert := depot.NewCACert(
 		depot.WithYears(years),
 		depot.WithOrganization(org),
-		depot.WithOrganizationalUnit("MICROMDM SCEP CA"),
+		depot.WithOrganizationalUnit("PROCUBE SCEP CA"),
 		depot.WithCountry(country),
 	)
 	crtBytes, err := newCert.SelfSign(rand.Reader, &key.PublicKey, key)

@@ -1,19 +1,19 @@
 # scep
 
-[![CI](https://github.com/micromdm/scep/workflows/CI/badge.svg)](https://github.com/micromdm/scep/actions)
-[![Go Reference](https://pkg.go.dev/badge/github.com/micromdm/scep/v2.svg)](https://pkg.go.dev/github.com/micromdm/scep/v2)
+[![CI](https://github.com/procube-open/scep/workflows/CI/badge.svg)](https://github.com/procube-open/scep/actions)
+[![Go Reference](https://pkg.go.dev/badge/github.com/procube-open/scep/v2.svg)](https://pkg.go.dev/github.com/procube-open/scep/v2)
 
 `scep` is a Simple Certificate Enrollment Protocol server and client
 
 ## Installation
 
-Binary releases are available on the [releases page](https://github.com/micromdm/scep/releases).
+Binary releases are available on the [releases page](https://github.com/procube-open/scep/releases).
 
 ### Compiling from source
 
 To compile the SCEP client and server you will need [a Go compiler](https://golang.org/dl/) as well as standard tools like git, make, etc.
 
-1. Clone the repository and get into the source directory: `git clone https://github.com/micromdm/scep.git && cd scep`
+1. Clone the repository and get into the source directory: `git clone https://github.com/procube-open/scep.git && cd scep`
 2. Compile the client and server binaries: `make` (for Windows: `make win`)
 
 The binaries will be compiled in the current directory and named after the architecture. I.e. `scepclient-linux-amd64` and `scepserver-linux-amd64`.
@@ -96,7 +96,7 @@ Usage of ca:
   -keySize int
     	rsa key size (default 4096)
   -common_name string
-        common name (CN) for CA cert (default "MICROMDM SCEP CA")
+        common name (CN) for CA cert (default "PROCUBE SCEP CA")
   -organization string
     	organization for CA cert (default "scep-ca")
   -organizational_unit string
@@ -166,13 +166,13 @@ If you're not sure which SHA-256 hash (for a specific CA) to use, you can use th
 make docker
 
 # build the image
-docker build -t micromdm/scep:latest .
+docker build -t procube-open/scep:latest .
 
 # create CA
-docker run -it --rm -v /path/to/ca/folder:/depot micromdm/scep:latest ca -init
+docker run -it --rm -v /path/to/ca/folder:/depot procube-open/scep:latest ca -init
 
 # run
-docker run -it --rm -v /path/to/ca/folder:/depot -p 8080:8080 micromdm/scep:latest
+docker run -it --rm -v /path/to/ca/folder:/depot -p 8080:8080 procube-open/scep:latest
 ```
 
 ## SCEP library
@@ -180,10 +180,10 @@ docker run -it --rm -v /path/to/ca/folder:/depot -p 8080:8080 micromdm/scep:late
 The core `scep` library can be used for both client and server operations.
 
 ```
-go get github.com/micromdm/scep/scep
+go get github.com/procube-open/scep/scep
 ```
 
-For detailed usage, see the [Go Reference](https://pkg.go.dev/github.com/micromdm/scep/v2/scep).
+For detailed usage, see the [Go Reference](https://pkg.go.dev/github.com/procube-open/scep/v2/scep).
 
 Example (server):
 

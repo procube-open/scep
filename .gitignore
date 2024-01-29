@@ -1,2 +1,8 @@
 scepserver-*
 scepclient-*
+
+idm-depot
+client.key
+client.pem
+csr.pem
+self.pem

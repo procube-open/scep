@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	scepclient "github.com/micromdm/scep/v2/client"
-	"github.com/micromdm/scep/v2/scep"
+	scepclient "github.com/procube-open/scep/v2/client"
+	"github.com/procube-open/scep/v2/scep"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -26,7 +26,28 @@ import (
 
 // version info
 var (
-	version = "unknown"
+	version             = "unknown"
+	flVersion           = false
+	flServerURL         = "http://127.0.0.1:2016/scep"
+	flChallengePassword = "" //使用不可
+	flPKeyPath          = ""
+	flCertPath          = ""
+	flKeySize           = 2048
+	flOrg               = "Procube"
+	flCName             = "SCEP client"
+	flOU                = "Procube Co."
+	flLoc               = ""
+	flProvince          = ""
+	flCountry           = "JP"
+	flCACertMessage     = ""
+	flDNSName           = ""
+
+	// in case of multiple certificate authorities, we need to figure out who the recipient of the encrypted
+	// data is.
+	flCAFingerprint = ""
+
+	flDebugLogging = false
+	flLogJSON      = false
 )
 
 const fingerprintHashType = crypto.SHA256
@@ -269,44 +290,45 @@ func validateFlags(keyPath, serverURL string) error {
 
 func main() {
 	var (
-		flVersion           = flag.Bool("version", false, "prints version information")
-		flServerURL         = flag.String("server-url", "", "SCEP server url")
-		flChallengePassword = flag.String("challenge", "", "enforce a challenge password")
-		flPKeyPath          = flag.String("private-key", "", "private key path, if there is no key, scepclient will create one")
-		flCertPath          = flag.String("certificate", "", "certificate path, if there is no key, scepclient will create one")
-		flKeySize           = flag.Int("keySize", 2048, "rsa key size")
-		flOrg               = flag.String("organization", "scep-client", "organization for cert")
-		flCName             = flag.String("cn", "scepclient", "common name for certificate")
-		flOU                = flag.String("ou", "MDM", "organizational unit for certificate")
-		flLoc               = flag.String("locality", "", "locality for certificate")
-		flProvince          = flag.String("province", "", "province for certificate")
-		flCountry           = flag.String("country", "US", "country code in certificate")
-		flCACertMessage     = flag.String("cacert-message", "", "message sent with GetCACert operation")
-		flDNSName           = flag.String("dnsname", "", "DNS name to be included in the certificate (SAN)")
-
-		// in case of multiple certificate authorities, we need to figure out who the recipient of the encrypted
-		// data is.
-		flCAFingerprint = flag.String("ca-fingerprint", "", "SHA-256 digest of CA certificate for NDES server. Note: Changed from MD5.")
-
-		flDebugLogging = flag.Bool("debug", false, "enable debug logging")
-		flLogJSON      = flag.Bool("log-json", false, "use JSON for log output")
+		flUid    = flag.String("uid", "", "uid of user")
+		flSecret = flag.String("secret", "", "password of user")
 	)
 	flag.Parse()
 
 	// print version information
-	if *flVersion {
+	if flVersion {
 		fmt.Println(version)
 		os.Exit(0)
 	}
 
-	if err := validateFlags(*flPKeyPath, *flServerURL); err != nil {
+	var challenge string
+	// -challenge and -uid conflict. Don't allow the user to set both.
+	if flChallengePassword != "" && *flUid != "" {
+		fmt.Fprintln(os.Stderr, "cannot set both -challenge and -uid")
+		os.Exit(1)
+	}
+
+	if *flUid != "" && *flSecret == "" {
+		fmt.Fprintln(os.Stderr, "please set -secret when set -uid")
+		os.Exit(1)
+	}
+
+	if flChallengePassword != "" {
+		challenge = flChallengePassword
+	} else if *flUid != "" {
+		challenge = *flUid + "\\" + *flSecret
+	} else {
+		challenge = ""
+	}
+
+	if err := validateFlags(flPKeyPath, flServerURL); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
 	caCertsSelector := scep.NopCertsSelector()
-	if *flCAFingerprint != "" {
-		hash, err := validateFingerprint(*flCAFingerprint)
+	if flCAFingerprint != "" {
+		hash, err := validateFingerprint(flCAFingerprint)
 		if err != nil {
 			fmt.Printf("invalid fingerprint: %s\n", err)
 			os.Exit(1)
@@ -314,37 +336,37 @@ func main() {
 		caCertsSelector = scep.FingerprintCertsSelector(fingerprintHashType, hash)
 	}
 
-	dir := filepath.Dir(*flPKeyPath)
+	dir := filepath.Dir(flPKeyPath)
 	csrPath := dir + "/csr.pem"
 	selfSignPath := dir + "/self.pem"
-	if *flCertPath == "" {
-		*flCertPath = dir + "/client.pem"
+	if flCertPath == "" {
+		flCertPath = dir + "/client.pem"
 	}
 	var logfmt string
-	if *flLogJSON {
+	if flLogJSON {
 		logfmt = "json"
 	}
 
 	cfg := runCfg{
 		dir:             dir,
 		csrPath:         csrPath,
-		keyPath:         *flPKeyPath,
-		keyBits:         *flKeySize,
+		keyPath:         flPKeyPath,
+		keyBits:         flKeySize,
 		selfSignPath:    selfSignPath,
-		certPath:        *flCertPath,
-		cn:              *flCName,
-		org:             *flOrg,
-		country:         *flCountry,
-		locality:        *flLoc,
-		ou:              *flOU,
-		province:        *flProvince,
-		challenge:       *flChallengePassword,
-		serverURL:       *flServerURL,
+		certPath:        flCertPath,
+		cn:              flCName,
+		org:             flOrg,
+		country:         flCountry,
+		locality:        flLoc,
+		ou:              flOU,
+		province:        flProvince,
+		challenge:       challenge,
+		serverURL:       flServerURL,
 		caCertsSelector: caCertsSelector,
-		debug:           *flDebugLogging,
+		debug:           flDebugLogging,
 		logfmt:          logfmt,
-		caCertMsg:       *flCACertMessage,
-		dnsName:         *flDNSName,
+		caCertMsg:       flCACertMessage,
+		dnsName:         flDNSName,
 	}
 
 	if err := run(cfg); err != nil {

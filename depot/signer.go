@@ -5,8 +5,8 @@ import (
 	"crypto/x509"
 	"time"
 
-	"github.com/micromdm/scep/v2/cryptoutil"
-	"github.com/micromdm/scep/v2/scep"
+	"github.com/procube-open/scep/v2/cryptoutil"
+	"github.com/procube-open/scep/v2/scep"
 )
 
 // Signer signs x509 certificates and stores them in a Depot
@@ -73,7 +73,7 @@ func WithSeverAttrs() Option {
 }
 
 // SignCSR signs a certificate using Signer's Depot CA
-func (s *Signer) SignCSR(m *scep.CSRReqMessage) (*x509.Certificate, error) {
+func (s *Signer) SignCSR(m *scep.CSRReqMessage, idmUrl string) (*x509.Certificate, error) {
 	id, err := cryptoutil.GenerateSubjectKeyID(m.CSR.PublicKey)
 	if err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func (s *Signer) SignCSR(m *scep.CSRReqMessage) (*x509.Certificate, error) {
 		return nil, err
 	}
 
-	if err := s.depot.Put(name, crt); err != nil {
+	if err := s.depot.Put(name, crt, m.ChallengePassword, idmUrl); err != nil {
 		return nil, err
 	}
 
