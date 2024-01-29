@@ -274,7 +274,7 @@ func createCertificateAuthority(key *rsa.PrivateKey, years int, commonName strin
 		return err
 	}
 
-	name := filepath.Join(depot, "ca.pem")
+	name := filepath.Join(depot, "ca.crt")
 	file, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0400)
 	if err != nil {
 		return err

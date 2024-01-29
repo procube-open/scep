@@ -41,7 +41,7 @@ type fileDepot struct {
 }
 
 func (d *fileDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, error) {
-	caPEM, err := d.getFile("ca.pem")
+	caPEM, err := d.getFile("ca.crt")
 	if err != nil {
 		return nil, nil, err
 	}

@@ -28,10 +28,10 @@ import (
 var (
 	version             = "unknown"
 	flVersion           = false
-	flServerURL         = "http://127.0.0.1:2016/scep"
+	flServerURL         = "http://127.0.0.1:8080/scep"
 	flChallengePassword = "" //使用不可
-	flPKeyPath          = ""
-	flCertPath          = ""
+	flPKeyPath          = "key.pem"
+	flCertPath          = "cert.pem"
 	flKeySize           = 2048
 	flOrg               = "Procube"
 	flCName             = "SCEP client"
