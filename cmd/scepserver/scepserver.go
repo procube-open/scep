@@ -44,7 +44,7 @@ func main() {
 	var (
 		flVersion           = flag.Bool("version", false, "prints version information")
 		flHTTPAddr          = flag.String("http-addr", envString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
-		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "8080"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
+		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "2016"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
 		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
 		flCAPass            = flag.String("capass", envString("SCEP_CA_PASS", ""), "passwd for the ca.key")
 		flClDuration        = flag.String("crtvalid", envString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
@@ -54,8 +54,8 @@ func main() {
 		flDebug             = flag.Bool("debug", envBool("SCEP_LOG_DEBUG"), "enable debug logging")
 		flLogJSON           = flag.Bool("log-json", envBool("SCEP_LOG_JSON"), "output JSON logs")
 		flSignServerAttrs   = flag.Bool("sign-server-attrs", envBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
-		flIDMURL            = flag.String("idm-url", envString("SCEP_IDM_URL", ""), "URL of IDManager")
-		flInterfaceName     = flag.String("interface-name", envString("SCEP_INTERFACE_NAME", ""), "interface name of IDManager")
+		flIDMURL            = flag.String("idmurl", envString("SCEP_IDM_URL", ""), "URL of IDManager")
+		flInterfaceName     = flag.String("ifname", envString("SCEP_INTERFACE_NAME", ""), "interface name of IDManager")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -198,15 +198,15 @@ func main() {
 
 func caMain(cmd *flag.FlagSet) int {
 	var (
-		flDepotPath  = cmd.String("depot", "idm-depot", "path to ca folder")
+		flDepotPath  = cmd.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
-		flYears      = cmd.Int("years", 10, "default CA years")
-		flKeySize    = cmd.Int("keySize", 4096, "rsa key size")
-		flCommonName = cmd.String("common_name", "PROCUBE SCEP CA", "common name (CN) for CA cert")
-		flOrg        = cmd.String("organization", "scep-ca", "organization for CA cert")
-		flOrgUnit    = cmd.String("organizational_unit", "SCEP CA", "organizational unit (OU) for CA cert")
+		flYears      = cmd.Int("years", envInt("SCEPCA_YEARS", 10), "default CA years")
+		flKeySize    = cmd.Int("keySize", envInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
+		flCommonName = cmd.String("common_name", envString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
+		flOrg        = cmd.String("organization", envString("SCEPCA_ORG", "Procube"), "organization for CA cert")
+		flOrgUnit    = cmd.String("organizational_unit", envString("SCEPCA_ORG_UNIT", ""), "organizational unit (OU) for CA cert")
 		flPassword   = cmd.String("key-password", "", "password to store rsa key")
-		flCountry    = cmd.String("country", "US", "country for CA cert")
+		flCountry    = cmd.String("country", envString("SCEPCA_COUNTRY", "JP"), "country for CA cert")
 	)
 	cmd.Parse(os.Args[2:])
 	if *flInit {
@@ -214,11 +214,11 @@ func caMain(cmd *flag.FlagSet) int {
 		key, err := createKey(*flKeySize, []byte(*flPassword), *flDepotPath)
 		if err != nil {
 			fmt.Println(err)
-			return 1
+			return 0
 		}
 		if err := createCertificateAuthority(key, *flYears, *flCommonName, *flOrg, *flOrgUnit, *flCountry, *flDepotPath); err != nil {
 			fmt.Println(err)
-			return 1
+			return 0
 		}
 	}
 
@@ -308,6 +308,14 @@ func pemCert(derBytes []byte) []byte {
 func envString(key, def string) string {
 	if env := os.Getenv(key); env != "" {
 		return env
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if env := os.Getenv(key); env != "" {
+		num, _ := strconv.Atoi(env)
+		return num
 	}
 	return def
 }

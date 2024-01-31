@@ -31,10 +31,10 @@ client: scepclient-$(OSARCH)
 server: scepserver-$(OSARCH)
 
 $(SCEPCLIENT):
-	GOOS=$(word 2,$(subst -, ,$@)) GOARCH=$(word 3,$(subst -, ,$(subst .exe,,$@))) go build $(LDFLAGS) -o $@ ./cmd/scepclient
+	GOOS=$(word 2,$(subst -, ,$@)) GOARCH=$(word 3,$(subst -, ,$(subst .exe,,$@))) go build $(LDFLAGS) -o scepclient-opt ./cmd/scepclient
 
 $(SCEPSERVER):
-	GOOS=$(word 2,$(subst -, ,$@)) GOARCH=$(word 3,$(subst -, ,$(subst .exe,,$@))) go build $(LDFLAGS) -o $@ ./cmd/scepserver
+	GOOS=$(word 2,$(subst -, ,$@)) GOARCH=$(word 3,$(subst -, ,$(subst .exe,,$@))) go build $(LDFLAGS) -o scepserver-opt ./cmd/scepserver
 
 %-$(VERSION).zip: %.exe
 	rm -f $@

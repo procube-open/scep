@@ -5,3 +5,4 @@ idm-depot
 *.key
 *.crt
 *.pem
+.DS_Store

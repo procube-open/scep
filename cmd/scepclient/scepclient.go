@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,14 +29,14 @@ import (
 var (
 	version             = "unknown"
 	flVersion           = false
-	flServerURL         = "http://127.0.0.1:8080/scep"
+	flServerURL         = "http://127.0.0.1:2016/scep"
 	flChallengePassword = "" //使用不可
 	flPKeyPath          = "key.pem"
 	flCertPath          = "cert.pem"
-	flKeySize           = 2048
+	flKeySize           = "2048"
 	flOrg               = "Procube"
 	flCName             = "SCEP client"
-	flOU                = "Procube Co."
+	flOU                = ""
 	flLoc               = ""
 	flProvince          = ""
 	flCountry           = "JP"
@@ -321,6 +322,8 @@ func main() {
 		challenge = ""
 	}
 
+	keySize, _ := strconv.Atoi(flKeySize)
+
 	if err := validateFlags(flPKeyPath, flServerURL); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -351,7 +354,7 @@ func main() {
 		dir:             dir,
 		csrPath:         csrPath,
 		keyPath:         flPKeyPath,
-		keyBits:         flKeySize,
+		keyBits:         keySize,
 		selfSignPath:    selfSignPath,
 		certPath:        flCertPath,
 		cn:              flCName,

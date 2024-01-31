@@ -13,8 +13,8 @@ import (
 type User *struct {
 	Uid         string `json:"uid"`
 	Password    string `json:"password"`
-	CertExp     string `json:"certExp"`
 	CertIss     string `json:"certIss"`
+	CertExp     string `json:"certExp"`
 	Certificate string `json:"certificate"`
 }
 
@@ -23,7 +23,7 @@ func GETInterface(url string, challenge string) (User, error) {
 
 	// interface取得
 	gitAuthHeaderName := "X-Github-Token"
-	gitAuthHeaderValue := "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"
+	gitAuthHeaderValue := "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"
 	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
 	auth8090HeaderValue := "SCEP_SERVER"
 
@@ -55,6 +55,7 @@ func GETInterface(url string, challenge string) (User, error) {
 	if index != -1 {
 		return users[index], nil
 	} else {
+		fmt.Println("cannot find user")
 		return nil, errors.New("invalid uid or password")
 	}
 }
@@ -67,7 +68,7 @@ func PUTCertificate(url string, challenge string, crtStr string) error {
 	userJson, _ := json.Marshal(user)
 	// interface取得
 	gitAuthHeaderName := "X-Github-Token"
-	gitAuthHeaderValue := "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"
+	gitAuthHeaderValue := "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"
 	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
 	auth8090HeaderValue := "SCEP_SERVER"
 
