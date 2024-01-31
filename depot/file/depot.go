@@ -81,6 +81,18 @@ func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, idmU
 		pem := pemCert(data)
 		crtStr := *(*string)(unsafe.Pointer(&pem))
 		idm.PUTCertificate(idmUrl, challenge, crtStr, crt.NotBefore, crt.NotAfter)
+
+		serial := crt.SerialNumber
+		if crt.Subject.CommonName == "" {
+			// this means our cn was replaced by the certificate Signature
+			// which is inappropriate for a filename
+			cn = fmt.Sprintf("%x", sha256.Sum256(crt.Raw))
+		}
+		filename := fmt.Sprintf("%s-%s", challenge, serial.String())
+		if err := d.writeDB(cn, serial, filename, crt); err != nil {
+			// TODO : remove certificate in case of writeDB problems
+			return err
+		}
 	} else {
 		if err := os.MkdirAll(d.dirPath, 0755); err != nil {
 			return err

@@ -32,6 +32,7 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 
 ## Docker構築
 
+
 ### サーバ
 `Dockerfile.server`をビルドすることで構築が可能
 
@@ -39,7 +40,7 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 | 名前 | デフォルト値|内容|
 |--|--|--|
 |SCEP_HTTP_LISTEN_PORT|"2016"|サーバのポート番号|
-|SCEP_FILE_DEPOT|"idm-depot"|ca.crtとca.keyを保存するフォルダのパス|
+|SCEP_FILE_DEPOT|"idm-depot"|depotフォルダのパス|
 |SCEP_CERT_VALID|"365"|証明書の有効期限|
 |SCEP_IDM_URL|""|IDM-bindbrokerのURL|
 |SCEP_INTERFACE_NAME| "" |証明書を更新可能なユーザ一覧が取得可能なインターフェース名|
@@ -53,7 +54,8 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 ```
 {SCEP_IDM_URL}/IDManager/{SCEP_INTERFACE_NAME}/{照合されたユーザのUID}
 ```
-また`ca.crt`と`ca.key`を保存する`SCEP_FILE_DEPOT`で指定されたフォルダは/app配下に作成され、ボリューム化することで保持できる。
+
+
 
 ### クライアント
 `Dockerfile.client`をビルドすることでscepclientが実行可能なファイルを作成するイメージを構築可能。
@@ -70,3 +72,7 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 |OU|""|証明書のOU|
 |COUNTRY|"JP"|証明書のcountry|
 
+### depotフォルダ
+SCEPサーバには認証局のキーペアである`ca.crt`と`ca.key`を保存するdepotフォルダが存在する。
+`SCEP_FILE_DEPOT`で指定されたdepotフォルダは/app配下に作成され、ボリューム化することで保持できる。
+また、`index.txt`と`serial`というファイルも生成され、証明書失効に用いられる(現在未実装)
