@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type User *struct {
@@ -22,13 +23,10 @@ func GETInterface(url string, challenge string) (User, error) {
 	var users []User
 
 	// interface取得
-	gitAuthHeaderName := "X-Github-Token"
-	gitAuthHeaderValue := "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"
 	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
 	auth8090HeaderValue := "SCEP_SERVER"
 
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set(gitAuthHeaderName, gitAuthHeaderValue)
 	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
 	client := new(http.Client)
 	resp, err := client.Do(req)
@@ -60,20 +58,26 @@ func GETInterface(url string, challenge string) (User, error) {
 	}
 }
 
-func PUTCertificate(url string, challenge string, crtStr string) error {
+func PUTCertificate(url string, challenge string, crtStr string, notBefore time.Time, notAfter time.Time) error {
 	user, err := GETInterface(url, challenge)
-
+	if err != nil {
+		fmt.Println("GET Error", err)
+		return errors.New("GET Error")
+	}
 	puturl := url + "/" + user.Uid
 	user.Certificate = crtStr
-	userJson, _ := json.Marshal(user)
+	user.CertIss = notBefore.Format("2006-01-02T15:04:05.000Z")
+	user.CertExp = notAfter.Format("2006-01-02T15:04:05.000Z")
+	userJson, err := json.Marshal(user)
+	if err != nil {
+		fmt.Println("Encode Error", err)
+		return errors.New("Encode Error")
+	}
 	// interface取得
-	gitAuthHeaderName := "X-Github-Token"
-	gitAuthHeaderValue := "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"
 	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
 	auth8090HeaderValue := "SCEP_SERVER"
 
 	req, _ := http.NewRequest("PUT", puturl, bytes.NewBuffer(userJson))
-	req.Header.Set(gitAuthHeaderName, gitAuthHeaderValue)
 	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
 	req.Header.Add("Content-Type", "application/json")
 	client := new(http.Client)

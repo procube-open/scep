@@ -309,18 +309,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *flUid != "" && *flSecret == "" {
-		fmt.Fprintln(os.Stderr, "please set -secret when set -uid")
+	if *flUid == "" || *flSecret == "" {
+		fmt.Fprintln(os.Stderr, "please set -uid and -secret option")
 		os.Exit(1)
 	}
 
-	if flChallengePassword != "" {
-		challenge = flChallengePassword
-	} else if *flUid != "" {
-		challenge = *flUid + "\\" + *flSecret
-	} else {
-		challenge = ""
-	}
+	challenge = *flUid + "\\" + *flSecret
 
 	keySize, _ := strconv.Atoi(flKeySize)
 

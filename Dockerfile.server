@@ -12,5 +12,5 @@ RUN mkdir /app
 RUN mkdir /client
 WORKDIR /app
 COPY --from=go-build /app/scepserver-opt ./
-RUN ./scep-server ca -init
-CMD ["./scep-server"]
+RUN ./scepserver-opt ca -init
+CMD ["./scepserver-opt"]
