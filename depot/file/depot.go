@@ -81,47 +81,35 @@ func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, idmU
 		pem := pemCert(data)
 		crtStr := *(*string)(unsafe.Pointer(&pem))
 		idm.PUTCertificate(idmUrl, challenge, crtStr, crt.NotBefore, crt.NotAfter)
+	}
+	if err := os.MkdirAll(d.dirPath, 0755); err != nil {
+		return err
+	}
 
-		serial := crt.SerialNumber
-		if crt.Subject.CommonName == "" {
-			// this means our cn was replaced by the certificate Signature
-			// which is inappropriate for a filename
-			cn = fmt.Sprintf("%x", sha256.Sum256(crt.Raw))
-		}
-		filename := fmt.Sprintf("%s-%s", challenge, serial.String())
-		if err := d.writeDB(cn, serial, filename, crt); err != nil {
-			// TODO : remove certificate in case of writeDB problems
-			return err
-		}
-	} else {
-		if err := os.MkdirAll(d.dirPath, 0755); err != nil {
-			return err
-		}
+	serial := crt.SerialNumber
 
-		serial := crt.SerialNumber
+	if crt.Subject.CommonName == "" {
+		// this means our cn was replaced by the certificate Signature
+		// which is inappropriate for a filename
+		cn = fmt.Sprintf("%x", sha256.Sum256(crt.Raw))
+	}
 
-		if crt.Subject.CommonName == "" {
-			// this means our cn was replaced by the certificate Signature
-			// which is inappropriate for a filename
-			cn = fmt.Sprintf("%x", sha256.Sum256(crt.Raw))
-		}
-		filename := fmt.Sprintf("%s.%s.pem", cn, serial.String())
+	filename := fmt.Sprintf("%s.%s.pem", cn, serial.String())
 
-		filepath := d.path(filename)
-		file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, certPerm)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
+	filepath := d.path(filename)
+	file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, certPerm)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-		if _, err := file.Write(pemCert(data)); err != nil {
-			os.Remove(filepath)
-			return err
-		}
-		if err := d.writeDB(cn, serial, filename, crt); err != nil {
-			// TODO : remove certificate in case of writeDB problems
-			return err
-		}
+	if _, err := file.Write(pemCert(data)); err != nil {
+		os.Remove(filepath)
+		return err
+	}
+	if err := d.writeDB(cn, serial, filename, crt); err != nil {
+		// TODO : remove certificate in case of writeDB problems
+		return err
 	}
 
 	return nil
