@@ -42,7 +42,7 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 |SCEP_HTTP_LISTEN_PORT|"2016"|サーバのポート番号|
 |SCEP_FILE_DEPOT|"idm-depot"|depotフォルダのパス(/app配下)|
 |SCEP_CERT_VALID|"365"|証明書の有効期限|
-|SCEP_IDM_URL|""|IDM-bindbrokerのURL|
+|SCEP_IDM_CERT_URL|""|IDM-bindbrokerのURL|
 |SCEP_INTERFACE_NAME| "" |証明書を更新可能なユーザ一覧が取得可能なインターフェース名|
 |SCEPCA_YEARS|"10"|ca.crtの有効期間(年)|
 |SCEPCA_KEY_SIZE|"4096"|ca.keyのサイズ|

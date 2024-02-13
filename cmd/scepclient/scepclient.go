@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	stdlog "log"
 	"net/url"
 	"os"
@@ -31,8 +30,8 @@ var (
 	flVersion           = false
 	flServerURL         = "http://127.0.0.1:2016/scep"
 	flChallengePassword = "" //使用不可
-	flPKeyPath          = "key.pem"
-	flCertPath          = "cert.pem"
+	flPKeyFileName      = "key.pem"
+	flCertFileName      = "cert.pem"
 	flKeySize           = envString("SCEPCL_KEYSIZE", "2048")
 	flOrg               = envString("SCEPCL_ORG", "Procube")
 	flOU                = envString("SCEPCL_OU", "")
@@ -225,7 +224,7 @@ func run(cfg runCfg) error {
 	}
 
 	respCert := respMsg.CertRepMessage.Certificate
-	if err := ioutil.WriteFile(cfg.certPath, pemCert(respCert.Raw), 0666); err != nil {
+	if err := os.WriteFile(cfg.certPath, pemCert(respCert.Raw), 0666); err != nil {
 		return err
 	}
 
@@ -290,8 +289,9 @@ func validateFlags(keyPath, serverURL string) error {
 
 func main() {
 	var (
-		flUid    = flag.String("uid", "", "uid of user")
-		flSecret = flag.String("secret", "", "password of user")
+		flUid     = flag.String("uid", "", "uid of user")
+		flSecret  = flag.String("secret", "", "password of user")
+		flWorkDir = flag.String("workdir", ".", "create certificates under this directory")
 	)
 	flag.Parse()
 
@@ -314,10 +314,20 @@ func main() {
 	}
 
 	challenge = *flUid + "\\" + *flSecret
+	dir := filepath.Dir(*flWorkDir)
+	keyPath := filepath.Join(dir, flPKeyFileName)
+	certPath := filepath.Join(dir, flCertFileName)
+	csrPath := filepath.Join(dir, "csr.pem")
+	selfSignPath := filepath.Join(dir, "self.pem")
+
+	var logfmt string
+	if flLogJSON {
+		logfmt = "json"
+	}
 
 	keySize, _ := strconv.Atoi(flKeySize)
 
-	if err := validateFlags(flPKeyPath, flServerURL); err != nil {
+	if err := validateFlags(keyPath, flServerURL); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
@@ -332,24 +342,13 @@ func main() {
 		caCertsSelector = scep.FingerprintCertsSelector(fingerprintHashType, hash)
 	}
 
-	dir := filepath.Dir(flPKeyPath)
-	csrPath := dir + "/csr.pem"
-	selfSignPath := dir + "/self.pem"
-	if flCertPath == "" {
-		flCertPath = dir + "/client.pem"
-	}
-	var logfmt string
-	if flLogJSON {
-		logfmt = "json"
-	}
-
 	cfg := runCfg{
 		dir:             dir,
 		csrPath:         csrPath,
-		keyPath:         flPKeyPath,
+		keyPath:         keyPath,
 		keyBits:         keySize,
 		selfSignPath:    selfSignPath,
-		certPath:        flCertPath,
+		certPath:        certPath,
 		cn:              *flUid,
 		org:             flOrg,
 		country:         flCountry,

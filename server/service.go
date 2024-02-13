@@ -128,27 +128,26 @@ func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]b
 
 func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error) {
 	var info createInfo
-	if err := json.Unmarshal(msg, &info); err != nil {
+	var err error
+	if err = json.Unmarshal(msg, &info); err != nil {
 		fmt.Println(err)
 		return nil, errors.New("invalid JSON")
 	}
 
-	//ファイルを掃除
-	os.Remove("csr.pem")
-	os.Remove("cert.pem")
-	os.Remove("key.pem")
-	os.Remove("client.pem")
-	os.Remove("self.pem")
-
-	clientPath := "/tmp"
 	if info.Uid != "" && info.Secret != "" {
+		os.RemoveAll("/tmp/" + info.Uid)
+		err = os.Mkdir("/tmp/"+info.Uid, 0770)
+		if err != nil {
+			fmt.Println(err)
+			return nil, errors.New("make workdir failed")
+		}
 		// cert.pem,key.pem,csr.pemを作成
 		fmt.Println("--- POST CSR myself ---")
-		cmd := exec.Command(clientPath+"/scepclient-opt", "-uid="+info.Uid, "-secret="+info.Secret)
+		cmd := exec.Command("./scepclient-opt", "-uid", info.Uid, "-secret", info.Secret, "-workdir", "/tmp/"+info.Uid+"/")
 		cmd.Stdin = strings.NewReader("some input")
 		var out strings.Builder
 		cmd.Stdout = &out
-		err := cmd.Run()
+		err = cmd.Run()
 		if err != nil {
 			fmt.Println(err)
 			return nil, errors.New("post csr failed")
@@ -161,7 +160,7 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 
 	// pkcs12形式に変換
 	//X509.PrivateKey読み込み
-	key, err := os.ReadFile("key.pem")
+	key, err := os.ReadFile("/tmp/" + info.Uid + "/key.pem")
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
 		return nil, errors.New("read key.pem failed")
@@ -174,7 +173,7 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 	}
 
 	//X509.Certificate読み込み
-	cert, err := os.ReadFile("cert.pem")
+	cert, err := os.ReadFile("/tmp/" + info.Uid + "/cert.pem")
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
 		return nil, errors.New("read cert.pem failed")
@@ -209,11 +208,7 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 	}
 
 	//ファイルを掃除
-	os.Remove("csr.pem")
-	os.Remove("cert.pem")
-	os.Remove("key.pem")
-	os.Remove("client.pem")
-	os.Remove("self.pem")
+	os.RemoveAll("/tmp/" + info.Uid)
 
 	return p12, nil
 }

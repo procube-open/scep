@@ -6,9 +6,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 
 	kitlog "github.com/go-kit/kit/log"
 	kithttp "github.com/go-kit/kit/transport/http"
@@ -36,6 +36,17 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 		encodeSCEPResponse,
 		opts...,
 	))
+
+	// frontend
+	r.HandleFunc("/", indexHandler)
+	r.HandleFunc("/static/{script}/{filename}", staticHandler)
+	r.HandleFunc("/manifest.json", manifestHandler)
+	r.HandleFunc("/favicon.ico", faviconHandler)
+	r.HandleFunc("/logo192.png", logo192Handler)
+	r.HandleFunc("/logo512.png", logo512Handler)
+
+	//download client
+	r.HandleFunc("/download/{client}", downloadHandler)
 
 	return r
 }
@@ -133,13 +144,13 @@ func encodeSCEPResponse(ctx context.Context, w http.ResponseWriter, response int
 // DecodeSCEPResponse decodes a SCEP response
 func DecodeSCEPResponse(ctx context.Context, r *http.Response) (interface{}, error) {
 	if r.StatusCode != http.StatusOK && r.StatusCode >= 400 {
-		body, _ := ioutil.ReadAll(io.LimitReader(r.Body, 4096))
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
 		return nil, fmt.Errorf("http request failed with status %s, msg: %s",
 			r.Status,
 			string(body),
 		)
 	}
-	data, err := ioutil.ReadAll(io.LimitReader(r.Body, maxPayloadSize))
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadSize))
 	if err != nil {
 		return nil, err
 	}
@@ -173,5 +184,51 @@ func contentHeader(op string, certNum int) string {
 		return pkiOpHeader
 	default:
 		return "text/plain"
+	}
+}
+
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	data, _ := os.ReadFile("frontend/index.html")
+	w.Write(data)
+}
+
+func staticHandler(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	if params["script"] == "js" {
+		w.Header().Set("Content-Type", "application/javascript")
+	} else if params["script"] == "css" {
+		w.Header().Set("Content-Type", "text/css")
+	}
+	data, _ := os.ReadFile("frontend/static/" + params["script"] + "/" + params["filename"])
+	w.Write(data)
+}
+
+func manifestHandler(w http.ResponseWriter, r *http.Request) {
+	data, _ := os.ReadFile("frontend/manifest.json")
+	w.Write(data)
+}
+
+func faviconHandler(w http.ResponseWriter, r *http.Request) {
+	data, _ := os.ReadFile("frontend/favicon.ico")
+	w.Write(data)
+}
+
+func logo192Handler(w http.ResponseWriter, r *http.Request) {
+	data, _ := os.ReadFile("frontend/logo192.png")
+	w.Write(data)
+}
+
+func logo512Handler(w http.ResponseWriter, r *http.Request) {
+	data, _ := os.ReadFile("frontend/logo512.png")
+	w.Write(data)
+}
+
+func downloadHandler(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	data, err := os.ReadFile("/client/" + params["client"])
+	if err != nil {
+		w.Write([]byte(params["client"] + " not found"))
+	} else {
+		w.Write(data)
 	}
 }
