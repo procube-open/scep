@@ -12,8 +12,8 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 
-	"github.com/procube-open/scep/v2/cryptoutil"
-	"github.com/procube-open/scep/v2/cryptoutil/x509util"
+	"scep-modules/cryptoutil"
+	"scep-modules/cryptoutil/x509util"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"

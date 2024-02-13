@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	scepclient "github.com/procube-open/scep/v2/client"
-	"github.com/procube-open/scep/v2/scep"
+	scepclient "scep-modules/client"
+	"scep-modules/scep"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -33,13 +33,12 @@ var (
 	flChallengePassword = "" //使用不可
 	flPKeyPath          = "key.pem"
 	flCertPath          = "cert.pem"
-	flKeySize           = "2048"
-	flOrg               = "Procube"
-	flCName             = "SCEP client"
-	flOU                = ""
+	flKeySize           = envString("SCEPCL_KEYSIZE", "2048")
+	flOrg               = envString("SCEPCL_ORG", "Procube")
+	flOU                = envString("SCEPCL_OU", "")
 	flLoc               = ""
 	flProvince          = ""
-	flCountry           = "JP"
+	flCountry           = envString("SCEPCL_COUNTRY", "JP")
 	flCACertMessage     = ""
 	flDNSName           = ""
 
@@ -351,7 +350,7 @@ func main() {
 		keyBits:         keySize,
 		selfSignPath:    selfSignPath,
 		certPath:        flCertPath,
-		cn:              flCName,
+		cn:              *flUid,
 		org:             flOrg,
 		country:         flCountry,
 		locality:        flLoc,
@@ -370,4 +369,11 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+}
+
+func envString(key, def string) string {
+	if env := os.Getenv(key); env != "" {
+		return env
+	}
+	return def
 }

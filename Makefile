@@ -1,5 +1,5 @@
 VERSION=$(shell git describe --tags --always --dirty)
-LDFLAGS=-ldflags "-X main.version=$(VERSION)"
+LDFLAGS=-ldflags '-X main.version=$(VERSION)'
 OSARCH=$(shell go env GOHOSTOS)-$(shell go env GOHOSTARCH)
 
 SCEPCLIENT=\

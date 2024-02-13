@@ -4,11 +4,19 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
 
-	"github.com/procube-open/scep/v2/scep"
+	"scep-modules/scep"
 
 	"github.com/go-kit/kit/log"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 // Service is the interface for all supported SCEP server operations.
@@ -31,6 +39,16 @@ type Service interface {
 	// when the old one expires. The response format is a PKCS#7 Degenerate
 	// Certificates type.
 	GetNextCACert(ctx context.Context) ([]byte, error)
+
+	GetCRL(ctx context.Context, depotPath string, message string) ([]byte, error)
+
+	CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error)
+}
+
+type createInfo *struct {
+	Uid      string `json:"uid"`
+	Secret   string `json:"secret"`
+	Password string `json:"Password"`
 }
 
 type service struct {
@@ -96,6 +114,108 @@ func (svc *service) PKIOperation(ctx context.Context, data []byte) ([]byte, erro
 
 func (svc *service) GetNextCACert(ctx context.Context) ([]byte, error) {
 	panic("not implemented")
+}
+
+func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]byte, error) {
+	fp, err := os.Open(depotPath + "/ca.crl")
+	if err != nil {
+		panic(err)
+	}
+	defer fp.Close()
+	byteData, err := io.ReadAll(fp)
+	return byteData, err
+}
+
+func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error) {
+	var info createInfo
+	if err := json.Unmarshal(msg, &info); err != nil {
+		fmt.Println(err)
+		return nil, errors.New("invalid JSON")
+	}
+
+	//ファイルを掃除
+	os.Remove("csr.pem")
+	os.Remove("cert.pem")
+	os.Remove("key.pem")
+	os.Remove("client.pem")
+	os.Remove("self.pem")
+
+	clientPath := "/tmp"
+	if info.Uid != "" && info.Secret != "" {
+		// cert.pem,key.pem,csr.pemを作成
+		fmt.Println("--- POST CSR myself ---")
+		cmd := exec.Command(clientPath+"/scepclient-opt", "-uid="+info.Uid, "-secret="+info.Secret)
+		cmd.Stdin = strings.NewReader("some input")
+		var out strings.Builder
+		cmd.Stdout = &out
+		err := cmd.Run()
+		if err != nil {
+			fmt.Println(err)
+			return nil, errors.New("post csr failed")
+		}
+		fmt.Println(out.String())
+		fmt.Println("--- finish ---")
+	} else {
+		return nil, errors.New("without uid or secret params")
+	}
+
+	// pkcs12形式に変換
+	//X509.PrivateKey読み込み
+	key, err := os.ReadFile("key.pem")
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("read key.pem failed")
+	}
+	keyBlock, _ := pem.Decode([]byte(key))
+	k, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("parse key.pem failed")
+	}
+
+	//X509.Certificate読み込み
+	cert, err := os.ReadFile("cert.pem")
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("read cert.pem failed")
+	}
+	certBlock, _ := pem.Decode([]byte(cert))
+	c, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("parse cert.pem failed")
+	}
+
+	//X509.Certificate読み込み
+	caCert, err := os.ReadFile(depotPath + "/ca.crt")
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("read ca.crt failed")
+	}
+	caCertBlock, _ := pem.Decode([]byte(caCert))
+	ca, err := x509.ParseCertificate(caCertBlock.Bytes)
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("parse ca.crt failed")
+	}
+	var caCerts []*x509.Certificate
+	caCerts = append(caCerts, ca)
+
+	//PKCS12エンコード
+	p12, err := pkcs12.Modern2023.Encode(k, c, caCerts, info.Password)
+	if err != nil {
+		fmt.Printf("ERROR:%v\n", err)
+		return nil, errors.New("pkcs12 encode failed")
+	}
+
+	//ファイルを掃除
+	os.Remove("csr.pem")
+	os.Remove("cert.pem")
+	os.Remove("key.pem")
+	os.Remove("client.pem")
+	os.Remove("self.pem")
+
+	return p12, nil
 }
 
 // ServiceOption is a server configuration option

@@ -10,7 +10,7 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/procube-open/scep/v2/depot"
+	"scep-modules/depot"
 
 	"github.com/boltdb/bolt"
 )

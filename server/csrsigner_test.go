@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/procube-open/scep/v2/scep"
+	"scep-modules/scep"
 )
 
 func TestChallengeMiddleware(t *testing.T) {

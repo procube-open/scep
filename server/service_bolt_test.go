@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	challengestore "github.com/procube-open/scep/v2/challenge/bolt"
-	scepdepot "github.com/procube-open/scep/v2/depot"
-	boltdepot "github.com/procube-open/scep/v2/depot/bolt"
-	"github.com/procube-open/scep/v2/scep"
-	scepserver "github.com/procube-open/scep/v2/server"
+	challengestore "scep-modules/challenge/bolt"
+	scepdepot "scep-modules/depot"
+	boltdepot "scep-modules/depot/bolt"
+	"scep-modules/scep"
+	scepserver "scep-modules/server"
 
 	"github.com/boltdb/bolt"
 )

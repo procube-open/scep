@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"time"
@@ -83,7 +82,7 @@ func selfSign(priv *rsa.PrivateKey, csr *x509.CertificateRequest) (*x509.Certifi
 }
 
 func loadPEMCertFromFile(path string) (*x509.Certificate, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

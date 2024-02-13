@@ -7,10 +7,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	"io/ioutil"
 	"os"
 
-	"github.com/procube-open/scep/v2/cryptoutil/x509util"
+	"scep-modules/cryptoutil/x509util"
 )
 
 const (
@@ -82,7 +81,7 @@ func pemCSR(derBytes []byte) []byte {
 
 // load PEM encoded CSR from file
 func loadCSRfromFile(path string) (*x509.CertificateRequest, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -19,7 +19,11 @@ type User *struct {
 	Certificate string `json:"certificate"`
 }
 
-func GETInterface(url string, challenge string) (User, error) {
+type RevokeCertificate *struct {
+	Certificate string `json:"certificate"`
+}
+
+func GETUser(url string, challenge string) (User, error) {
 	var users []User
 
 	// interface取得
@@ -59,7 +63,7 @@ func GETInterface(url string, challenge string) (User, error) {
 }
 
 func PUTCertificate(url string, challenge string, crtStr string, notBefore time.Time, notAfter time.Time) error {
-	user, err := GETInterface(url, challenge)
+	user, err := GETUser(url, challenge)
 	if err != nil {
 		fmt.Println("GET Error", err)
 		return errors.New("GET Error")
@@ -101,4 +105,35 @@ func checkUsers(slice []User, uid string, secret string) int {
 		}
 	}
 	return -1
+}
+
+func GETRCs(url string) ([]RevokeCertificate, error) {
+	var rcs []RevokeCertificate
+
+	// interface取得
+	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
+	auth8090HeaderValue := "SCEP_SERVER"
+
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
+	client := new(http.Client)
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Error Request:", err)
+		return nil, errors.New("IDM is invalid")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		fmt.Println("Error Response:", resp.Status)
+		return nil, errors.New("IDM is invalid")
+	}
+	body, _ := io.ReadAll(resp.Body)
+
+	//Go構造体化
+	if err := json.Unmarshal(body, &rcs); err != nil {
+		fmt.Println(err)
+		return nil, errors.New("invalid JSON")
+	}
+
+	return rcs, nil
 }

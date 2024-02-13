@@ -68,9 +68,11 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 |PKEY_PATH|"key.pem"|秘密鍵のファイル名|
 |CERT_PATH|"cert.pem"|証明書のファイル名|
 |KEY_SIZE|"2048"|秘密鍵のサイズ|
-|CN|"Procube"|証明書のCN|
+|ORG|""|証明書のORG|
 |OU|""|証明書のOU|
 |COUNTRY|"JP"|証明書のcountry|
+
+CNはuidで指定された値で固定される。
 
 ### depotフォルダ
 SCEPサーバには認証局のキーペアである`ca.crt`と`ca.key`を保存するdepotフォルダが存在する。

@@ -6,8 +6,8 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/procube-open/scep/v2/idm"
-	"github.com/procube-open/scep/v2/scep"
+	"scep-modules/idm"
+	"scep-modules/scep"
 )
 
 // CSRSignerContext is a handler for signing CSRs by a CA/RA.
@@ -66,7 +66,7 @@ func IDMChallengeMiddleware(url string, next CSRSignerContext) CSRSignerContextF
 	// challengeBytes := []byte(challenge)
 
 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		_, err := idm.GETInterface(url, m.ChallengePassword)
+		_, err := idm.GETUser(url, m.ChallengePassword)
 		if err != nil {
 			return nil, errors.New("invalid challenge or url")
 		}

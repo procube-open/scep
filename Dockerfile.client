@@ -9,9 +9,13 @@ ARG SERVER_URL="http://127.0.0.1:2016/scep"
 ARG PKEY_PATH="key.pem"
 ARG CERT_PATH="cert.pem"
 ARG KEY_SIZE="2048"
-ARG CN="Procube"
+ENV SCEPCL_KEYSIZE=${KEY_SIZE}
+ARG ORG=""
+ENV SCEPCL_ORG=${ORG}
 ARG OU=""
+ENV SCEPCL_OU=${OU}
 ARG COUNTRY="JP"
+ENV SCEPCL_COUNTRY=${COUNTRY}
 
 RUN GOOS=linux GOARCH=amd64 \
   go build -ldflags "\
@@ -19,7 +23,7 @@ RUN GOOS=linux GOARCH=amd64 \
   -X main.flPKeyPath=${PKEY_PATH} \
   -X main.flCertPath=${CERT_PATH} \
   -X main.flKeySize=${KEY_SIZE} \
-  -X main.flCName=${CN} \
+  -X main.flORG=${ORG} \
   -X main.flOU=${OU} \
   -X main.flCountry=${COUNTRY}\
   " -o scepclient-amd64 ./cmd/scepclient
@@ -29,7 +33,7 @@ RUN GOOS=linux GOARCH=arm \
   -X main.flPKeyPath=${PKEY_PATH} \
   -X main.flCertPath=${CERT_PATH} \
   -X main.flKeySize=${KEY_SIZE} \
-  -X main.flCName=${CN} \
+  -X main.flORG=${ORG} \
   -X main.flOU=${OU} \
   -X main.flCountry=${COUNTRY}\
   " -o scepclient-arm ./cmd/scepclient
@@ -39,7 +43,7 @@ RUN GOOS=linux GOARCH=arm64 \
   -X main.flPKeyPath=${PKEY_PATH} \
   -X main.flCertPath=${CERT_PATH} \
   -X main.flKeySize=${KEY_SIZE} \
-  -X main.flCName=${CN} \
+  -X main.flORG=${ORG} \
   -X main.flOU=${OU} \
   -X main.flCountry=${COUNTRY}\
   " -o scepclient-arm64 ./cmd/scepclient

@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/procube-open/scep/v2/cryptoutil"
+	"scep-modules/cryptoutil"
 )
 
 // CACert represents a new self-signed CA certificate

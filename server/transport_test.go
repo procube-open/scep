@@ -5,16 +5,15 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/base64"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/procube-open/scep/v2/depot"
-	filedepot "github.com/procube-open/scep/v2/depot/file"
-	scepserver "github.com/procube-open/scep/v2/server"
+	"scep-modules/depot"
+	filedepot "scep-modules/depot/file"
+	scepserver "scep-modules/server"
 
 	kitlog "github.com/go-kit/kit/log"
 )
@@ -165,7 +164,7 @@ const (
 )
 
 func loadTestFile(t *testing.T, path string) []byte {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

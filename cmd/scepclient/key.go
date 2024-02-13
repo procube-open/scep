@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"io/ioutil"
 	"os"
 )
 
@@ -53,7 +52,7 @@ func loadOrMakeKey(path string, rsaBits int) (*rsa.PrivateKey, error) {
 
 // load a PEM private key from disk
 func loadKeyFromFile(path string) (*rsa.PrivateKey, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

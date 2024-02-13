@@ -7,14 +7,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	"io/ioutil"
 	"math/big"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/procube-open/scep/v2/cryptoutil"
-	"github.com/procube-open/scep/v2/depot"
-	"github.com/procube-open/scep/v2/scep"
+	"scep-modules/cryptoutil"
+	"scep-modules/depot"
+	"scep-modules/scep"
 )
 
 func testParsePKIMessage(t *testing.T, data []byte) *scep.PKIMessage {
@@ -230,7 +230,7 @@ func newCSR(priv *rsa.PrivateKey, email, country, cname string) ([]byte, error) 
 }
 
 func loadTestFile(t *testing.T, path string) []byte {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ const (
 )
 
 func loadCertFromFile(path string) (*x509.Certificate, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +307,7 @@ func loadCertFromFile(path string) (*x509.Certificate, error) {
 
 // load an encrypted private key from disk
 func loadKeyFromFile(path string) (*rsa.PrivateKey, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

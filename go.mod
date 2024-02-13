@@ -1,4 +1,4 @@
-module github.com/procube-open/scep/v2
+module scep-modules
 
 go 1.16
 
@@ -15,4 +15,5 @@ require (
 	github.com/pkg/errors v0.8.0
 	github.com/smallstep/pkcs7 v0.0.0-20231107075624-be1870d87d13
 	golang.org/x/net v0.17.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.4.0 // indirect
 )

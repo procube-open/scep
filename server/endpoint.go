@@ -20,6 +20,8 @@ const (
 	getCACert     = "GetCACert"
 	pkiOperation  = "PKIOperation"
 	getNextCACert = "GetNextCACert"
+	getCRL        = "GetCRL"
+	createPKCS12  = "CreatePKCS12"
 )
 
 type Endpoints struct {
@@ -94,8 +96,28 @@ func (e *Endpoints) GetNextCACert(ctx context.Context) ([]byte, error) {
 	return resp.Data, resp.Err
 }
 
-func MakeServerEndpoints(svc Service) *Endpoints {
-	e := MakeSCEPEndpoint(svc)
+func (e *Endpoints) GetCRL(ctx context.Context, depotPath string, message string) ([]byte, error) {
+	request := SCEPRequest{Operation: getCRL, Message: []byte(message)}
+	response, err := e.GetEndpoint(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	resp := response.(SCEPResponse)
+	return resp.Data, resp.Err
+}
+
+func (e *Endpoints) CreatePKCS12(ctx context.Context, depotPath string, message []byte) ([]byte, error) {
+	request := SCEPRequest{Operation: createPKCS12, Message: []byte(message)}
+	response, err := e.GetEndpoint(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	resp := response.(SCEPResponse)
+	return resp.Data, resp.Err
+}
+
+func MakeServerEndpoints(svc Service, depotPath string) *Endpoints {
+	e := MakeSCEPEndpoint(svc, depotPath)
 	return &Endpoints{
 		GetEndpoint:  e,
 		PostEndpoint: e,
@@ -132,7 +154,7 @@ func MakeClientEndpoints(instance string) (*Endpoints, error) {
 	}, nil
 }
 
-func MakeSCEPEndpoint(svc Service) endpoint.Endpoint {
+func MakeSCEPEndpoint(svc Service, depotPath string) endpoint.Endpoint {
 	return func(ctx context.Context, request interface{}) (interface{}, error) {
 		req := request.(SCEPRequest)
 		resp := SCEPResponse{operation: req.Operation}
@@ -143,6 +165,10 @@ func MakeSCEPEndpoint(svc Service) endpoint.Endpoint {
 			resp.Data, resp.CACertNum, resp.Err = svc.GetCACert(ctx, string(req.Message))
 		case "PKIOperation":
 			resp.Data, resp.Err = svc.PKIOperation(ctx, req.Message)
+		case "GetCRL":
+			resp.Data, resp.Err = svc.GetCRL(ctx, depotPath, string(req.Message))
+		case "CreatePKCS12":
+			resp.Data, resp.Err = svc.CreatePKCS12(ctx, depotPath, req.Message)
 		default:
 			return nil, errors.New("operation not implemented")
 		}

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -20,7 +19,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/procube-open/scep/v2/idm"
+	"scep-modules/idm"
 )
 
 // NewFileDepot returns a new cert depot.
@@ -94,19 +93,19 @@ func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, idmU
 		cn = fmt.Sprintf("%x", sha256.Sum256(crt.Raw))
 	}
 
-	filename := fmt.Sprintf("%s.%s.pem", cn, serial.String())
+	filename := fmt.Sprintf("%s.%s", cn, serial.String())
 
-	filepath := d.path(filename)
-	file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, certPerm)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	// filepath := d.path(filename)
+	// file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, certPerm)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer file.Close()
 
-	if _, err := file.Write(pemCert(data)); err != nil {
-		os.Remove(filepath)
-		return err
-	}
+	// if _, err := file.Write(pemCert(data)); err != nil {
+	// 	os.Remove(filepath)
+	// 	return err
+	// }
 	if err := d.writeDB(cn, serial, filename, crt); err != nil {
 		// TODO : remove certificate in case of writeDB problems
 		return err
@@ -368,7 +367,7 @@ func (d *fileDepot) getFile(path string) (*file, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := ioutil.ReadFile(d.path(path))
+	b, err := os.ReadFile(d.path(path))
 	return &file{fi, b}, err
 }
 
