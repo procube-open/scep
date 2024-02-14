@@ -52,6 +52,8 @@ IDMのクラス定義で、参照される属性名は以下の通り。
 ### CRL更新
 CRLの更新はサーバ内で`/app/scepclient-opt ca -create-crl -idmurl {インターフェース取得URL}`が実行された際に行われる。
 
+CRLの有効期限は作成されてから24時間であり、日時バッチ処理が必要。
+
 # Docker
 
 `Dockerfile`をビルドすることで構築が可能
