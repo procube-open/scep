@@ -6,8 +6,8 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"scep-modules/idm"
-	"scep-modules/scep"
+	"github.com/procube-open/scep/idm"
+	"github.com/procube-open/scep/scep"
 )
 
 // CSRSignerContext is a handler for signing CSRs by a CA/RA.

@@ -13,7 +13,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"scep-modules/scep"
+	"github.com/procube-open/scep/scep"
 
 	"github.com/go-kit/kit/log"
 	"software.sslmate.com/src/go-pkcs12"

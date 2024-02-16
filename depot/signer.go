@@ -5,8 +5,8 @@ import (
 	"crypto/x509"
 	"time"
 
-	"scep-modules/cryptoutil"
-	"scep-modules/scep"
+	"github.com/procube-open/scep/cryptoutil"
+	"github.com/procube-open/scep/scep"
 )
 
 // Signer signs x509 certificates and stores them in a Depot

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"scep-modules/cryptoutil"
-	"scep-modules/depot"
-	"scep-modules/scep"
+	"github.com/procube-open/scep/cryptoutil"
+	"github.com/procube-open/scep/depot"
+	"github.com/procube-open/scep/scep"
 )
 
 func testParsePKIMessage(t *testing.T, data []byte) *scep.PKIMessage {

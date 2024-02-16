@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	scepclient "scep-modules/client"
-	"scep-modules/scep"
+	scepclient "github.com/procube-open/scep/client"
+	"github.com/procube-open/scep/scep"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"

@@ -19,7 +19,7 @@ import (
 	"time"
 	"unsafe"
 
-	"scep-modules/idm"
+	"github.com/procube-open/scep/idm"
 )
 
 // NewFileDepot returns a new cert depot.

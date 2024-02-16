@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"scep-modules/depot"
-	filedepot "scep-modules/depot/file"
-	scepserver "scep-modules/server"
+	"github.com/procube-open/scep/depot"
+	filedepot "github.com/procube-open/scep/depot/file"
+	scepserver "github.com/procube-open/scep/server"
 
 	kitlog "github.com/go-kit/kit/log"
 )

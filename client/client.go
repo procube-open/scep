@@ -1,7 +1,7 @@
 package scepclient
 
 import (
-	scepserver "scep-modules/server"
+	scepserver "github.com/procube-open/scep/server"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"

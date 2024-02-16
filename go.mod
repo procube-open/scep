@@ -1,4 +1,4 @@
-module scep-modules
+module github.com/procube-open/scep
 
 go 1.16
 

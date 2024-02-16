@@ -20,12 +20,12 @@ import (
 	"syscall"
 	"time"
 
-	"scep-modules/csrverifier"
-	executablecsrverifier "scep-modules/csrverifier/executable"
-	scepdepot "scep-modules/depot"
-	"scep-modules/depot/file"
-	"scep-modules/idm"
-	scepserver "scep-modules/server"
+	"github.com/procube-open/scep/csrverifier"
+	executablecsrverifier "github.com/procube-open/scep/csrverifier/executable"
+	scepdepot "github.com/procube-open/scep/depot"
+	"github.com/procube-open/scep/depot/file"
+	"github.com/procube-open/scep/idm"
+	scepserver "github.com/procube-open/scep/server"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"

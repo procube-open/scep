@@ -6,8 +6,8 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"scep-modules/scep"
-	scepserver "scep-modules/server"
+	"github.com/procube-open/scep/scep"
+	scepserver "github.com/procube-open/scep/server"
 )
 
 // Store is a dynamic challenge password cache.

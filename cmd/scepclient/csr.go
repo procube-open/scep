@@ -9,7 +9,7 @@ import (
 	"errors"
 	"os"
 
-	"scep-modules/cryptoutil/x509util"
+	"github.com/procube-open/scep/cryptoutil/x509util"
 )
 
 const (

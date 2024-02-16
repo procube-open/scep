@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	challengestore "scep-modules/challenge/bolt"
-	"scep-modules/scep"
-	scepserver "scep-modules/server"
+	challengestore "github.com/procube-open/scep/challenge/bolt"
+	"github.com/procube-open/scep/scep"
+	scepserver "github.com/procube-open/scep/server"
 
 	"github.com/boltdb/bolt"
 )
