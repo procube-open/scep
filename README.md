@@ -55,6 +55,7 @@ CRLの更新はサーバ内で`/app/scepserver-opt ca -create-crl`が実行さ�
 
 CRLの有効期限は作成されてから24時間であり、日次バッチ処理が必要。
 
+**SCEPCA_IDM_CRL_URL**で取得した証明書と、depotフォルダ配下の`index.txt`の最初の文字が`R`となっている証明書のシリアルを合わせたものでCRLを作成する。
 # Docker
 
 `Dockerfile`をビルドすることで構築が可能
