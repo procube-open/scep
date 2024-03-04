@@ -1,10 +1,10 @@
 FROM node:18-alpine as node-builder
 ENV NODE_OPTIONS --openssl-legacy-provider
-ENV NODE_ENV production
+# ENV NODE_ENV production
 RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app/
 COPY ./frontend/package.json ./frontend/package-lock.json ./
-RUN npm install --production
+RUN npm install
 COPY ./frontend/. .
 RUN npm run build
 
