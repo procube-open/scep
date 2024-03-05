@@ -71,7 +71,7 @@ COPY --from=go-builder /app/scepclient-arm64 ./
 
 WORKDIR /app
 COPY --from=go-builder /app/scepserver-opt /app/scepclient-opt ./
-COPY --from=node-builder /usr/src/app/build/. ./frontend/.
+COPY --from=node-builder /usr/src/app/build/. ./frontend/build/.
 RUN ./scepserver-opt ca -init
 
 CMD ["./scepserver-opt"]

@@ -38,12 +38,12 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 	))
 
 	// frontend
-	r.HandleFunc("/", indexHandler)
-	r.HandleFunc("/static/{script}/{filename}", staticHandler)
-	r.HandleFunc("/manifest.json", manifestHandler)
-	r.HandleFunc("/favicon.ico", faviconHandler)
-	r.HandleFunc("/logo192.png", logo192Handler)
-	r.HandleFunc("/logo512.png", logo512Handler)
+	r.HandleFunc("/caweb", indexHandler)
+	r.HandleFunc("/caweb/static/{script}/{filename}", staticHandler)
+	r.HandleFunc("/caweb/manifest.json", manifestHandler)
+	r.HandleFunc("/caweb/favicon.ico", faviconHandler)
+	r.HandleFunc("/caweb/logo192.png", logo192Handler)
+	r.HandleFunc("/caweb/logo512.png", logo512Handler)
 
 	//download client
 	r.HandleFunc("/download/{client}", downloadHandler)
@@ -188,7 +188,7 @@ func contentHeader(op string, certNum int) string {
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/index.html")
+	data, _ := os.ReadFile("frontend/build/index.html")
 	w.Write(data)
 }
 
@@ -199,27 +199,27 @@ func staticHandler(w http.ResponseWriter, r *http.Request) {
 	} else if params["script"] == "css" {
 		w.Header().Set("Content-Type", "text/css")
 	}
-	data, _ := os.ReadFile("frontend/static/" + params["script"] + "/" + params["filename"])
+	data, _ := os.ReadFile("frontend/build/static/" + params["script"] + "/" + params["filename"])
 	w.Write(data)
 }
 
 func manifestHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/manifest.json")
+	data, _ := os.ReadFile("frontend/build/manifest.json")
 	w.Write(data)
 }
 
 func faviconHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/favicon.ico")
+	data, _ := os.ReadFile("frontend/build/favicon.ico")
 	w.Write(data)
 }
 
 func logo192Handler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/logo192.png")
+	data, _ := os.ReadFile("frontend/build/logo192.png")
 	w.Write(data)
 }
 
 func logo512Handler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/logo512.png")
+	data, _ := os.ReadFile("frontend/build/logo512.png")
 	w.Write(data)
 }
 

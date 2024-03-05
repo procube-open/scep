@@ -107,12 +107,12 @@ depotフォルダが保持するファイル一覧は以下の通り
 `/scep`は`operation`クエリによって内容が異なるので含めて表記している。
 | パス | メソッド|内容|
 |--|--|--|
-|/|`GET`|webページを表示する。`uid`と`secret`クエリを指定することで初期値を設定できる。|
-|/static/`:script`/`:filename`|`GET`|webページを表示するのに使う|
-|/manifest.json|`GET`|webページを表示するのに使う|
-|/favicon.ico|`GET`|webページを表示するのに使う|
-|/logo192.png|`GET`|webページを表示するのに使う|
-|/logo512.png|`GET`|webページを表示するのに使う|
+|/caweb|`GET`|webページを表示する。`uid`と`secret`クエリを指定することで初期値を設定できる。|
+|/caweb/static/`:script`/`:filename`|`GET`|webページを表示するのに使う|
+|/caweb/manifest.json|`GET`|webページを表示するのに使う|
+|/caweb/favicon.ico|`GET`|webページを表示するのに使う|
+|/caweb/logo192.png|`GET`|webページを表示するのに使う|
+|/caweb/logo512.png|`GET`|webページを表示するのに使う|
 |/download/`:filename`|`GET`|`/client`配下に置かれたファイルをダウンロードする。`scepclient-amd64`,`scepclient-arm`,`scepclient-arm64`が指定可能。|
 |/scep?operation=GetCACaps|`GET`|linux実行ファイルで使う。認証局の情報を取得する。|
 |/scep?operation=GetCACert|`GET`|linux実行ファイルで使う。認証局の証明書を取得する。|
