@@ -132,5 +132,5 @@ curl {URL}/download/scepclient-amd64 > scepclient
 
 ### ブラウザ利用
 webページにアクセスし、ダウンロードボタンを押すことでPKCS#12形式でファイルをダウンロードできる。
-クエリで`http://localhost:2016/?uid=test&secret=pass`とすることで初期値を設定可能。
+クエリで`http://localhost:2016/caweb?uid=test&secret=pass`などとすることで`uid`と`secret`の初期値を設定可能。
 また、PKCS#12ファイルのパスワードを設定できる。
