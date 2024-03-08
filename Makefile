@@ -1,5 +1,13 @@
 VERSION=$(shell git describe --tags --always --dirty)
-LDFLAGS=-ldflags '-X main.version=$(VERSION)'
+
+_ := $(shell printenv SCEP_HTTP_LISTEN_PORT)
+PORT := $(if $(_),$(_),null)
+ifeq ($(PORT),null)
+	LDFLAGS=-ldflags '-X main.version=$(VERSION)'
+else
+	LDFLAGS=-ldflags '-X main.version=$(VERSION) -X main.flServerURL=http://127.0.0.1:$(PORT)/scep'
+endif
+
 OSARCH=$(shell go env GOHOSTOS)-$(shell go env GOHOSTARCH)
 
 SCEPCLIENT=\
