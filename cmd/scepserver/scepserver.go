@@ -223,6 +223,7 @@ func caMain(cmd *flag.FlagSet) int {
 		flDepotPath  = cmd.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
 		flCreateCRL  = cmd.Bool("create-crl", false, "create a new CRL")
+		flPort       = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "2016"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
 		flIDMURL     = cmd.String("idmurl", envString("SCEPCA_IDM_CRL_URL", ""), "URL of IDManager")
 		flYears      = cmd.Int("years", envInt("SCEPCA_YEARS", 10), "default CA years")
 		flKeySize    = cmd.Int("keySize", envInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
@@ -256,7 +257,7 @@ func caMain(cmd *flag.FlagSet) int {
 			}
 		}
 		crts, key, _ := depot.CA([]byte(*flCAPass))
-		CreateCRL(crts[0], key, *flDepotPath, *flIDMURL)
+		CreateCRL(crts[0], key, *flDepotPath, *flIDMURL, *flPort)
 	}
 
 	return 0
@@ -374,14 +375,14 @@ func setByUser(flagName, envName string) bool {
 	return flagSet || envSet
 }
 
-func CreateCRL(cert *x509.Certificate, key *rsa.PrivateKey, depotPath string, url string) {
+func CreateCRL(cert *x509.Certificate, key *rsa.PrivateKey, depotPath string, url string, port string) {
 
 	rcs := GetSerialNumbers(depotPath, url)
 
 	//Create issuingDistributionPoint Extension
 	dp := distributionPointName{
 		FullName: []asn1.RawValue{
-			{Tag: 6, Class: 2, Bytes: []byte("http://localhost:2016/scep?operation=GetCRL")},
+			{Tag: 6, Class: 2, Bytes: []byte("http://localhost:" + port + "/scep?operation=GetCRL")},
 		},
 	}
 	idp := issuingDistributionPoint{
