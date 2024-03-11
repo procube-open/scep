@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -27,11 +28,9 @@ func GETUser(url string, challenge string) (User, error) {
 	var users []User
 
 	// interface取得
-	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
-	auth8090HeaderValue := "SCEP_SERVER"
-
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
+	addHeader(req)
+
 	client := new(http.Client)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -78,11 +77,9 @@ func PUTCertificate(url string, challenge string, crtStr string, notBefore time.
 		return errors.New("Encode Error")
 	}
 	// interface取得
-	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
-	auth8090HeaderValue := "SCEP_SERVER"
-
 	req, _ := http.NewRequest("PUT", puturl, bytes.NewBuffer(userJson))
-	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
+	addHeader(req)
+
 	req.Header.Add("Content-Type", "application/json")
 	client := new(http.Client)
 	resp, _err := client.Do(req)
@@ -111,11 +108,9 @@ func GETRCs(url string) ([]RevokeCertificate, error) {
 	var rcs []RevokeCertificate
 
 	// interface取得
-	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
-	auth8090HeaderValue := "SCEP_SERVER"
-
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
+	addHeader(req)
+
 	client := new(http.Client)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -136,4 +131,28 @@ func GETRCs(url string) ([]RevokeCertificate, error) {
 	}
 
 	return rcs, nil
+}
+
+func envString(key, def string) string {
+	if env := os.Getenv(key); env != "" {
+		return env
+	}
+	return def
+}
+
+func addHeader(req *http.Request) {
+	header0 := envString("SCEP_IDM_HEADER0", "")
+	if header0 != "" && strings.Contains(header0, ":") {
+		header0kv := strings.Split(header0, ":")
+		req.Header.Add(header0kv[0], header0kv[1])
+	}
+	header1 := envString("SCEP_IDM_HEADER1", "")
+	if header1 != "" && strings.Contains(header1, ":") {
+		header1kv := strings.Split(header1, ":")
+		req.Header.Add(header1kv[0], header1kv[1])
+	}
+
+	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
+	auth8090HeaderValue := "SCEP_SERVER"
+	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
 }

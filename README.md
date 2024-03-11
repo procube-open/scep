@@ -67,6 +67,8 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 |SCEP_HTTP_LISTEN_PORT|"2016"|サーバのポート番号|
 |SCEP_FILE_DEPOT|"idm-depot"|depotフォルダのパス(/app配下)|
 |SCEP_CERT_VALID|"365"|証明書の有効期限|
+|SCEP_IDM_HEADER0|""|IDM呼び出し時に追加でヘッダーをつけることができる。変数を`:`で区切り、一つ目をキー、二つ目を値として扱う。値の例:`HTTP_REMOTEUSER:IDM_ADMIN`|
+|SCEP_IDM_HEADER1|""|`SCEP_IDM_HEADER0`と同様。|
 |**SCEPCA_IDM_CRL_URL**|""|失効する証明書一覧を取得するインターフェースのURL|
 |SCEPCA_YEARS|"10"|ca.crtの有効期間(年)|
 |SCEPCA_KEY_SIZE|"4096"|ca.keyのサイズ|
