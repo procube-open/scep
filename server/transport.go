@@ -338,7 +338,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/javascript")
 	w.Write(body)
-
 }
 
 type ErrResp_1 struct {

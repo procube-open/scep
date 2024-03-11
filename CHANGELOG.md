@@ -1,5 +1,12 @@
 # scep
 
+## 0.0.4-rc.0
+
+### Patch Changes
+
+- add /userObject API
+  add SCEP_IDM_HEADER0,SCEP_IDM_HEADER1 environment variables
+
 ## 0.0.3
 
 ### Patch Changes
