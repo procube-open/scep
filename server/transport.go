@@ -3,18 +3,23 @@ package scepserver
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	kitlog "github.com/go-kit/kit/log"
 	kithttp "github.com/go-kit/kit/transport/http"
 	"github.com/gorilla/mux"
 	"github.com/groob/finalizer/logutil"
 	"github.com/pkg/errors"
+	"github.com/procube-open/scep/idm"
 )
 
 func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
@@ -47,6 +52,9 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 
 	//download client
 	r.HandleFunc("/download/{client}", downloadHandler)
+
+	//get user object
+	r.HandleFunc("/userObject", userHandler)
 
 	return r
 }
@@ -231,4 +239,130 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Write(data)
 	}
+}
+
+func userHandler(w http.ResponseWriter, r *http.Request) {
+	encodedCert := r.Header["X-Mtls-Clientcert"]
+
+	if len(encodedCert) != 1 {
+		res := ErrResp_1{Message: "No Certificate"}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.WriteHeader(http.StatusInternalServerError)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+
+	decodedCert, err := url.QueryUnescape(encodedCert[0])
+	if err != nil {
+		res := ErrResp_1{Message: "Decode header failed"}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.WriteHeader(http.StatusInternalServerError)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+
+	certBlock, _ := pem.Decode([]byte(decodedCert))
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		res := ErrResp_1{Message: "Parse Certificate failed"}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.WriteHeader(http.StatusInternalServerError)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+
+	now := time.Now()
+	if now.After(cert.NotAfter) || now.Before(cert.NotBefore) {
+		res := ErrResp_2{
+			Message:   "Certificate is expired",
+			NotBefore: cert.NotBefore.String(),
+			NotAfter:  cert.NotAfter.String(),
+			Date:      now.String(),
+		}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.WriteHeader(http.StatusUnauthorized)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+
+	depotPath := envString("SCEP_FILE_DEPOT", "idm-depot")
+	ca_crt, _ := os.ReadFile(depotPath + "/ca.crt")
+	caCertBlock, _ := pem.Decode(ca_crt)
+	caCert, _ := x509.ParseCertificate(caCertBlock.Bytes)
+	certPool := x509.NewCertPool()
+	certPool.AddCert(caCert)
+	opts := x509.VerifyOptions{
+		Roots:     certPool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	if _, err := cert.Verify(opts); err != nil {
+		res := ErrResp_3{
+			Message:     "Failed to validate certificate",
+			Certificate: string(decodedCert),
+			CaCert:      string(ca_crt),
+		}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.WriteHeader(http.StatusUnauthorized)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+
+	body, err := idm.GETUserByCN(envString("SCEP_IDM_CERT_URL", "") + "/" + cert.Subject.CommonName)
+	if err != nil {
+		if err.Error() == "NotFound" {
+			res := ErrResp_4{
+				Message: "User Not Found",
+				User:    cert.Subject.CommonName,
+			}
+			w.Header().Set("Content-Type", "application/javascript")
+			w.WriteHeader(http.StatusUnauthorized)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		} else {
+			res := ErrResp_1{
+				Message: err.Error(),
+			}
+			w.Header().Set("Content-Type", "application/javascript")
+			w.WriteHeader(http.StatusBadGateway)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/javascript")
+	w.Write(body)
+
+}
+
+type ErrResp_1 struct {
+	Message string `json:"message"`
+}
+type ErrResp_2 struct {
+	Message   string `json:"message"`
+	NotBefore string `json:"notBefore"`
+	NotAfter  string `json:"notAfter"`
+	Date      string `json:"Date"`
+}
+type ErrResp_3 struct {
+	Message     string `json:"message"`
+	Certificate string `json:"certificate"`
+	CaCert      string `json:"cacert"`
+}
+type ErrResp_4 struct {
+	Message string `json:"message"`
+	User    string `json:"user"`
+}
+
+func envString(key, def string) string {
+	if env := os.Getenv(key); env != "" {
+		return env
+	}
+	return def
 }

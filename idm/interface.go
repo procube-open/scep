@@ -46,7 +46,7 @@ func GETUser(url string, challenge string) (User, error) {
 
 	//Go構造体化
 	if err := json.Unmarshal(body, &users); err != nil {
-		fmt.Println(err)
+		fmt.Println("Unmarshal Error:" + err.Error())
 		return nil, errors.New("invalid JSON")
 	}
 
@@ -93,6 +93,25 @@ func PUTCertificate(url string, challenge string, crtStr string, notBefore time.
 		return errors.New("IDM is invalid")
 	}
 	return nil
+}
+
+func GETUserByCN(url string) ([]byte, error) {
+	// interface取得
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	addHeader(req)
+
+	client := new(http.Client)
+	resp, err := client.Do(req)
+	if resp.StatusCode == 400 {
+		return nil, errors.New("NotFound")
+	} else if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	return body, nil
 }
 
 func checkUsers(slice []User, uid string, secret string) int {

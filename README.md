@@ -115,6 +115,7 @@ depotフォルダが保持するファイル一覧は以下の通り
 |/caweb/favicon.ico|`GET`|webページを表示するのに使う|
 |/caweb/logo192.png|`GET`|webページを表示するのに使う|
 |/caweb/logo512.png|`GET`|webページを表示するのに使う|
+|/userObject|`GET`|`X-Mtls-Clientcert`ヘッダーに添付されているクライアント証明書（PEM形式の証明書をURLエンコードした文字列）を読み込んで署名検証する。検証が成功すれば添付された証明書のCNで`${SCEP_IDM_CERT_URL}/${CN}`の結果を返す。|
 |/download/`:filename`|`GET`|`/client`配下に置かれたファイルをダウンロードする。`scepclient-amd64`,`scepclient-arm`,`scepclient-arm64`が指定可能。|
 |/scep?operation=GetCACaps|`GET`|linux実行ファイルで使う。認証局の情報を取得する。|
 |/scep?operation=GetCACert|`GET`|linux実行ファイルで使う。認証局の証明書を取得する。|
