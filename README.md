@@ -77,20 +77,35 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 |SCEPCA_ORG_UNIT|""|認証局のOrganization Unit|
 |SCEPCA_COUNTRY|"JP"|認証局のCountry|
 
-linux実行ファイルの変数は`--build-args`で指定し、以下を参照してビルドされる。
-
-**`--build-args`で指定可能な変数一覧**
+## クライアント実行ファイル作成
+コンテナ内で以下の変数を指定して`/app/cmd/scepclient.go`をビルドすることでクライアント実行ファイルを作成することができる。
 | 名前 | デフォルト値|内容|
 |--|--|--|
-|SERVER_URL|"http://127.0.0.1:2016/scep"|SCEPサーバのURL|
-|PKEY_FILENAME|"key.pem"|秘密鍵のファイル名|
-|CERT_FILENAME|"cert.pem"|証明書のファイル名|
-|KEY_SIZE|"2048"|秘密鍵のサイズ|
-|ORG|""|証明書のORG|
-|OU|""|証明書のOU|
-|COUNTRY|"JP"|証明書のcountry|
+|version|"unknown"|バージョン情報|
+|flServerURL|"http://127.0.0.1:2016/scep"|接続するSCEPサーバのURL。`/scep`までパス指定が必要。|
+|flPKeyFileName|"key.pem"|秘密鍵のファイル名|
+|flCertFileName|"cert.pem"|証明書のファイル名|
+|flKeySize|"2048"|秘密鍵のサイズ|
+|flOrg|"Procube"|証明書のORG|
+|flOU|""|証明書のOU|
+|flCountry|"JP"|証明書のCountry|
 
-CNはuidで指定された値で固定される。
+生成される証明書のCNは`-uid`で指定された値で固定される。
+
+**テンプレート**
+```
+/app # GOOS=linux GOARCH=amd64 \
+  go build -ldflags "\
+  -X main.flServerURL=http://127.0.0.1:2016/scep \
+  -X main.flPKeyFileName=key.pem \
+  -X main.flCertFileName=cert.pem \
+  -X main.flKeySize=2048 \
+  -X main.flORG=Procube \
+  -X main.flOU= \
+  -X main.flCountry=JP \
+  " -o /client/scepclient-amd64 ./cmd/scepclient
+```
+`GOOS`,`GOARCH`,`-o`オプションの値も実行される環境を想定して適宜設定する必要がある。
 
 ### depotフォルダ
 `/app/scepserver-opt ca -init`を実行された時にdepotフォルダが生成される。(Dockerfile内で実行され、デフォルトだと`/app/idm-depot`)
@@ -116,7 +131,7 @@ depotフォルダが保持するファイル一覧は以下の通り
 |/caweb/logo192.png|`GET`|webページを表示するのに使う|
 |/caweb/logo512.png|`GET`|webページを表示するのに使う|
 |/userObject|`GET`|`X-Mtls-Clientcert`ヘッダーに添付されているクライアント証明書（PEM形式の証明書をURLエンコードした文字列）を読み込んで署名検証する。検証が成功すれば添付された証明書のCNで`${SCEP_IDM_CERT_URL}/${CN}`の結果を返す。|
-|/download/`:filename`|`GET`|`/client`配下に置かれたファイルをダウンロードする。`scepclient-amd64`,`scepclient-arm`,`scepclient-arm64`が指定可能。|
+|/download/`:filename`|`GET`|`/client`配下に置かれたファイルをダウンロードする。[クライアント実行ファイル](#クライアント実行ファイル作成)で作成したファイルをここに置くことでユーザに配布できる。|
 |/scep?operation=GetCACaps|`GET`|linux実行ファイルで使う。認証局の情報を取得する。|
 |/scep?operation=GetCACert|`GET`|linux実行ファイルで使う。認証局の証明書を取得する。|
 |/scep?operation=PKIOperation|`POST`|linux実行ファイルで使う。CSRを認証する。|
@@ -137,3 +152,8 @@ curl {URL}/download/scepclient-amd64 > scepclient
 webページにアクセスし、ダウンロードボタンを押すことでPKCS#12形式でファイルをダウンロードできる。
 クエリで`http://localhost:2016/caweb?uid=test&secret=pass`などとすることで`uid`と`secret`の初期値を設定可能。
 また、PKCS#12ファイルのパスワードを設定できる。
+
+**補足**
+PKCS#12形式ファイル作成時には`/app/scepclient-opt`を参照して実行し、生成された証明書をPKCS#12形式に変換して作成している。
+
+なので、ブラウザ利用で生成される証明書の鍵サイズやOU情報などを書き換えたい場合は[クライアント実行ファイル作成](#クライアント実行ファイル作成)で`/app/scepclient-opt`を上書きビルドする必要がある。(flPKeyFileNameやflCertFileNameは指定すると正常に生成できなくなるので注意)

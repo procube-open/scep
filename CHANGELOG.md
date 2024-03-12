@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.4-rc.2
+
+### Patch Changes
+
+- make able to build scepclient file
+
 ## 0.0.4-rc.1
 
 ### Patch Changes

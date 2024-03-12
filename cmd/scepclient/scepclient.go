@@ -29,15 +29,15 @@ var (
 	version             = "unknown"
 	flVersion           = false
 	flServerURL         = "http://127.0.0.1:2016/scep"
-	flChallengePassword = "" //使用不可
+	flChallengePassword = ""
 	flPKeyFileName      = "key.pem"
 	flCertFileName      = "cert.pem"
-	flKeySize           = envString("SCEPCL_KEYSIZE", "2048")
-	flOrg               = envString("SCEPCL_ORG", "Procube")
-	flOU                = envString("SCEPCL_OU", "")
+	flKeySize           = "2048"
+	flOrg               = "Procube"
+	flOU                = ""
 	flLoc               = ""
 	flProvince          = ""
-	flCountry           = envString("SCEPCL_COUNTRY", "JP")
+	flCountry           = "JP"
 	flCACertMessage     = ""
 	flDNSName           = ""
 
