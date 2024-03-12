@@ -5,6 +5,7 @@
     "scep": "0.0.3"
   },
   "changesets": [
+    "gentle-hotels-begin",
     "poor-dragons-burn",
     "tasty-planes-end",
     "ten-bags-sniff"

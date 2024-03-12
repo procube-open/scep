@@ -105,7 +105,7 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
   -X main.flCountry=JP \
   " -o /client/scepclient-amd64 ./cmd/scepclient
 ```
-`GOOS`,`GOARCH`,`-o`オプションの値も実行される環境を想定して適宜設定する必要がある。
+`GOOS`,`GOARCH`オプションの値も実行される環境を想定して適宜設定する必要がある。
 
 ### depotフォルダ
 `/app/scepserver-opt ca -init`を実行された時にdepotフォルダが生成される。(Dockerfile内で実行され、デフォルトだと`/app/idm-depot`)
@@ -153,7 +153,7 @@ webページにアクセスし、ダウンロードボタンを押すことでPK
 クエリで`http://localhost:2016/caweb?uid=test&secret=pass`などとすることで`uid`と`secret`の初期値を設定可能。
 また、PKCS#12ファイルのパスワードを設定できる。
 
-**補足**
-PKCS#12形式ファイル作成時には`/app/scepclient-opt`を参照して実行し、生成された証明書をPKCS#12形式に変換して作成している。
+**補足**:
+PKCS#12形式ファイル作成時には`/app/scepclient-opt`を実行し、生成された証明書をPKCS#12形式に変換して作成している。
 
 なので、ブラウザ利用で生成される証明書の鍵サイズやOU情報などを書き換えたい場合は[クライアント実行ファイル作成](#クライアント実行ファイル作成)で`/app/scepclient-opt`を上書きビルドする必要がある。(flPKeyFileNameやflCertFileNameは指定すると正常に生成できなくなるので注意)

@@ -91,7 +91,7 @@ func (db *Depot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, error) {
 	return chain, key, nil
 }
 
-func (db *Depot) Put(cn string, crt *x509.Certificate) error {
+func (db *Depot) Put(cn string, crt *x509.Certificate, challnge string, url string) error {
 	if crt == nil || crt.Raw == nil {
 		return fmt.Errorf("%q does not specify a valid certificate for storage", cn)
 	}
