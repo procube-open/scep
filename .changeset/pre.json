@@ -5,6 +5,7 @@
     "scep": "0.0.3"
   },
   "changesets": [
+    "tasty-planes-end",
     "ten-bags-sniff"
   ]
 }

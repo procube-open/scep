@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.4-rc.1
+
+### Patch Changes
+
+- remove addHeader function
+
 ## 0.0.4-rc.0
 
 ### Patch Changes

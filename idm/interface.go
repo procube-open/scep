@@ -29,7 +29,17 @@ func GETUser(url string, challenge string) (User, error) {
 
 	// interface取得
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	addHeader(req)
+	header0 := envString("SCEP_IDM_HEADER0", "")
+	if header0 != "" && strings.Contains(header0, ":") {
+		header0kv := strings.Split(header0, ":")
+		req.Header.Add(header0kv[0], header0kv[1])
+	}
+	header1 := envString("SCEP_IDM_HEADER1", "")
+	if header1 != "" && strings.Contains(header1, ":") {
+		header1kv := strings.Split(header1, ":")
+		req.Header.Add(header1kv[0], header1kv[1])
+	}
+	req.Header.Add("HTTP_SYSTEMACCOUNT", "SCEP_SERVER")
 
 	client := new(http.Client)
 	resp, err := client.Do(req)
@@ -78,9 +88,19 @@ func PUTCertificate(url string, challenge string, crtStr string, notBefore time.
 	}
 	// interface取得
 	req, _ := http.NewRequest("PUT", puturl, bytes.NewBuffer(userJson))
-	addHeader(req)
-
+	header0 := envString("SCEP_IDM_HEADER0", "")
+	if header0 != "" && strings.Contains(header0, ":") {
+		header0kv := strings.Split(header0, ":")
+		req.Header.Add(header0kv[0], header0kv[1])
+	}
+	header1 := envString("SCEP_IDM_HEADER1", "")
+	if header1 != "" && strings.Contains(header1, ":") {
+		header1kv := strings.Split(header1, ":")
+		req.Header.Add(header1kv[0], header1kv[1])
+	}
+	req.Header.Add("HTTP_SYSTEMACCOUNT", "SCEP_SERVER")
 	req.Header.Add("Content-Type", "application/json")
+
 	client := new(http.Client)
 	resp, _err := client.Do(req)
 	if _err != nil {
@@ -98,7 +118,17 @@ func PUTCertificate(url string, challenge string, crtStr string, notBefore time.
 func GETUserByCN(url string) ([]byte, error) {
 	// interface取得
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	addHeader(req)
+	header0 := envString("SCEP_IDM_HEADER0", "")
+	if header0 != "" && strings.Contains(header0, ":") {
+		header0kv := strings.Split(header0, ":")
+		req.Header.Add(header0kv[0], header0kv[1])
+	}
+	header1 := envString("SCEP_IDM_HEADER1", "")
+	if header1 != "" && strings.Contains(header1, ":") {
+		header1kv := strings.Split(header1, ":")
+		req.Header.Add(header1kv[0], header1kv[1])
+	}
+	req.Header.Add("HTTP_SYSTEMACCOUNT", "SCEP_SERVER")
 
 	client := new(http.Client)
 	resp, err := client.Do(req)
@@ -128,7 +158,17 @@ func GETRCs(url string) ([]RevokeCertificate, error) {
 
 	// interface取得
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	addHeader(req)
+	header0 := envString("SCEP_IDM_HEADER0", "")
+	if header0 != "" && strings.Contains(header0, ":") {
+		header0kv := strings.Split(header0, ":")
+		req.Header.Add(header0kv[0], header0kv[1])
+	}
+	header1 := envString("SCEP_IDM_HEADER1", "")
+	if header1 != "" && strings.Contains(header1, ":") {
+		header1kv := strings.Split(header1, ":")
+		req.Header.Add(header1kv[0], header1kv[1])
+	}
+	req.Header.Add("HTTP_SYSTEMACCOUNT", "SCEP_SERVER")
 
 	client := new(http.Client)
 	resp, err := client.Do(req)
@@ -157,21 +197,4 @@ func envString(key, def string) string {
 		return env
 	}
 	return def
-}
-
-func addHeader(req *http.Request) {
-	header0 := envString("SCEP_IDM_HEADER0", "")
-	if header0 != "" && strings.Contains(header0, ":") {
-		header0kv := strings.Split(header0, ":")
-		req.Header.Add(header0kv[0], header0kv[1])
-	}
-	header1 := envString("SCEP_IDM_HEADER1", "")
-	if header1 != "" && strings.Contains(header1, ":") {
-		header1kv := strings.Split(header1, ":")
-		req.Header.Add(header1kv[0], header1kv[1])
-	}
-
-	auth8090HeaderName := "HTTP_SYSTEMACCOUNT"
-	auth8090HeaderValue := "SCEP_SERVER"
-	req.Header.Add(auth8090HeaderName, auth8090HeaderValue)
 }
