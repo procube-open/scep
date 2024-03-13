@@ -1,0 +1,13 @@
+{
+  "sftp":{
+    "title": "Download the certificate in PKCS#12 format",
+    "download": "Download",
+    "success": "Download succeeded",
+    "required": "Please input here",
+    "uid": "UID",
+    "secret": "User Password",
+    "password": "File Password",
+    "japanese": "日本語",
+    "english": "English"
+  }
+}

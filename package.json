@@ -1,7 +1,7 @@
 {
     "name": "scep",
     "private": true,
-    "version": "0.0.4-rc.5",
+    "version": "0.0.4-rc.6",
     "devDependencies": {
         "@changesets/cli": "^2.27.1",
         "@procube/cs-tools": "^1.0.8"

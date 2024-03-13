@@ -1,0 +1,13 @@
+{
+  "sftp": {
+    "title": "PKCS#12 形式で証明書をダウンロード",
+    "download": "ダウンロード",
+    "success": "ダウンロードが完了しました。",
+    "required": "ここを入力してください。",
+    "uid": "UID",
+    "secret": "ユーザパスワード",
+    "password": "ファイルパスワード",
+    "japanese": "日本語",
+    "english": "English"
+  }
+}

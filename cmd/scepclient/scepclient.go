@@ -291,7 +291,7 @@ func main() {
 	var (
 		flUid     = flag.String("uid", "", "uid of user")
 		flSecret  = flag.String("secret", "", "password of user")
-		flWorkDir = flag.String("workdir", ".", "create certificates under this directory")
+		flWorkDir = flag.String("out", ".", "create certificates under this directory")
 	)
 	flag.Parse()
 

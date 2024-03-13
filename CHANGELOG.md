@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.4-rc.6
+
+### Patch Changes
+
+- arrange frontend
+
 ## 0.0.4-rc.5
 
 ### Patch Changes
