@@ -28,7 +28,7 @@ import (
 var (
 	version             = "unknown"
 	flVersion           = false
-	flServerURL         = "http://127.0.0.1:2016/scep"
+	flServerURL         = "http://127.0.0.1:3000/scep"
 	flChallengePassword = ""
 	flPKeyFileName      = "key.pem"
 	flCertFileName      = "cert.pem"

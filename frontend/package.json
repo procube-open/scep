@@ -2,7 +2,6 @@
   "name": "scep-frontend",
   "version": "0.1.0",
   "private": true,
-  "proxy": "http://localhost:2016",
   "homepage": "/caweb",
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^6.5.1",

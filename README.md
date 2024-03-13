@@ -64,7 +64,7 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 | 名前 | デフォルト値|内容|
 |--|--|--|
 |**SCEP_IDM_CERT_URL**|""|証明書を更新したいユーザ一覧を取得するインターフェースのURL|
-|SCEP_HTTP_LISTEN_PORT|"2016"|サーバのポート番号|
+|SCEP_HTTP_LISTEN_PORT|"3000"|サーバのポート番号|
 |SCEP_FILE_DEPOT|"idm-depot"|depotフォルダのパス(/app配下)|
 |SCEP_CERT_VALID|"365"|証明書の有効期限|
 |SCEP_IDM_HEADER0|""|IDM呼び出し時に追加でヘッダーをつけることができる。変数を`:`で区切り、一つ目をキー、二つ目を値として扱う。値の例:`HTTP_REMOTEUSER:IDM_ADMIN`|
@@ -82,7 +82,7 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 | 名前 | デフォルト値|内容|
 |--|--|--|
 |version|"unknown"|バージョン情報|
-|flServerURL|"http://127.0.0.1:2016/scep"|接続するSCEPサーバのURL。`/scep`までパス指定が必要。|
+|flServerURL|"http://127.0.0.1:3000/scep"|接続するSCEPサーバのURL。`/scep`までパス指定が必要。|
 |flPKeyFileName|"key.pem"|秘密鍵のファイル名|
 |flCertFileName|"cert.pem"|証明書のファイル名|
 |flKeySize|"2048"|秘密鍵のサイズ|
@@ -96,7 +96,7 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 ```
 /app # GOOS=linux GOARCH=amd64 \
   go build -ldflags "\
-  -X main.flServerURL=http://127.0.0.1:2016/scep \
+  -X main.flServerURL=http://127.0.0.1:3000/scep \
   -X main.flPKeyFileName=key.pem \
   -X main.flCertFileName=cert.pem \
   -X main.flKeySize=2048 \
@@ -150,7 +150,7 @@ curl {URL}/download/scepclient-amd64 > scepclient
 
 ### ブラウザ利用
 webページにアクセスし、ダウンロードボタンを押すことでPKCS#12形式でファイルをダウンロードできる。
-クエリで`http://localhost:2016/caweb?uid=test&secret=pass`などとすることで`uid`と`secret`の初期値を設定可能。
+クエリで`http://localhost:3000/caweb?uid=test&secret=pass`などとすることで`uid`と`secret`の初期値を設定可能。
 また、PKCS#12ファイルのパスワードを設定できる。
 
 **補足**:
