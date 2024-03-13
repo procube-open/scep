@@ -48,7 +48,7 @@ type Service interface {
 type createInfo *struct {
 	Uid      string `json:"uid"`
 	Secret   string `json:"secret"`
-	Password string `json:"Password"`
+	Password string `json:"password"`
 }
 
 type service struct {
@@ -133,28 +133,31 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 		fmt.Println(err)
 		return nil, errors.New("invalid JSON")
 	}
-
+	if info.Password == "" {
+		return nil, errors.New("cannot set empty password")
+	}
 	if info.Uid != "" && info.Secret != "" {
 		os.RemoveAll("/tmp/" + info.Uid)
 		err = os.Mkdir("/tmp/"+info.Uid, 0770)
 		if err != nil {
 			fmt.Println(err)
-			return nil, errors.New("make workdir failed")
+			return nil, errors.New("failed to make output directory")
 		}
 		// cert.pem,key.pem,csr.pemを作成
 		fmt.Println("--- POST CSR myself ---")
-		cmd := exec.Command("./scepclient-opt", "-uid", info.Uid, "-secret", info.Secret, "-workdir", "/tmp/"+info.Uid+"/")
-		cmd.Stdin = strings.NewReader("some input")
+		cmd := exec.Command("./scepclient-opt", "-uid", info.Uid, "-secret", info.Secret, "-out", "/tmp/"+info.Uid+"/")
 		var out strings.Builder
 		cmd.Stdout = &out
 		err = cmd.Run()
 		if err != nil {
 			fmt.Println(err)
-			return nil, errors.New("post csr failed")
+			fmt.Println("--- finish ---")
+			return nil, errors.New("failed to post CSR")
 		}
 		fmt.Println(out.String())
 		fmt.Println("--- finish ---")
 	} else {
+		fmt.Println("--- finish ---")
 		return nil, errors.New("without uid or secret params")
 	}
 
@@ -163,48 +166,48 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 	key, err := os.ReadFile("/tmp/" + info.Uid + "/key.pem")
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("read key.pem failed")
+		return nil, errors.New("failed to read key.pem")
 	}
 	keyBlock, _ := pem.Decode([]byte(key))
 	k, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("parse key.pem failed")
+		return nil, errors.New("failed to parse key.pem")
 	}
 
 	//X509.Certificate読み込み
 	cert, err := os.ReadFile("/tmp/" + info.Uid + "/cert.pem")
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("read cert.pem failed")
+		return nil, errors.New("failed to read cert.pem")
 	}
 	certBlock, _ := pem.Decode([]byte(cert))
 	c, err := x509.ParseCertificate(certBlock.Bytes)
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("parse cert.pem failed")
+		return nil, errors.New("failed to parse cert.pem")
 	}
 
 	//X509.Certificate読み込み
 	caCert, err := os.ReadFile(depotPath + "/ca.crt")
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("read ca.crt failed")
+		return nil, errors.New("failed to read ca.crt")
 	}
 	caCertBlock, _ := pem.Decode([]byte(caCert))
 	ca, err := x509.ParseCertificate(caCertBlock.Bytes)
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("parse ca.crt failed")
+		return nil, errors.New("failed to parse ca.crt")
 	}
 	var caCerts []*x509.Certificate
 	caCerts = append(caCerts, ca)
 
 	//PKCS12エンコード
-	p12, err := pkcs12.Modern2023.Encode(k, c, caCerts, info.Password)
+	p12, err := pkcs12.LegacyDES.Encode(k, c, caCerts, info.Password)
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
-		return nil, errors.New("pkcs12 encode failed")
+		return nil, errors.New("PKCS12 encoding failed ")
 	}
 
 	//ファイルを掃除

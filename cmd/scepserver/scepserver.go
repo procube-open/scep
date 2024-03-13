@@ -67,7 +67,7 @@ func main() {
 	var (
 		flVersion           = flag.Bool("version", false, "prints version information")
 		flHTTPAddr          = flag.String("http-addr", envString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
-		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "2016"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
+		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
 		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
 		flCAPass            = flag.String("capass", envString("SCEP_CA_PASS", ""), "passwd for the ca.key")
 		flClDuration        = flag.String("crtvalid", envString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
@@ -223,7 +223,7 @@ func caMain(cmd *flag.FlagSet) int {
 		flDepotPath  = cmd.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
 		flCreateCRL  = cmd.Bool("create-crl", false, "create a new CRL")
-		flPort       = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "2016"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
+		flPort       = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
 		flIDMURL     = cmd.String("idmurl", envString("SCEPCA_IDM_CRL_URL", ""), "URL of IDManager")
 		flYears      = cmd.Int("years", envInt("SCEPCA_YEARS", 10), "default CA years")
 		flKeySize    = cmd.Int("keySize", envInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")

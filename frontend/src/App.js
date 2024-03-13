@@ -1,13 +1,37 @@
 import React from 'react';
+import { Controller, useForm } from "react-hook-form";
 import './App.css';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
+import {
+  Box,
+  TextField,
+  Button,
+  Typography,
+  InputAdornment,
+  IconButton,
+  ToggleButton,
+  ToggleButtonGroup
+} from '@mui/material'
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import CircularProgress from '@mui/material/CircularProgress';
+import { ToastContainer, toast, Bounce } from 'react-toastify';
+import { useTranslation } from "react-i18next";
+import LanguageIcon from '@mui/icons-material/Language';
+import i18n from "i18next";
+import 'react-toastify/dist/ReactToastify.css';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
   const uid = queryParameters.get("uid")
   const secret = queryParameters.get("secret")
+  const { t } = useTranslation();
   const [isRevealPassword, setIsRevealPassword] = React.useState(false);
+  const [isDownloading, setIsDownloading] = React.useState(false);
+  const [language, setLanguage] = React.useState('ja');
+
+  React.useEffect(() => {
+    i18n.changeLanguage(language)
+  }, [language])
 
   function download(blob, filename) {
     const url = window.URL.createObjectURL(blob);
@@ -24,57 +48,216 @@ function App() {
   const togglePassword = () => {
     setIsRevealPassword((prevState) => !prevState);
   }
+  const PasswordToggleButton = () => (
+    <IconButton
+      onClick={togglePassword}
+      children={isRevealPassword ? <VisibilityIcon /> : <VisibilityOffIcon />}
+    />
+  )
+  const LanguageToggleButtons = (props) => {
+    const handleChange = (
+      event,
+      lang,
+    ) => {
+      setLanguage(lang);
+    };
 
-  async function handleSubmit(e) {
-    e.preventDefault();
 
-    const form = e.target;
-    const formData = new FormData(form);
-    const formJson = Object.fromEntries(formData.entries());
+    return (
+      <Box {...props}>
+        <LanguageIcon sx={{ mt: 1, mr: 1 }} fontSize="large" color="action"/>
+        <ToggleButtonGroup
+          value={language}
+          exclusive
+          onChange={handleChange}
+        >
+          <ToggleButton value="ja">
+            {t("sftp.japanese")}
+          </ToggleButton>
+          <ToggleButton value="en">
+            {t("sftp.english")}
+          </ToggleButton>
+        </ToggleButtonGroup >
+      </Box>
+    );
+  }
+  const {
+    handleSubmit,
+    control,
+  } = useForm({
+    mode: "onBlur",
+    criteriaMode: "all",
+    shouldFocusError: false,
+  });
 
-    const res = await fetch('/scep?operation=CreatePKCS12', { method: "POST", body: JSON.stringify(formJson) });
-    if(res.status === 200) {
+  const onSubmit = async (data) => {
+    setIsDownloading(true)
+    const res = await fetch('/scep?operation=CreatePKCS12', {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data)
+    });
+    if (res.status === 200) {
+      setIsDownloading(false)
       const blob = await res.blob()
-      download(blob,formJson.uid + ".p12")
+      download(blob, data.uid + ".p12")
+      toast.success(t("sftp.success"), {
+        position: "bottom-left",
+        autoClose: 5000,
+        hideProgressBar: true,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
+        theme: "light",
+        transition: Bounce,
+      })
     }
     else {
-      alert(res.status + " " + await res.text())
+      setIsDownloading(false)
+      toast.error(await res.text(), {
+        position: "bottom-left",
+        autoClose: 5000,
+        hideProgressBar: true,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
+        theme: "light",
+        transition: Bounce,
+      });
     }
-    
-  }
+  };
 
   return (
-    <div className="Form">
-      <form method="post" onSubmit={handleSubmit}>
-        <label>
-          PKCS#12 形式でクライアント証明書をダウンロード
-        </label>
-        <hr />
-        <label className="Uid">
-          UID: <input name="uid" defaultValue={uid} />
-        </label>
-        <label className="Secret">
-          Secret: <input name="secret" defaultValue={secret} />
-        </label>
-        <hr />
-        <label className="Password">
-          ファイルパスワード:
-          <input name="password" type={isRevealPassword ? 'text' : 'password'} />
-          <span
-            onClick={togglePassword}
-            role="presentation"
-          >
-            {isRevealPassword ? (
-              <FontAwesomeIcon className="Toggle-button" icon={faEye} />
-            ) : (
-              <FontAwesomeIcon className="Toggle-button" icon={faEyeSlash} />
+    <Box
+      component="form"
+      sx={{
+        width: 1,
+        height: '100vh',
+        backgroundColor: "#efefef",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+      }}
+      onSubmit={handleSubmit(onSubmit)}
+    >
+      <ToastContainer />
+      <Box sx={{
+        p: 3,
+        m: 2,
+        borderRadius: 2,
+        backgroundColor: "#ffffff",
+        display: "flex",
+        flexDirection: "column",
+      }}>
+        <Typography variant="h5" sx={{ width: 1,ml:2 }}>
+          {t("sftp.title")}
+        </Typography>
+        <Box sx={{ width: 1, diplay: "flex-inline" }}>
+          <Controller
+            name="uid"
+            control={control}
+            rules={{
+              required: t("sftp.required")
+            }}
+            render={({
+              field: { onChange, onBlur, value },
+              fieldState: { error },
+            }) => (
+              <TextField
+                label={t("sftp.uid")}
+                required
+                value={value}
+                defaultValue={uid}
+                sx={{
+                  width: "45%",
+                }}
+                variant="outlined"
+                margin="dense"
+                onChange={onChange}
+                onBlur={onBlur}
+                error={Boolean(error)}
+                helperText={error?.message}
+              />
             )}
-          </span>
-        </label>
-        <hr />
-        <button type="submit">ダウンロード</button>
-      </form>
-    </div>
+          />
+          <Controller
+            name="secret"
+            control={control}
+            rules={{
+              required: t("sftp.required")
+            }}
+            render={({
+              field: { onChange, onBlur, value },
+              fieldState: { error },
+            }) => (
+              <TextField
+                label={t("sftp.secret")}
+                required
+                value={value}
+                defaultValue={secret}
+                sx={{
+                  width: "45%",
+                  ml: 2
+                }}
+                variant="outlined"
+                margin="dense"
+                onChange={onChange}
+                onBlur={onBlur}
+                error={Boolean(error)}
+                helperText={error?.message}
+              />
+            )}
+          />
+        </Box>
+        <Controller
+          name="password"
+          control={control}
+          rules={{
+            required: t("sftp.required")
+          }}
+          render={({
+            field: { onChange, onBlur, value },
+            fieldState: { error },
+          }) => (
+            <TextField
+              label={t("sftp.password")}
+              required
+              value={value}
+              variant="outlined"
+              margin="dense"
+              onChange={onChange}
+              onBlur={onBlur}
+              error={Boolean(error)}
+              helperText={error?.message}
+              type={isRevealPassword ? 'text' : 'password'}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <PasswordToggleButton />
+                  </InputAdornment>
+                )
+              }}
+            />
+          )}
+        />
+        <Button
+          startIcon={isDownloading && <CircularProgress size={20} color="inherit" />}
+          sx={{ mt: 2 }}
+          type="submit"
+          disabled={isDownloading}
+          color="primary"
+          variant="contained"
+          size="large"
+        >
+          {t("sftp.download")}
+        </Button>
+      </Box>
+      <LanguageToggleButtons sx={{ mr: 2, justifyContent: "flex-end", display: "inline-flex" }} />
+    </Box>
   );
 }
 

@@ -140,7 +140,7 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 		}
 	}
 	logger := kitlog.NewNopLogger()
-	e := scepserver.MakeServerEndpoints(svc)
+	e := scepserver.MakeServerEndpoints(svc, "")
 	handler := scepserver.MakeHTTPHandler(e, svc, logger)
 	server := httptest.NewServer(handler)
 	teardown := func() {
@@ -153,7 +153,7 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 
 type noopDepot struct{ depot.Depot }
 
-func (d *noopDepot) Put(name string, crt *x509.Certificate) error {
+func (d *noopDepot) Put(name string, crt *x509.Certificate, challenge string, url string) error {
 	return nil
 }
 

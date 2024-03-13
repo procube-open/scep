@@ -28,16 +28,16 @@ import (
 var (
 	version             = "unknown"
 	flVersion           = false
-	flServerURL         = "http://127.0.0.1:2016/scep"
-	flChallengePassword = "" //使用不可
+	flServerURL         = "http://127.0.0.1:3000/scep"
+	flChallengePassword = ""
 	flPKeyFileName      = "key.pem"
 	flCertFileName      = "cert.pem"
-	flKeySize           = envString("SCEPCL_KEYSIZE", "2048")
-	flOrg               = envString("SCEPCL_ORG", "Procube")
-	flOU                = envString("SCEPCL_OU", "")
+	flKeySize           = "2048"
+	flOrg               = "Procube"
+	flOU                = ""
 	flLoc               = ""
 	flProvince          = ""
-	flCountry           = envString("SCEPCL_COUNTRY", "JP")
+	flCountry           = "JP"
 	flCACertMessage     = ""
 	flDNSName           = ""
 
@@ -291,7 +291,7 @@ func main() {
 	var (
 		flUid     = flag.String("uid", "", "uid of user")
 		flSecret  = flag.String("secret", "", "password of user")
-		flWorkDir = flag.String("workdir", ".", "create certificates under this directory")
+		flWorkDir = flag.String("out", ".", "create certificates under this directory")
 	)
 	flag.Parse()
 

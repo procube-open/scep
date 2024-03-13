@@ -1,5 +1,61 @@
 # scep
 
+## 0.0.4
+
+### Patch Changes
+
+- 4f193c8: change pkcs12 econding method
+- 276bd85: fix CI
+- 6b12010: arrange frontend
+- b31288f: make able to build scepclient file
+- e609bd5: remove addHeader function
+- a953c2e: add /userObject API
+  add SCEP_IDM_HEADER0,SCEP_IDM_HEADER1 environment variables
+- d6c0a4e: change listen port
+
+## 0.0.4-rc.6
+
+### Patch Changes
+
+- arrange frontend
+
+## 0.0.4-rc.5
+
+### Patch Changes
+
+- change listen port
+
+## 0.0.4-rc.4
+
+### Patch Changes
+
+- change pkcs12 econding method
+
+## 0.0.4-rc.3
+
+### Patch Changes
+
+- fix CI
+
+## 0.0.4-rc.2
+
+### Patch Changes
+
+- make able to build scepclient file
+
+## 0.0.4-rc.1
+
+### Patch Changes
+
+- remove addHeader function
+
+## 0.0.4-rc.0
+
+### Patch Changes
+
+- add /userObject API
+  add SCEP_IDM_HEADER0,SCEP_IDM_HEADER1 environment variables
+
 ## 0.0.3
 
 ### Patch Changes
