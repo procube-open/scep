@@ -31,11 +31,13 @@ function App() {
     const form = e.target;
     const formData = new FormData(form);
     const formJson = Object.fromEntries(formData.entries());
-
+    if (!formJson.uid || formJson.uid == "") return alert("UIDを設定してください。")
+    if (!formJson.secret || formJson.secret == "") return alert("Secretを設定してください。")
+    if (!formJson.password || formJson.password == "") return alert("ファイルパスワードを設定してください。")
     const res = await fetch('/scep?operation=CreatePKCS12', { method: "POST", body: JSON.stringify(formJson) });
-    if(res.status === 200) {
+    if (res.status === 200) {
       const blob = await res.blob()
-      download(blob,formJson.uid + ".p12")
+      download(blob, formJson.uid + ".p12")
     }
     else {
       alert(res.status + " " + await res.text())

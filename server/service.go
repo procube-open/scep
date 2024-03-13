@@ -133,7 +133,9 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 		fmt.Println(err)
 		return nil, errors.New("invalid JSON")
 	}
-
+	if info.Password == "" {
+		return nil, errors.New("cannot set empty password")
+	}
 	if info.Uid != "" && info.Secret != "" {
 		os.RemoveAll("/tmp/" + info.Uid)
 		err = os.Mkdir("/tmp/"+info.Uid, 0770)
@@ -201,7 +203,7 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 	caCerts = append(caCerts, ca)
 
 	//PKCS12エンコード
-	p12, err := pkcs12.Modern2023.Encode(k, c, caCerts, info.Password)
+	p12, err := pkcs12.LegacyDES.Encode(k, c, caCerts, info.Password)
 	if err != nil {
 		fmt.Printf("ERROR:%v\n", err)
 		return nil, errors.New("pkcs12 encode failed")

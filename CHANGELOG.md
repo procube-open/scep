@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.4-rc.4
+
+### Patch Changes
+
+- change pkcs12 econding method
+
 ## 0.0.4-rc.3
 
 ### Patch Changes
