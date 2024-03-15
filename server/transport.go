@@ -313,7 +313,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := idm.GETUserByCN(envString("SCEP_IDM_CERT_URL", "") + "/" + cert.Subject.CommonName)
+	body, err := idm.GETUserByCN(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
 	if err != nil {
 		if err.Error() == "NotFound" {
 			res := ErrResp_4{
