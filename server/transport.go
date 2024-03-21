@@ -207,27 +207,42 @@ func staticHandler(w http.ResponseWriter, r *http.Request) {
 	} else if params["script"] == "css" {
 		w.Header().Set("Content-Type", "text/css")
 	}
-	data, _ := os.ReadFile("frontend/build/static/" + params["script"] + "/" + params["filename"])
+	data, err := os.ReadFile("frontend/build/static/" + params["script"] + "/" + params["filename"])
+	if err != nil {
+		w.Write([]byte(err.Error()))
+	}
 	w.Write(data)
 }
 
 func manifestHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/build/manifest.json")
+	data, err := os.ReadFile("frontend/build/manifest.json")
+	if err != nil {
+		w.Write([]byte(err.Error()))
+	}
 	w.Write(data)
 }
 
 func faviconHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/build/favicon.ico")
+	data, err := os.ReadFile("frontend/build/favicon.ico")
+	if err != nil {
+		w.Write([]byte(err.Error()))
+	}
 	w.Write(data)
 }
 
 func logo192Handler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/build/logo192.png")
+	data, err := os.ReadFile("frontend/build/logo192.png")
+	if err != nil {
+		w.Write([]byte(err.Error()))
+	}
 	w.Write(data)
 }
 
 func logo512Handler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/build/logo512.png")
+	data, err := os.ReadFile("frontend/build/logo512.png")
+	if err != nil {
+		w.Write([]byte(err.Error()))
+	}
 	w.Write(data)
 }
 
@@ -235,7 +250,7 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	data, err := os.ReadFile("/client/" + params["client"])
 	if err != nil {
-		w.Write([]byte(params["client"] + " not found"))
+		w.Write([]byte(err.Error()))
 	} else {
 		w.Write(data)
 	}
@@ -243,10 +258,9 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 
 func userHandler(w http.ResponseWriter, r *http.Request) {
 	encodedCert := r.Header["X-Mtls-Clientcert"]
-
+	w.Header().Set("Content-Type", "application/javascript")
 	if len(encodedCert) != 1 {
 		res := ErrResp_1{Message: "No Certificate"}
-		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(http.StatusInternalServerError)
 		b, _ := json.Marshal(res)
 		w.Write(b)
@@ -256,7 +270,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 	decodedCert, err := url.QueryUnescape(encodedCert[0])
 	if err != nil {
 		res := ErrResp_1{Message: "Decode header failed"}
-		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(http.StatusInternalServerError)
 		b, _ := json.Marshal(res)
 		w.Write(b)
@@ -267,7 +280,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 	cert, err := x509.ParseCertificate(certBlock.Bytes)
 	if err != nil {
 		res := ErrResp_1{Message: "Parse Certificate failed"}
-		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(http.StatusInternalServerError)
 		b, _ := json.Marshal(res)
 		w.Write(b)
@@ -282,7 +294,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 			NotAfter:  cert.NotAfter.String(),
 			Date:      now.String(),
 		}
-		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(http.StatusUnauthorized)
 		b, _ := json.Marshal(res)
 		w.Write(b)
@@ -306,7 +317,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 			Certificate: string(decodedCert),
 			CaCert:      string(ca_crt),
 		}
-		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(http.StatusUnauthorized)
 		b, _ := json.Marshal(res)
 		w.Write(b)
@@ -320,7 +330,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 				Message: "User Not Found",
 				User:    cert.Subject.CommonName,
 			}
-			w.Header().Set("Content-Type", "application/javascript")
 			w.WriteHeader(http.StatusUnauthorized)
 			b, _ := json.Marshal(res)
 			w.Write(b)
@@ -329,14 +338,12 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 			res := ErrResp_1{
 				Message: err.Error(),
 			}
-			w.Header().Set("Content-Type", "application/javascript")
 			w.WriteHeader(http.StatusBadGateway)
 			b, _ := json.Marshal(res)
 			w.Write(b)
 			return
 		}
 	}
-	w.Header().Set("Content-Type", "application/javascript")
 	w.Write(body)
 }
 

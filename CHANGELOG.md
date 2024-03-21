@@ -11,6 +11,7 @@
 ### Patch Changes
 
 - Change IDM URL for User Object
+- fix code
 
 ## 0.0.4
 

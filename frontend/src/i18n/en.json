@@ -1,5 +1,5 @@
 {
-  "sftp":{
+  "caweb":{
     "title": "Download the certificate in PKCS#12 format",
     "download": "Download",
     "success": "Download succeeded",
