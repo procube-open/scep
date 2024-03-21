@@ -5,6 +5,7 @@
     "scep": "0.0.4"
   },
   "changesets": [
-    "lazy-queens-deliver"
+    "lazy-queens-deliver",
+    "modern-doors-think"
   ]
 }

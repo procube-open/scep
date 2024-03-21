@@ -258,7 +258,7 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 
 func userHandler(w http.ResponseWriter, r *http.Request) {
 	encodedCert := r.Header["X-Mtls-Clientcert"]
-	w.Header().Set("Content-Type", "application/javascript")
+	w.Header().Set("Content-Type", "application/json")
 	if len(encodedCert) != 1 {
 		res := ErrResp_1{Message: "No Certificate"}
 		w.WriteHeader(http.StatusInternalServerError)
