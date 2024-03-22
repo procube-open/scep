@@ -5,6 +5,12 @@
 ### Patch Changes
 
 - 8a833dd: Change IDM URL for User Object
+## 0.0.5-rc.2
+
+### Patch Changes
+
+- split idmurl when get or put
+
 ## 0.0.5-rc.1
 
 ### Patch Changes

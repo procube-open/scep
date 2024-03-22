@@ -67,7 +67,7 @@ const (
 )
 
 // Put adds a certificate to the depot
-func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, idmUrl string) error {
+func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, putUrl string) error {
 	if crt == nil {
 		return errors.New("crt is nil")
 	}
@@ -79,7 +79,7 @@ func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, idmU
 	if strings.Contains(challenge, "\\") {
 		pem := pemCert(data)
 		crtStr := *(*string)(unsafe.Pointer(&pem))
-		idm.PUTCertificate(idmUrl, challenge, crtStr, crt.NotBefore, crt.NotAfter)
+		idm.PUTCertificate(putUrl+"/"+cn, crtStr, crt.NotBefore, crt.NotAfter)
 	}
 	if err := os.MkdirAll(d.dirPath, 0755); err != nil {
 		return err

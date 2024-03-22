@@ -75,8 +75,8 @@ func IDMChallengeMiddleware(url string, next CSRSignerContext) CSRSignerContextF
 }
 
 // SignCSRAdapter adapts a next (i.e. no context) to a context signer.
-func SignCSRAdapter(next CSRSigner, idmUrl string) CSRSignerContextFunc {
+func SignCSRAdapter(next CSRSigner, putUrl string) CSRSignerContextFunc {
 	return func(_ context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		return next.SignCSR(m, idmUrl)
+		return next.SignCSR(m, putUrl)
 	}
 }

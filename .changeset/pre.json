@@ -6,6 +6,7 @@
   },
   "changesets": [
     "lazy-queens-deliver",
+    "metal-foxes-allow",
     "modern-doors-think"
   ]
 }
