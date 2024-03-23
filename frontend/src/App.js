@@ -72,10 +72,10 @@ function App() {
           onChange={handleChange}
         >
           <ToggleButton value="ja">
-            {t("sftp.japanese")}
+            {t("caweb.japanese")}
           </ToggleButton>
           <ToggleButton value="en">
-            {t("sftp.english")}
+            {t("caweb.english")}
           </ToggleButton>
         </ToggleButtonGroup >
       </Box>
@@ -103,7 +103,7 @@ function App() {
       setIsDownloading(false)
       const blob = await res.blob()
       download(blob, data.uid + ".p12")
-      toast.success(t("sftp.success"), {
+      toast.success(t("caweb.success"), {
         position: "bottom-left",
         autoClose: 5000,
         hideProgressBar: true,
@@ -154,21 +154,21 @@ function App() {
         flexDirection: "column",
       }}>
         <Typography variant="h5" sx={{ width: 1,ml:2 }}>
-          {t("sftp.title")}
+          {t("caweb.title")}
         </Typography>
         <Box sx={{ width: 1, diplay: "flex-inline" }}>
           <Controller
             name="uid"
             control={control}
             rules={{
-              required: t("sftp.required")
+              required: t("caweb.required")
             }}
             render={({
               field: { onChange, onBlur, value },
               fieldState: { error },
             }) => (
               <TextField
-                label={t("sftp.uid")}
+                label={t("caweb.uid")}
                 required
                 value={value}
                 defaultValue={uid}
@@ -188,14 +188,14 @@ function App() {
             name="secret"
             control={control}
             rules={{
-              required: t("sftp.required")
+              required: t("caweb.required")
             }}
             render={({
               field: { onChange, onBlur, value },
               fieldState: { error },
             }) => (
               <TextField
-                label={t("sftp.secret")}
+                label={t("caweb.secret")}
                 required
                 value={value}
                 defaultValue={secret}
@@ -217,14 +217,14 @@ function App() {
           name="password"
           control={control}
           rules={{
-            required: t("sftp.required")
+            required: t("caweb.required")
           }}
           render={({
             field: { onChange, onBlur, value },
             fieldState: { error },
           }) => (
             <TextField
-              label={t("sftp.password")}
+              label={t("caweb.password")}
               required
               value={value}
               variant="outlined"
@@ -253,7 +253,7 @@ function App() {
           variant="contained"
           size="large"
         >
-          {t("sftp.download")}
+          {t("caweb.download")}
         </Button>
       </Box>
       <LanguageToggleButtons sx={{ mr: 2, justifyContent: "flex-end", display: "inline-flex" }} />

@@ -1,16 +1,37 @@
 # scep
 
+## 0.0.6
+
+### Patch Changes
+
+- 3cedade: fix code
+- 3539ba2: split idmurl when get or put
+- c059562: fix header
+
 ## 0.0.5
 
 ### Patch Changes
 
 - 8a833dd: Change IDM URL for User Object
 
+## 0.0.5-rc.2
+
+### Patch Changes
+
+- split idmurl when get or put
+
+## 0.0.5-rc.1
+
+### Patch Changes
+
+- fix header
+
 ## 0.0.5-rc.0
 
 ### Patch Changes
 
 - Change IDM URL for User Object
+- fix code
 
 ## 0.0.4
 

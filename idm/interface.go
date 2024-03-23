@@ -13,8 +13,11 @@ import (
 )
 
 type User *struct {
-	Uid         string `json:"uid"`
-	Password    string `json:"password"`
+	Uid      string `json:"uid"`
+	Password string `json:"password"`
+}
+
+type Cert struct {
 	CertIss     string `json:"certIss"`
 	CertExp     string `json:"certExp"`
 	Certificate string `json:"certificate"`
@@ -71,23 +74,20 @@ func GETUser(url string, challenge string) (User, error) {
 	}
 }
 
-func PUTCertificate(url string, challenge string, crtStr string, notBefore time.Time, notAfter time.Time) error {
-	user, err := GETUser(url, challenge)
-	if err != nil {
-		fmt.Println("GET Error", err)
-		return errors.New("GET Error")
+func PUTCertificate(url string, crtStr string, notBefore time.Time, notAfter time.Time) error {
+	cert := Cert{
+		Certificate: crtStr,
+		CertIss:     notBefore.Format("2006-01-02T15:04:05.000Z"),
+		CertExp:     notAfter.Format("2006-01-02T15:04:05.000Z"),
 	}
-	puturl := url + "/" + user.Uid
-	user.Certificate = crtStr
-	user.CertIss = notBefore.Format("2006-01-02T15:04:05.000Z")
-	user.CertExp = notAfter.Format("2006-01-02T15:04:05.000Z")
-	userJson, err := json.Marshal(user)
+
+	certJson, err := json.Marshal(cert)
 	if err != nil {
 		fmt.Println("Encode Error", err)
-		return errors.New("Encode Error")
+		return errors.New("encode error")
 	}
 	// interface取得
-	req, _ := http.NewRequest("PUT", puturl, bytes.NewBuffer(userJson))
+	req, _ := http.NewRequest("PUT", url, bytes.NewBuffer(certJson))
 	header0 := envString("SCEP_IDM_HEADER0", "")
 	if header0 != "" && strings.Contains(header0, ":") {
 		header0kv := strings.Split(header0, ":")

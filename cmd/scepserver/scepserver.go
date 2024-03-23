@@ -77,7 +77,8 @@ func main() {
 		flDebug             = flag.Bool("debug", envBool("SCEP_LOG_DEBUG"), "enable debug logging")
 		flLogJSON           = flag.Bool("log-json", envBool("SCEP_LOG_JSON"), "output JSON logs")
 		flSignServerAttrs   = flag.Bool("sign-server-attrs", envBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
-		flIDMURL            = flag.String("idmurl", envString("SCEP_IDM_CERT_URL", ""), "URL of IDManager")
+		flGetURL            = flag.String("geturl", envString("SCEP_IDM_GET_URL", ""), "URL of IDManager for GET users")
+		flPutURL            = flag.String("puturl", envString("SCEP_IDM_PUT_URL", ""), "URL of IDManager for PUT certs")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -172,17 +173,22 @@ func main() {
 			signerOpts = append(signerOpts, scepdepot.WithSeverAttrs())
 		}
 
-		var idmUrl string
-		if *flIDMURL != "" {
-			idmUrl = *flIDMURL
+		var getUrl string
+		if *flGetURL != "" {
+			getUrl = *flGetURL
 		}
 
-		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...), idmUrl)
+		var putUrl string
+		if *flPutURL != "" {
+			putUrl = *flPutURL
+		}
+
+		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...), putUrl)
 		if *flChallengePassword != "" {
 			signer = scepserver.StaticChallengeMiddleware(*flChallengePassword, signer)
 		}
-		if idmUrl != "" {
-			signer = scepserver.IDMChallengeMiddleware(idmUrl, signer)
+		if getUrl != "" {
+			signer = scepserver.IDMChallengeMiddleware(getUrl, signer)
 		}
 		if csrVerifier != nil {
 			signer = csrverifier.Middleware(csrVerifier, signer)
@@ -224,7 +230,7 @@ func caMain(cmd *flag.FlagSet) int {
 		flInit       = cmd.Bool("init", false, "create a new CA")
 		flCreateCRL  = cmd.Bool("create-crl", false, "create a new CRL")
 		flPort       = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
-		flIDMURL     = cmd.String("idmurl", envString("SCEPCA_IDM_CRL_URL", ""), "URL of IDManager")
+		flCRLURL     = cmd.String("crlurl", envString("SCEPCA_IDM_CRL_URL", ""), "URL of IDManager")
 		flYears      = cmd.Int("years", envInt("SCEPCA_YEARS", 10), "default CA years")
 		flKeySize    = cmd.Int("keySize", envInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
 		flCommonName = cmd.String("common_name", envString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
@@ -257,7 +263,7 @@ func caMain(cmd *flag.FlagSet) int {
 			}
 		}
 		crts, key, _ := depot.CA([]byte(*flCAPass))
-		CreateCRL(crts[0], key, *flDepotPath, *flIDMURL, *flPort)
+		CreateCRL(crts[0], key, *flDepotPath, *flCRLURL, *flPort)
 	}
 
 	return 0
@@ -428,7 +434,7 @@ func CreateCRL(cert *x509.Certificate, key *rsa.PrivateKey, depotPath string, ur
 
 }
 
-func GetSerialNumbers(depotPath string, idmUrl string) []pkix.RevokedCertificate {
+func GetSerialNumbers(depotPath string, crlUrl string) []pkix.RevokedCertificate {
 	var rcs []pkix.RevokedCertificate
 	var rc pkix.RevokedCertificate
 
@@ -459,7 +465,7 @@ func GetSerialNumbers(depotPath string, idmUrl string) []pkix.RevokedCertificate
 	}
 
 	//idmから取得
-	certs, err := idm.GETRCs(idmUrl)
+	certs, err := idm.GETRCs(crlUrl)
 	if err != nil {
 		fmt.Println(err)
 	}
