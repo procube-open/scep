@@ -1,5 +1,17 @@
 # scep
 
+## 0.0.5
+
+### Patch Changes
+
+- 8a833dd: Change IDM URL for User Object
+
+## 0.0.5-rc.0
+
+### Patch Changes
+
+- Change IDM URL for User Object
+
 ## 0.0.4
 
 ### Patch Changes

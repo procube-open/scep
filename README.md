@@ -64,6 +64,7 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 | 名前 | デフォルト値|内容|
 |--|--|--|
 |**SCEP_IDM_CERT_URL**|""|証明書を更新したいユーザ一覧を取得するインターフェースのURL|
+|**SCEP_IDM_USERS_URL**|""|証明書の検証成功後にユーザの属性情報を取得するインターフェースのURL|
 |SCEP_HTTP_LISTEN_PORT|"3000"|サーバのポート番号|
 |SCEP_FILE_DEPOT|"idm-depot"|depotフォルダのパス(/app配下)|
 |SCEP_CERT_VALID|"365"|証明書の有効期限|
