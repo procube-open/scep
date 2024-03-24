@@ -267,7 +267,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decodedCert, err := url.QueryUnescape(encodedCert[0])
+	decodedCert, err := url.PathUnescape(encodedCert[0])
 	if err != nil {
 		res := ErrResp_1{Message: "Decode header failed"}
 		w.WriteHeader(http.StatusInternalServerError)

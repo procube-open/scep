@@ -1,5 +1,17 @@
 # scep
 
+## 0.0.7
+
+### Patch Changes
+
+- 74a6526: Fix url decode class
+
+## 0.0.7-rc.0
+
+### Patch Changes
+
+- Fix url decode class
+
 ## 0.0.6
 
 ### Patch Changes
