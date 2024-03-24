@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.7-rc.0
+
+### Patch Changes
+
+- Fix url decode class
+
 ## 0.0.6
 
 ### Patch Changes

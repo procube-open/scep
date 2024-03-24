@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "scep": "0.0.6"
+  },
+  "changesets": [
+    "tricky-kings-decide"
+  ]
+}
