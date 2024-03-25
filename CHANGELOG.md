@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.8-rc.0
+
+### Patch Changes
+
+- fix etc
+
 ## 0.0.7
 
 ### Patch Changes

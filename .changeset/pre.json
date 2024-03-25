@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "scep": "0.0.7"
+  },
+  "changesets": [
+    "rude-adults-begin"
+  ]
+}

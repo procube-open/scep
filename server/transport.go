@@ -322,8 +322,16 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(b)
 		return
 	}
+	u, err := url.Parse(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
+	if err != nil {
+		res := ErrResp_1{Message: "Failed to parse url"}
+		w.WriteHeader(http.StatusInternalServerError)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
 
-	body, err := idm.GETUserByCN(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
+	body, err := idm.GETUserByCN(u.String())
 	if err != nil {
 		if err.Error() == "NotFound" {
 			res := ErrResp_4{
