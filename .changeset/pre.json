@@ -5,6 +5,7 @@
     "scep": "0.0.7"
   },
   "changesets": [
-    "rude-adults-begin"
+    "rude-adults-begin",
+    "tame-trees-compare"
   ]
 }

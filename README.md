@@ -17,7 +17,7 @@ make
 # IDM
 
 ## ユーザ取得
-指定されたUIDとSecretパラメータが一致するものを検索するために、IDMからユーザ一覧を取得する。
+指定されたUIDでIDMからユーザオブジェクトを取得する。
 ### インタフェース定義
 IDMのインタフェース定義で参照できる必要のある属性名は以下の通り。
 
@@ -28,7 +28,7 @@ IDMのインタフェース定義で参照できる必要のある属性名は�
 
 **補足**
 - 環境変数 **SCEP_IDM_GET_URL** で指定されたURLにGETでJSONを取得しに行く
-- `password`属性は平文化されている必要がある。
+- `password`属性は平文化されている必要があり、`-secret`で指定された値と照合する
 - フィルタ式で証明書が更新可能なもののみを取得できるようにする。
 
 ## 証明書更新
@@ -125,7 +125,7 @@ depotフォルダが保持するファイル一覧は以下の通り
   -X main.flPKeyFileName=key.pem \
   -X main.flCertFileName=cert.pem \
   -X main.flKeySize=2048 \
-  -X main.flORG=Procube \
+  -X main.flOrg=Procube \
   -X main.flOU= \
   -X main.flCountry=JP \
   " -o /client/scepclient-amd64 ./cmd/scepclient
@@ -145,7 +145,7 @@ depotフォルダが保持するファイル一覧は以下の通り
 |/caweb/favicon.ico|`GET`|webページを表示するのに使う|
 |/caweb/logo192.png|`GET`|webページを表示するのに使う|
 |/caweb/logo512.png|`GET`|webページを表示するのに使う|
-|/userObject|`GET`|`X-Mtls-Clientcert`ヘッダーに添付されているクライアント証明書（PEM形式の証明書をURLエンコードした文字列）を読み込んで署名検証する。検証が成功すれば添付された証明書のCNで`${SCEP_IDM_CERT_URL}/${CN}`の結果を返す。|
+|/userObject|`GET`|`X-Mtls-Clientcert`ヘッダーに添付されているクライアント証明書（PEM形式の証明書をURLエンコードした文字列）を読み込んで署名検証する。検証が成功すれば添付された証明書のCNで`${SCEP_IDM_GET_URL}/${CN}`の結果を返す。|
 |/download/`:filename`|`GET`|`/client`配下に置かれたファイルをダウンロードする。[クライアント実行ファイル](#クライアント実行ファイル作成)で作成したファイルをここに置くことでユーザに配布できる。|
 |/scep?operation=GetCACaps|`GET`|linux実行ファイルで使う。認証局の情報を取得する。|
 |/scep?operation=GetCACert|`GET`|linux実行ファイルで使う。認証局の証明書を取得する。|
