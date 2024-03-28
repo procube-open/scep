@@ -63,12 +63,9 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 
 // IDMChallengeMiddleware
 func IDMChallengeMiddleware(url string, next CSRSignerContext) CSRSignerContextFunc {
-	// challengeBytes := []byte(challenge)
-
 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		_, err := idm.GETUser(url, m.ChallengePassword)
-		if err != nil {
-			return nil, errors.New("invalid challenge or url")
+		if err := idm.GETUser(url, m.ChallengePassword); err != nil {
+			return nil, err
 		}
 		return next.SignCSRContext(ctx, m)
 	}

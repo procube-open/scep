@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -75,11 +76,19 @@ func (d *fileDepot) Put(cn string, crt *x509.Certificate, challenge string, putU
 		return errors.New("data is nil")
 	}
 	data := crt.Raw
-
+	u, err := url.Parse(putUrl + "/" + cn)
+	if err != nil {
+		return err
+	}
+	q := u.Query()
+	q.Set("_autoCommit", "true")
+	u.RawQuery = q.Encode()
 	if strings.Contains(challenge, "\\") {
 		pem := pemCert(data)
 		crtStr := *(*string)(unsafe.Pointer(&pem))
-		idm.PUTCertificate(putUrl+"/"+cn, crtStr, crt.NotBefore, crt.NotAfter)
+		if err := idm.PUTCertificate(u.String(), crtStr, crt.NotBefore, crt.NotAfter); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(d.dirPath, 0755); err != nil {
 		return err
