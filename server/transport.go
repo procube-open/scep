@@ -322,7 +322,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(b)
 		return
 	}
-	u, err := url.Parse(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
+	u, err := url.Parse(envString("SCEP_IDM_GET_URL", "") + "/" + cert.Subject.CommonName)
 	if err != nil {
 		res := ErrResp_1{Message: "Failed to parse url"}
 		w.WriteHeader(http.StatusInternalServerError)

@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.9-rc.1
+
+### Patch Changes
+
+- fix userHandler url
+
 ## 0.0.9-rc.0
 
 ### Patch Changes

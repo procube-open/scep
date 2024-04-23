@@ -5,6 +5,7 @@
     "scep": "0.0.8"
   },
   "changesets": [
+    "slimy-dingos-draw",
     "soft-planets-arrive"
   ]
 }
