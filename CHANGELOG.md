@@ -1,5 +1,11 @@
 # scep
 
+## 0.0.9-rc.0
+
+### Patch Changes
+
+- fix error handling when not found user
+
 ## 0.0.8
 
 ### Patch Changes

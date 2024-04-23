@@ -101,10 +101,11 @@ func GETUserByCN(url string) ([]byte, error) {
 
 	client := new(http.Client)
 	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode == 400 {
 		return nil, errors.New("NotFound")
-	} else if err != nil {
-		return nil, err
 	}
 	defer resp.Body.Close()
 

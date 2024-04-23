@@ -156,7 +156,7 @@ depotフォルダが保持するファイル一覧は以下の通り
 ## linux
 linux実行ファイルをダウンロードし、それを実行することで証明書ファイル群が生成される。
 ```
-curl {URL}/download/scepclient-amd64 > scepclient
+curl -O {URL}/download/scepclient-amd64
 
 ./scepclient -uid {UID} -secret {password}
 ```
