@@ -1,5 +1,12 @@
 # scep
 
+## 0.0.9-rc.2
+
+### Patch Changes
+
+- change path of files at download api
+- fix README
+
 ## 0.0.9-rc.1
 
 ### Patch Changes

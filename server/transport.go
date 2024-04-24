@@ -51,7 +51,7 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 	r.HandleFunc("/caweb/logo512.png", logo512Handler)
 
 	//download client
-	r.HandleFunc("/download/{client}", downloadHandler)
+	r.HandleFunc("/download/{filename}", downloadHandler)
 
 	//get user object
 	r.HandleFunc("/userObject", userHandler)
@@ -248,7 +248,7 @@ func logo512Handler(w http.ResponseWriter, r *http.Request) {
 
 func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
-	data, err := os.ReadFile("/client/" + params["client"])
+	data, err := os.ReadFile("/download/" + params["filename"])
 	if err != nil {
 		w.Write([]byte(err.Error()))
 	} else {
@@ -322,7 +322,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(b)
 		return
 	}
-	u, err := url.Parse(envString("SCEP_IDM_GET_URL", "") + "/" + cert.Subject.CommonName)
+	u, err := url.Parse(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
 	if err != nil {
 		res := ErrResp_1{Message: "Failed to parse url"}
 		w.WriteHeader(http.StatusInternalServerError)

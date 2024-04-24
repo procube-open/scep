@@ -75,6 +75,7 @@ CRLの有効期限は作成されてから24時間であり、日次バッチ処
 |--|--|--|
 |**SCEP_IDM_GET_URL**|""|証明書を更新したいユーザ一覧を取得するインタフェースのURL|
 |**SCEP_IDM_PUT_URL**|""|証明書を更新するインタフェースのURL|
+|**SCEP_IDM_USERS_URL**|""|`/userObject`APIで検証後に取得するインターフェースのURL|
 |SCEP_HTTP_LISTEN_PORT|"3000"|サーバのポート番号|
 |SCEP_FILE_DEPOT|"idm-depot"|depotフォルダのパス(/app配下)|
 |SCEP_CERT_VALID|"365"|証明書の有効期限|
@@ -128,7 +129,7 @@ depotフォルダが保持するファイル一覧は以下の通り
   -X main.flOrg=Procube \
   -X main.flOU= \
   -X main.flCountry=JP \
-  " -o /client/scepclient-amd64 ./cmd/scepclient
+  " -o /download/scepclient-amd64 ./cmd/scepclient
 ```
 `GOOS`,`GOARCH`オプションの値も実行される環境を想定して適宜設定する必要がある。
 また、`-o`オプションの値でパスを指定できる。
@@ -145,8 +146,8 @@ depotフォルダが保持するファイル一覧は以下の通り
 |/caweb/favicon.ico|`GET`|webページを表示するのに使う|
 |/caweb/logo192.png|`GET`|webページを表示するのに使う|
 |/caweb/logo512.png|`GET`|webページを表示するのに使う|
-|/userObject|`GET`|`X-Mtls-Clientcert`ヘッダーに添付されているクライアント証明書（PEM形式の証明書をURLエンコードした文字列）を読み込んで署名検証する。検証が成功すれば添付された証明書のCNで`${SCEP_IDM_GET_URL}/${CN}`の結果を返す。|
-|/download/`:filename`|`GET`|`/client`配下に置かれたファイルをダウンロードする。[クライアント実行ファイル](#クライアント実行ファイル作成)で作成したファイルをここに置くことでユーザに配布できる。|
+|/userObject|`GET`|`X-Mtls-Clientcert`ヘッダーに添付されているクライアント証明書（PEM形式の証明書をURLエンコードした文字列）を読み込んで署名検証する。検証が成功すれば添付された証明書のCNで`${SCEP_IDM_USERS_URL}/${CN}`の結果を返す。|
+|/download/`:filename`|`GET`|`/download`配下に置かれたファイルをダウンロードする。[クライアント実行ファイル](#クライアント実行ファイル作成)で作成したファイルをここに置くことでユーザに配布できる。|
 |/scep?operation=GetCACaps|`GET`|linux実行ファイルで使う。認証局の情報を取得する。|
 |/scep?operation=GetCACert|`GET`|linux実行ファイルで使う。認証局の証明書を取得する。|
 |/scep?operation=PKIOperation|`POST`|linux実行ファイルで使う。CSRを認証する。|

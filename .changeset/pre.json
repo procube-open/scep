@@ -5,7 +5,9 @@
     "scep": "0.0.8"
   },
   "changesets": [
+    "curvy-shirts-approve",
     "slimy-dingos-draw",
-    "soft-planets-arrive"
+    "soft-planets-arrive",
+    "strong-berries-sell"
   ]
 }
