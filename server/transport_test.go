@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/procube-open/scep/depot"
-	filedepot "github.com/procube-open/scep/depot/file"
+	mysqldepot "github.com/procube-open/scep/depot/mysql"
 	scepserver "github.com/procube-open/scep/server"
 
 	kitlog "github.com/go-kit/kit/log"
@@ -125,13 +125,13 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 	var err error
 	var depot depot.Depot // cert storage
 	{
-		depot, err = filedepot.NewFileDepot("../scep/testdata/testca")
+		depot, err = mysqldepot.NewTableDepot("", "../scep/testdata/testca")
 		if err != nil {
 			t.Fatal(err)
 		}
 		depot = &noopDepot{depot}
 	}
-	crt, key, err := depot.CA([]byte{})
+	crt, key, _ := depot.CA([]byte{})
 	var svc scepserver.Service // scep service
 	{
 		svc, err = scepserver.NewService(crt[0], key, scepserver.NopCSRSigner())
@@ -153,15 +153,15 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 
 type noopDepot struct{ depot.Depot }
 
-func (d *noopDepot) Put(name string, crt *x509.Certificate, challenge string, url string) error {
+func (d *noopDepot) Put(name string, crt *x509.Certificate, challenge string) error {
 	return nil
 }
 
-/* helpers */
-const (
-	rsaPrivateKeyPEMBlockType = "RSA PRIVATE KEY"
-	certificatePEMBlockType   = "CERTIFICATE"
-)
+// /* helpers */
+// const (
+// 	rsaPrivateKeyPEMBlockType = "RSA PRIVATE KEY"
+// 	certificatePEMBlockType   = "CERTIFICATE"
+// )
 
 func loadTestFile(t *testing.T, path string) []byte {
 	data, err := os.ReadFile(path)

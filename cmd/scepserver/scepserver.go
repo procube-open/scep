@@ -1,30 +1,23 @@
 package main
 
 import (
-	"bufio"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/procube-open/scep/csrverifier"
 	executablecsrverifier "github.com/procube-open/scep/csrverifier/executable"
 	scepdepot "github.com/procube-open/scep/depot"
-	"github.com/procube-open/scep/depot/file"
-	"github.com/procube-open/scep/idm"
+	"github.com/procube-open/scep/depot/mysql"
 	scepserver "github.com/procube-open/scep/server"
 
 	"github.com/go-kit/kit/log"
@@ -35,22 +28,6 @@ import (
 var (
 	version = "unknown"
 )
-
-type issuingDistributionPoint struct {
-	DistributionPoint          distributionPointName `asn1:"optional,tag:0"`
-	OnlyContainsUserCerts      bool                  `asn1:"optional,tag:1"`
-	OnlyContainsCACerts        bool                  `asn1:"optional,tag:2"`
-	OnlySomeReasons            asn1.BitString        `asn1:"optional,tag:3"`
-	IndirectCRL                bool                  `asn1:"optional,tag:4"`
-	OnlyContainsAttributeCerts bool                  `asn1:"optional,tag:5"`
-}
-
-type distributionPointName struct {
-	FullName     []asn1.RawValue  `asn1:"optional,tag:0"`
-	RelativeName pkix.RDNSequence `asn1:"optional,tag:1"`
-}
-
-var oidExtensionIssuingDistributionPoint = []int{2, 5, 29, 28}
 
 func main() {
 	var caCMD = flag.NewFlagSet("ca", flag.ExitOnError)
@@ -68,7 +45,7 @@ func main() {
 		flVersion           = flag.Bool("version", false, "prints version information")
 		flHTTPAddr          = flag.String("http-addr", envString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
 		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
-		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
+		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
 		flCAPass            = flag.String("capass", envString("SCEP_CA_PASS", ""), "passwd for the ca.key")
 		flClDuration        = flag.String("crtvalid", envString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
 		flClAllowRenewal    = flag.String("allowrenew", envString("SCEP_CERT_RENEW", "0"), "do not allow renewal until n days before expiry, set to 0 to always allow")
@@ -77,8 +54,7 @@ func main() {
 		flDebug             = flag.Bool("debug", envBool("SCEP_LOG_DEBUG"), "enable debug logging")
 		flLogJSON           = flag.Bool("log-json", envBool("SCEP_LOG_JSON"), "output JSON logs")
 		flSignServerAttrs   = flag.Bool("sign-server-attrs", envBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
-		flGetURL            = flag.String("geturl", envString("SCEP_IDM_GET_URL", ""), "URL of IDManager for GET users")
-		flPutURL            = flag.String("puturl", envString("SCEP_IDM_PUT_URL", ""), "URL of IDManager for PUT certs")
+		flDSN               = flag.String("dsn", envString("SCEP_DSN", ""), "Data Source Name of MySQL")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -127,7 +103,7 @@ func main() {
 	var err error
 	var depot scepdepot.Depot // cert storage
 	{
-		depot, err = file.NewFileDepot(*flDepotPath)
+		depot, err = mysql.NewTableDepot(*flDSN, *flDepotPath)
 		if err != nil {
 			lginfo.Log("err", err)
 			os.Exit(1)
@@ -173,22 +149,9 @@ func main() {
 			signerOpts = append(signerOpts, scepdepot.WithSeverAttrs())
 		}
 
-		var getUrl string
-		if *flGetURL != "" {
-			getUrl = *flGetURL
-		}
-
-		var putUrl string
-		if *flPutURL != "" {
-			putUrl = *flPutURL
-		}
-
-		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...), putUrl)
+		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...))
 		if *flChallengePassword != "" {
 			signer = scepserver.StaticChallengeMiddleware(*flChallengePassword, signer)
-		}
-		if getUrl != "" {
-			signer = scepserver.IDMChallengeMiddleware(getUrl, signer)
 		}
 		if csrVerifier != nil {
 			signer = csrverifier.Middleware(csrVerifier, signer)
@@ -226,18 +189,14 @@ func main() {
 
 func caMain(cmd *flag.FlagSet) int {
 	var (
-		flDepotPath  = cmd.String("depot", envString("SCEP_FILE_DEPOT", "idm-depot"), "path to ca folder")
+		flDepotPath  = cmd.String("depot", envString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
-		flCreateCRL  = cmd.Bool("create-crl", false, "create a new CRL")
-		flPort       = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
-		flCRLURL     = cmd.String("crlurl", envString("SCEPCA_IDM_CRL_URL", ""), "URL of IDManager")
 		flYears      = cmd.Int("years", envInt("SCEPCA_YEARS", 10), "default CA years")
 		flKeySize    = cmd.Int("keySize", envInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
 		flCommonName = cmd.String("common_name", envString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
 		flOrg        = cmd.String("organization", envString("SCEPCA_ORG", "Procube"), "organization for CA cert")
 		flOrgUnit    = cmd.String("organizational_unit", envString("SCEPCA_ORG_UNIT", ""), "organizational unit (OU) for CA cert")
 		flPassword   = cmd.String("key-password", "", "password to store rsa key")
-		flCAPass     = flag.String("capass", envString("SCEP_CA_PASS", ""), "passwd for the ca.key")
 		flCountry    = cmd.String("country", envString("SCEPCA_COUNTRY", "JP"), "country for CA cert")
 	)
 	cmd.Parse(os.Args[2:])
@@ -252,18 +211,6 @@ func caMain(cmd *flag.FlagSet) int {
 			fmt.Println(err)
 			return 0
 		}
-	} else if *flCreateCRL {
-		fmt.Println("Creating new CRL file")
-		var err error
-		var depot scepdepot.Depot // cert storage
-		{
-			depot, err = file.NewFileDepot(*flDepotPath)
-			if err != nil {
-				os.Exit(1)
-			}
-		}
-		crts, key, _ := depot.CA([]byte(*flCAPass))
-		CreateCRL(crts[0], key, *flDepotPath, *flCRLURL, *flPort)
 	}
 
 	return 0
@@ -379,109 +326,4 @@ func setByUser(flagName, envName string) bool {
 	flagSet := userDefinedFlags[flagName]
 	_, envSet := os.LookupEnv(envName)
 	return flagSet || envSet
-}
-
-func CreateCRL(cert *x509.Certificate, key *rsa.PrivateKey, depotPath string, url string, port string) {
-
-	rcs := GetSerialNumbers(depotPath, url)
-
-	//Create issuingDistributionPoint Extension
-	dp := distributionPointName{
-		FullName: []asn1.RawValue{
-			{Tag: 6, Class: 2, Bytes: []byte("http://localhost:" + port + "/scep?operation=GetCRL")},
-		},
-	}
-	idp := issuingDistributionPoint{
-		DistributionPoint: dp,
-	}
-
-	v, err := asn1.Marshal(idp)
-	if err != nil {
-		fmt.Printf("ERROR:%v\n", err)
-	}
-
-	cdpExt := pkix.Extension{
-		Id:       oidExtensionIssuingDistributionPoint,
-		Critical: true,
-		Value:    v,
-	}
-
-	crlTpl := &x509.RevocationList{
-		SignatureAlgorithm:  x509.SHA256WithRSA,
-		RevokedCertificates: rcs,
-		Number:              big.NewInt(2),
-		ThisUpdate:          time.Now(),
-		NextUpdate:          time.Now().Add(24 * time.Hour),
-		ExtraExtensions:     []pkix.Extension{cdpExt},
-	}
-
-	var derCrl []byte
-	derCrl, err = x509.CreateRevocationList(rand.Reader, crlTpl, cert, key)
-	if err != nil {
-		fmt.Printf("ERROR:%v\n", err)
-	}
-	var f *os.File
-	f, err = os.Create(filepath.Join(depotPath, "ca.crl"))
-	if err != nil {
-		fmt.Printf("ERROR:%v\n", err)
-	}
-
-	err = pem.Encode(f, &pem.Block{Type: "X509 CRL", Bytes: derCrl})
-	if err != nil {
-		fmt.Printf("ERROR:%v\n", err)
-	}
-	err = f.Close()
-
-}
-
-func GetSerialNumbers(depotPath string, crlUrl string) []pkix.RevokedCertificate {
-	var rcs []pkix.RevokedCertificate
-	var rc pkix.RevokedCertificate
-
-	//index.txtから取得
-	crlpath := filepath.Join(depotPath, "index.txt")
-	fp, err := os.Open(crlpath)
-	if err != nil {
-		panic(err)
-	}
-	defer fp.Close()
-
-	scanner := bufio.NewScanner(fp)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "R\t") {
-			arr := strings.Split(line, "\t")
-			serial, _ := strconv.ParseInt(arr[3], 16, 64)
-			time, _ := time.Parse("060102150405Z", arr[2])
-			rc = pkix.RevokedCertificate{
-				SerialNumber:   big.NewInt(serial),
-				RevocationTime: time,
-			}
-			rcs = append(rcs, rc)
-		}
-	}
-	if err = scanner.Err(); err != nil {
-		return nil
-	}
-
-	//idmから取得
-	certs, err := idm.GETRCs(crlUrl)
-	if err != nil {
-		fmt.Println(err)
-	}
-	for _, cert := range certs {
-		block, _ := pem.Decode([]byte(cert.Certificate))
-		p, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			fmt.Println(err)
-			return nil
-		}
-		rc = pkix.RevokedCertificate{
-			SerialNumber:   p.SerialNumber,
-			RevocationTime: time.Now(),
-		}
-		rcs = append(rcs, rc)
-	}
-
-	return rcs
 }

@@ -19,7 +19,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/groob/finalizer/logutil"
 	"github.com/pkg/errors"
-	"github.com/procube-open/scep/idm"
+	"github.com/procube-open/scep/depot/mysql"
 )
 
 func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
@@ -42,20 +42,20 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 		opts...,
 	))
 
-	// frontend
-	r.HandleFunc("/caweb", indexHandler)
-	r.HandleFunc("/caweb/static/{script}/{filename}", staticHandler)
-	r.HandleFunc("/caweb/manifest.json", manifestHandler)
-	r.HandleFunc("/caweb/favicon.ico", faviconHandler)
-	r.HandleFunc("/caweb/logo192.png", logo192Handler)
-	r.HandleFunc("/caweb/logo512.png", logo512Handler)
+	frontendHandler := http.FileServer(http.Dir("frontend/build"))
+	r.Methods("GET").Path("/caweb").HandlerFunc(indexHandler)
+	r.Methods("GET").PathPrefix("/caweb/").Handler(http.StripPrefix("/caweb/", frontendHandler))
 
-	//download client
-	r.HandleFunc("/download/{filename}", downloadHandler)
+	downloadHandler := http.FileServer(http.Dir("/download"))
+	r.Methods("GET").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
 
-	//get user object
-	r.HandleFunc("/userObject", userHandler)
+	r.Methods("GET").Path("/api/verifyCert").HandlerFunc(verifyHandler)
 
+	r.Methods("GET").Path("/api/client").HandlerFunc(listHandler)
+	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(getHandler)
+	r.Methods("POST").Path("/api/client/add").HandlerFunc(addHandler)
+	// r.Methods("POST").Path("/api/client/revoke").HandlerFunc(revokeHandler)
+	// r.Methods("PUT").Path("/api/client/update").HandlerFunc(updateHandler)
 	return r
 }
 
@@ -196,67 +196,40 @@ func contentHeader(op string, certNum int) string {
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/build/index.html")
+	data, err := os.ReadFile("frontend/build/index.html")
+	if err != nil {
+		http.Error(w, "Failed to read index.html", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
 	w.Write(data)
 }
 
-func staticHandler(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	if params["script"] == "js" {
-		w.Header().Set("Content-Type", "application/javascript")
-	} else if params["script"] == "css" {
-		w.Header().Set("Content-Type", "text/css")
-	}
-	data, err := os.ReadFile("frontend/build/static/" + params["script"] + "/" + params["filename"])
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	}
-	w.Write(data)
+type resClient struct {
+	Uid        string                 `json:"uid"`
+	Attributes map[string]interface{} `json:"attributes"`
 }
 
-func manifestHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/manifest.json")
-	if err != nil {
-		w.Write([]byte(err.Error()))
+func verifyHandler(w http.ResponseWriter, r *http.Request) {
+	type ErrResp_1 struct {
+		Message string `json:"message"`
 	}
-	w.Write(data)
-}
-
-func faviconHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/favicon.ico")
-	if err != nil {
-		w.Write([]byte(err.Error()))
+	type ErrResp_2 struct {
+		Message   string `json:"message"`
+		NotBefore string `json:"notBefore"`
+		NotAfter  string `json:"notAfter"`
+		Date      string `json:"Date"`
 	}
-	w.Write(data)
-}
-
-func logo192Handler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/logo192.png")
-	if err != nil {
-		w.Write([]byte(err.Error()))
+	type ErrResp_3 struct {
+		Message     string `json:"message"`
+		Certificate string `json:"certificate"`
+		CaCert      string `json:"cacert"`
 	}
-	w.Write(data)
-}
-
-func logo512Handler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/logo512.png")
-	if err != nil {
-		w.Write([]byte(err.Error()))
+	type ErrResp_4 struct {
+		Message string `json:"message"`
+		User    string `json:"user"`
 	}
-	w.Write(data)
-}
 
-func downloadHandler(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	data, err := os.ReadFile("/download/" + params["filename"])
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	} else {
-		w.Write(data)
-	}
-}
-
-func userHandler(w http.ResponseWriter, r *http.Request) {
 	encodedCert := r.Header["X-Mtls-Clientcert"]
 	w.Header().Set("Content-Type", "application/json")
 	if len(encodedCert) != 1 {
@@ -300,7 +273,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	depotPath := envString("SCEP_FILE_DEPOT", "idm-depot")
+	depotPath := envString("SCEP_FILE_DEPOT", "ca-certs")
 	ca_crt, _ := os.ReadFile(depotPath + "/ca.crt")
 	caCertBlock, _ := pem.Decode(ca_crt)
 	caCert, _ := x509.ParseCertificate(caCertBlock.Bytes)
@@ -313,7 +286,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := cert.Verify(opts); err != nil {
 		res := ErrResp_3{
-			Message:     "Failed to validate certificate",
+			Message:     "Failed to verify certificate",
 			Certificate: string(decodedCert),
 			CaCert:      string(ca_crt),
 		}
@@ -322,56 +295,129 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(b)
 		return
 	}
-	u, err := url.Parse(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
+	dsn := envString("SCEP_DSN", "")
+	depot, err := mysql.OpenTable(dsn)
 	if err != nil {
-		res := ErrResp_1{Message: "Failed to parse url"}
+		res := ErrResp_1{Message: "Failed to open table"}
 		w.WriteHeader(http.StatusInternalServerError)
 		b, _ := json.Marshal(res)
 		w.Write(b)
 		return
 	}
-
-	body, err := idm.GETUserByCN(u.String())
-	if err != nil {
-		if err.Error() == "NotFound" {
-			res := ErrResp_4{
-				Message: "User Not Found",
-				User:    cert.Subject.CommonName,
-			}
-			w.WriteHeader(http.StatusUnauthorized)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
-		} else {
-			res := ErrResp_1{
-				Message: err.Error(),
-			}
-			w.WriteHeader(http.StatusBadGateway)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
+	client, err := depot.GetClient(cert.Subject.CommonName)
+	if client == nil && err == nil {
+		res := ErrResp_4{
+			Message: "User Not Found",
+			User:    cert.Subject.CommonName,
 		}
+		w.WriteHeader(http.StatusUnauthorized)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	} else if err != nil {
+		res := ErrResp_1{Message: err.Error()}
+		w.WriteHeader(http.StatusInternalServerError)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	} else {
+		res := resClient{
+			Uid:        client.Uid,
+			Attributes: client.Attributes,
+		}
+		b, _ := json.Marshal(res)
+		w.Write(b)
 	}
-	w.Write(body)
 }
 
-type ErrResp_1 struct {
-	Message string `json:"message"`
+func getHandler(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	dsn := envString("SCEP_DSN", "")
+	depot, err := mysql.OpenTable(dsn)
+	if err != nil {
+		http.Error(w, "Failed to open table", http.StatusInternalServerError)
+		return
+	}
+	c, err := depot.GetClient(params["CN"])
+	if err != nil {
+		http.Error(w, "Failed to list certificate", http.StatusInternalServerError)
+		return
+	}
+	res := resClient{
+		Uid:        c.Uid,
+		Attributes: c.Attributes,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	b, _ := json.Marshal(res)
+	w.Write(b)
 }
-type ErrResp_2 struct {
-	Message   string `json:"message"`
-	NotBefore string `json:"notBefore"`
-	NotAfter  string `json:"notAfter"`
-	Date      string `json:"Date"`
+
+func listHandler(w http.ResponseWriter, r *http.Request) {
+	dsn := envString("SCEP_DSN", "")
+	depot, err := mysql.OpenTable(dsn)
+	if err != nil {
+		http.Error(w, "Failed to open table", http.StatusInternalServerError)
+		return
+	}
+	clientList, err := depot.GetClientList()
+	if err != nil {
+		http.Error(w, "Failed to list certificate", http.StatusInternalServerError)
+		return
+	}
+	var list []resClient
+	for _, c := range clientList {
+		list = append(list, resClient{
+			Uid:        c.Uid,
+			Attributes: c.Attributes,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	b, _ := json.Marshal(list)
+	w.Write(b)
 }
-type ErrResp_3 struct {
-	Message     string `json:"message"`
-	Certificate string `json:"certificate"`
-	CaCert      string `json:"cacert"`
-}
-type ErrResp_4 struct {
-	Message string `json:"message"`
-	User    string `json:"user"`
+
+func addHandler(w http.ResponseWriter, r *http.Request) {
+	type ErrResp struct {
+		Message string `json:"message"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	var c mysql.Client
+	err := decoder.Decode(&c)
+	if err != nil {
+		res := ErrResp{Message: "Failed to decode request"}
+		w.WriteHeader(http.StatusInternalServerError)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+	dsn := envString("SCEP_DSN", "")
+	depot, err := mysql.OpenTable(dsn)
+	if err != nil {
+		http.Error(w, "Failed to open table", http.StatusInternalServerError)
+		return
+	}
+	if c.Uid == "" {
+		res := ErrResp{Message: "UID is required"}
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+	if c.Secret == "" {
+		res := ErrResp{Message: "Secret is required"}
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(res)
+		w.Write(b)
+		return
+	}
+	if c.Attributes == nil {
+		c.Attributes = make(map[string]interface{})
+	}
+	err = depot.AddClient(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func envString(key, def string) string {

@@ -26,20 +26,19 @@ import (
 
 // version info
 var (
-	version             = "unknown"
-	flVersion           = false
-	flServerURL         = "http://127.0.0.1:3000/scep"
-	flChallengePassword = ""
-	flPKeyFileName      = "key.pem"
-	flCertFileName      = "cert.pem"
-	flKeySize           = "2048"
-	flOrg               = "Procube"
-	flOU                = ""
-	flLoc               = ""
-	flProvince          = ""
-	flCountry           = "JP"
-	flCACertMessage     = ""
-	flDNSName           = ""
+	version         = "unknown"
+	flVersion       = false
+	flServerURL     = "http://127.0.0.1:3000/scep"
+	flPKeyFileName  = "key.pem"
+	flCertFileName  = "cert.pem"
+	flKeySize       = "2048"
+	flOrg           = "Procube"
+	flOU            = ""
+	flLoc           = ""
+	flProvince      = ""
+	flCountry       = "JP"
+	flCACertMessage = ""
+	flDNSName       = ""
 
 	// in case of multiple certificate authorities, we need to figure out who the recipient of the encrypted
 	// data is.
@@ -302,12 +301,6 @@ func main() {
 	}
 
 	var challenge string
-	// -challenge and -uid conflict. Don't allow the user to set both.
-	if flChallengePassword != "" && *flUid != "" {
-		fmt.Fprintln(os.Stderr, "cannot set both -challenge and -uid")
-		os.Exit(1)
-	}
-
 	if *flUid == "" || *flSecret == "" {
 		fmt.Fprintln(os.Stderr, "please set -uid and -secret option")
 		os.Exit(1)
@@ -368,11 +361,4 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-}
-
-func envString(key, def string) string {
-	if env := os.Getenv(key); env != "" {
-		return env
-	}
-	return def
 }

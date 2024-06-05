@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/procube-open/scep/idm"
 	"github.com/procube-open/scep/scep"
 )
 
@@ -31,7 +30,7 @@ func (f CSRSignerContextFunc) SignCSRContext(ctx context.Context, m *scep.CSRReq
 // SignCSR should take the CSR in the CSRReqMessage and return a
 // Certificate signed by the CA.
 type CSRSigner interface {
-	SignCSR(*scep.CSRReqMessage, string) (*x509.Certificate, error)
+	SignCSR(*scep.CSRReqMessage) (*x509.Certificate, error)
 }
 
 // CSRSignerFunc is an adapter for CSR signing by the CA/RA.
@@ -61,19 +60,19 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 	}
 }
 
-// IDMChallengeMiddleware
-func IDMChallengeMiddleware(url string, next CSRSignerContext) CSRSignerContextFunc {
-	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		if err := idm.GETUser(url, m.ChallengePassword); err != nil {
-			return nil, err
-		}
-		return next.SignCSRContext(ctx, m)
-	}
-}
+// // IDMChallengeMiddleware
+// func MySQLChallengeMiddleWare(url string, next CSRSignerContext) CSRSignerContextFunc {
+// 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
+// 		if err := mysql.GETCert(url, m.ChallengePassword); err != nil {
+// 			return nil, err
+// 		}
+// 		return next.SignCSRContext(ctx, m)
+// 	}
+// }
 
 // SignCSRAdapter adapts a next (i.e. no context) to a context signer.
-func SignCSRAdapter(next CSRSigner, putUrl string) CSRSignerContextFunc {
+func SignCSRAdapter(next CSRSigner) CSRSignerContextFunc {
 	return func(_ context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		return next.SignCSR(m, putUrl)
+		return next.SignCSR(m)
 	}
 }

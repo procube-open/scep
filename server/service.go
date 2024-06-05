@@ -2,17 +2,22 @@ package scepserver
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
+	"math/big"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
 
 	"github.com/go-kit/kit/log"
@@ -116,14 +121,73 @@ func (svc *service) GetNextCACert(ctx context.Context) ([]byte, error) {
 	panic("not implemented")
 }
 
+type distributionPointName struct {
+	FullName     []asn1.RawValue  `asn1:"optional,tag:0"`
+	RelativeName pkix.RDNSequence `asn1:"optional,tag:1"`
+}
+type issuingDistributionPoint struct {
+	DistributionPoint          distributionPointName `asn1:"optional,tag:0"`
+	OnlyContainsUserCerts      bool                  `asn1:"optional,tag:1"`
+	OnlyContainsCACerts        bool                  `asn1:"optional,tag:2"`
+	OnlySomeReasons            asn1.BitString        `asn1:"optional,tag:3"`
+	IndirectCRL                bool                  `asn1:"optional,tag:4"`
+	OnlyContainsAttributeCerts bool                  `asn1:"optional,tag:5"`
+}
+
+var oidExtensionIssuingDistributionPoint = []int{2, 5, 29, 28}
+
 func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]byte, error) {
-	fp, err := os.Open(depotPath + "/ca.crl")
+	dsn := envString("SCEP_DSN", "")
+	port := envString("SCEP_HTTP_LISTEN_PORT", "")
+	caPass := envString("SCEP_CA_PASS", "")
+	depot, err := mysql.NewTableDepot(dsn, depotPath)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	defer fp.Close()
-	byteData, err := io.ReadAll(fp)
-	return byteData, err
+	rcs, err := depot.GetRCs()
+	if err != nil {
+		return nil, err
+	}
+
+	cert, key, err := depot.CA([]byte(caPass))
+	if err != nil {
+		return nil, err
+	}
+
+	dp := distributionPointName{
+		FullName: []asn1.RawValue{
+			{Tag: 6, Class: 2, Bytes: []byte("http://localhost:" + port + "/scep?operation=GetCRL")},
+		},
+	}
+	idp := issuingDistributionPoint{
+		DistributionPoint: dp,
+	}
+
+	v, err := asn1.Marshal(idp)
+	if err != nil {
+		return nil, err
+	}
+
+	cdpExt := pkix.Extension{
+		Id:       oidExtensionIssuingDistributionPoint,
+		Critical: true,
+		Value:    v,
+	}
+
+	crlTpl := &x509.RevocationList{
+		SignatureAlgorithm:  x509.SHA256WithRSA,
+		RevokedCertificates: rcs,
+		Number:              big.NewInt(2),
+		ThisUpdate:          time.Now(),
+		NextUpdate:          time.Now().Add(24 * time.Hour),
+		ExtraExtensions:     []pkix.Extension{cdpExt},
+	}
+
+	crl, err := x509.CreateRevocationList(rand.Reader, crlTpl, cert[0], key)
+	if err != nil {
+		return nil, err
+	}
+	return crl, nil
 }
 
 func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error) {
@@ -145,17 +209,15 @@ func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []by
 		cmd := exec.Command("./scepclient-opt", "-uid", info.Uid, "-secret", info.Secret, "-out", "/tmp/"+info.Uid+"/")
 		var out strings.Builder
 		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
-			fmt.Println("--- finish ---")
-			return nil, errors.New("failed to verify CSR")
-		}
+		err = cmd.Run()
 		fmt.Println(out.String())
-		fmt.Println("--- finish ---")
 	} else {
-		fmt.Println("--- finish ---")
-		return nil, errors.New("without uid or secret params")
+		err = errors.New("without uid or secret params")
 	}
-
+	fmt.Println("--- finish ---")
+	if err != nil {
+		return nil, errors.New("failed to verify CSR")
+	}
 	// pkcs12形式に変換
 	//X509.PrivateKey読み込み
 	key, err := os.ReadFile("/tmp/" + info.Uid + "/key.pem")
