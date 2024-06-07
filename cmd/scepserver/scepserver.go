@@ -43,18 +43,18 @@ func main() {
 	//main flags
 	var (
 		flVersion           = flag.Bool("version", false, "prints version information")
-		flHTTPAddr          = flag.String("http-addr", envString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
-		flPort              = flag.String("port", envString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
-		flDepotPath         = flag.String("depot", envString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
-		flCAPass            = flag.String("capass", envString("SCEP_CA_PASS", ""), "passwd for the ca.key")
-		flClDuration        = flag.String("crtvalid", envString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
-		flClAllowRenewal    = flag.String("allowrenew", envString("SCEP_CERT_RENEW", "0"), "do not allow renewal until n days before expiry, set to 0 to always allow")
-		flChallengePassword = flag.String("challenge", envString("SCEP_CHALLENGE_PASSWORD", ""), "enforce a challenge password")
-		flCSRVerifierExec   = flag.String("csrverifierexec", envString("SCEP_CSR_VERIFIER_EXEC", ""), "will be passed the CSRs for verification")
-		flDebug             = flag.Bool("debug", envBool("SCEP_LOG_DEBUG"), "enable debug logging")
-		flLogJSON           = flag.Bool("log-json", envBool("SCEP_LOG_JSON"), "output JSON logs")
-		flSignServerAttrs   = flag.Bool("sign-server-attrs", envBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
-		flDSN               = flag.String("dsn", envString("SCEP_DSN", ""), "Data Source Name of MySQL")
+		flHTTPAddr          = flag.String("http-addr", scepserver.EnvString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
+		flPort              = flag.String("port", scepserver.EnvString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
+		flDepotPath         = flag.String("depot", scepserver.EnvString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
+		flCAPass            = flag.String("capass", scepserver.EnvString("SCEP_CA_PASS", ""), "passwd for the ca.key")
+		flClDuration        = flag.String("crtvalid", scepserver.EnvString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
+		flClAllowRenewal    = flag.String("allowrenew", scepserver.EnvString("SCEP_CERT_RENEW", "0"), "do not allow renewal until n days before expiry, set to 0 to always allow")
+		flChallengePassword = flag.String("challenge", scepserver.EnvString("SCEP_CHALLENGE_PASSWORD", ""), "enforce a challenge password")
+		flCSRVerifierExec   = flag.String("csrverifierexec", scepserver.EnvString("SCEP_CSR_VERIFIER_EXEC", ""), "will be passed the CSRs for verification")
+		flDebug             = flag.Bool("debug", scepserver.EnvBool("SCEP_LOG_DEBUG"), "enable debug logging")
+		flLogJSON           = flag.Bool("log-json", scepserver.EnvBool("SCEP_LOG_JSON"), "output JSON logs")
+		flSignServerAttrs   = flag.Bool("sign-server-attrs", scepserver.EnvBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
+		flDSN               = flag.String("dsn", scepserver.EnvString("SCEP_DSN", ""), "Data Source Name of MySQL")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -101,13 +101,10 @@ func main() {
 	lginfo := level.Info(logger)
 
 	var err error
-	var depot scepdepot.Depot // cert storage
-	{
-		depot, err = mysql.NewTableDepot(*flDSN, *flDepotPath)
-		if err != nil {
-			lginfo.Log("err", err)
-			os.Exit(1)
-		}
+	depot, err := mysql.NewTableDepot(*flDSN, *flDepotPath)
+	if err != nil {
+		lginfo.Log("err", err)
+		os.Exit(1)
 	}
 	allowRenewal, err := strconv.Atoi(*flClAllowRenewal)
 	if err != nil {
@@ -150,6 +147,7 @@ func main() {
 		}
 
 		var signer scepserver.CSRSignerContext = scepserver.SignCSRAdapter(scepdepot.NewSigner(depot, signerOpts...))
+		signer = scepserver.MySQLChallengeMiddleWare(depot, signer)
 		if *flChallengePassword != "" {
 			signer = scepserver.StaticChallengeMiddleware(*flChallengePassword, signer)
 		}
@@ -169,7 +167,7 @@ func main() {
 		e := scepserver.MakeServerEndpoints(svc, *flDepotPath)
 		e.GetEndpoint = scepserver.EndpointLoggingMiddleware(lginfo)(e.GetEndpoint)
 		e.PostEndpoint = scepserver.EndpointLoggingMiddleware(lginfo)(e.PostEndpoint)
-		h = scepserver.MakeHTTPHandler(e, svc, log.With(lginfo, "component", "http"))
+		h = scepserver.MakeHTTPHandler(depot, e, svc, log.With(lginfo, "component", "http"))
 	}
 
 	// start http server
@@ -189,15 +187,15 @@ func main() {
 
 func caMain(cmd *flag.FlagSet) int {
 	var (
-		flDepotPath  = cmd.String("depot", envString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
+		flDepotPath  = cmd.String("depot", scepserver.EnvString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
-		flYears      = cmd.Int("years", envInt("SCEPCA_YEARS", 10), "default CA years")
-		flKeySize    = cmd.Int("keySize", envInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
-		flCommonName = cmd.String("common_name", envString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
-		flOrg        = cmd.String("organization", envString("SCEPCA_ORG", "Procube"), "organization for CA cert")
-		flOrgUnit    = cmd.String("organizational_unit", envString("SCEPCA_ORG_UNIT", ""), "organizational unit (OU) for CA cert")
+		flYears      = cmd.Int("years", scepserver.EnvInt("SCEPCA_YEARS", 10), "default CA years")
+		flKeySize    = cmd.Int("keySize", scepserver.EnvInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
+		flCommonName = cmd.String("common_name", scepserver.EnvString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
+		flOrg        = cmd.String("organization", scepserver.EnvString("SCEPCA_ORG", "Procube"), "organization for CA cert")
+		flOrgUnit    = cmd.String("organizational_unit", scepserver.EnvString("SCEPCA_ORG_UNIT", ""), "organizational unit (OU) for CA cert")
 		flPassword   = cmd.String("key-password", "", "password to store rsa key")
-		flCountry    = cmd.String("country", envString("SCEPCA_COUNTRY", "JP"), "country for CA cert")
+		flCountry    = cmd.String("country", scepserver.EnvString("SCEPCA_COUNTRY", "JP"), "country for CA cert")
 	)
 	cmd.Parse(os.Args[2:])
 	if *flInit {
@@ -294,28 +292,6 @@ func pemCert(derBytes []byte) []byte {
 	}
 	out := pem.EncodeToMemory(pemBlock)
 	return out
-}
-
-func envString(key, def string) string {
-	if env := os.Getenv(key); env != "" {
-		return env
-	}
-	return def
-}
-
-func envInt(key string, def int) int {
-	if env := os.Getenv(key); env != "" {
-		num, _ := strconv.Atoi(env)
-		return num
-	}
-	return def
-}
-
-func envBool(key string) bool {
-	if env := os.Getenv(key); env == "true" {
-		return true
-	}
-	return false
 }
 
 func setByUser(flagName, envName string) bool {

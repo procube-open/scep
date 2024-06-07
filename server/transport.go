@@ -3,16 +3,11 @@ package scepserver
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"time"
 
 	kitlog "github.com/go-kit/kit/log"
 	kithttp "github.com/go-kit/kit/transport/http"
@@ -22,7 +17,7 @@ import (
 	"github.com/procube-open/scep/depot/mysql"
 )
 
-func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
+func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
 	opts := []kithttp.ServerOption{
 		kithttp.ServerErrorLogger(logger),
 		kithttp.ServerFinalizer(logutil.NewHTTPLogger(logger).LoggingFinalizer),
@@ -41,21 +36,26 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 		encodeSCEPResponse,
 		opts...,
 	))
-
-	frontendHandler := http.FileServer(http.Dir("frontend/build"))
-	r.Methods("GET").Path("/caweb").HandlerFunc(indexHandler)
+	frontendPath := "frontend/build"
+	frontendHandler := http.FileServer(http.Dir(frontendPath))
+	r.Methods("GET").Path("/caweb").HandlerFunc(IndexHandler(frontendPath))
 	r.Methods("GET").PathPrefix("/caweb/").Handler(http.StripPrefix("/caweb/", frontendHandler))
 
-	downloadHandler := http.FileServer(http.Dir("/download"))
+	downloadPath := EnvString("SCEP_DOWNLOAD_PATH", "/usr/local/download")
+	downloadHandler := http.FileServer(http.Dir(downloadPath))
 	r.Methods("GET").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
 
-	r.Methods("GET").Path("/api/verifyCert").HandlerFunc(verifyHandler)
+	r.Methods("GET").Path("/api/cert/verify").HandlerFunc(VerifyHandler(depot))
+	r.Methods("GET").Path("/api/cert/list/{CN}").HandlerFunc(CertsHandler(depot))
+	r.Methods("POST").Path("/api/cert/pkcs12").HandlerFunc(Pkcs12Handler(depot))
 
-	r.Methods("GET").Path("/api/client").HandlerFunc(listHandler)
-	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(getHandler)
-	r.Methods("POST").Path("/api/client/add").HandlerFunc(addHandler)
-	// r.Methods("POST").Path("/api/client/revoke").HandlerFunc(revokeHandler)
-	// r.Methods("PUT").Path("/api/client/update").HandlerFunc(updateHandler)
+	r.Methods("GET").Path("/api/client").HandlerFunc(ListClientHandler(depot))
+	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(GetClientHandler(depot))
+	r.Methods("POST").Path("/sql/client/add").HandlerFunc(AddClientHandler(depot))
+	// r.Methods("POST").Path("/sql/client/revoke").HandlerFunc(revokeHandler)
+	// r.Methods("PUT").Path("/sql/client/update").HandlerFunc(updateHandler)
+
+	r.Methods("GET").Path("/api/files/{path:.*}").HandlerFunc(ListFilesHandler(downloadPath))
 	return r
 }
 
@@ -193,236 +193,4 @@ func contentHeader(op string, certNum int) string {
 	default:
 		return "text/plain"
 	}
-}
-
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/index.html")
-	if err != nil {
-		http.Error(w, "Failed to read index.html", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html")
-	w.Write(data)
-}
-
-type resClient struct {
-	Uid        string                 `json:"uid"`
-	Attributes map[string]interface{} `json:"attributes"`
-}
-
-func verifyHandler(w http.ResponseWriter, r *http.Request) {
-	type ErrResp_1 struct {
-		Message string `json:"message"`
-	}
-	type ErrResp_2 struct {
-		Message   string `json:"message"`
-		NotBefore string `json:"notBefore"`
-		NotAfter  string `json:"notAfter"`
-		Date      string `json:"Date"`
-	}
-	type ErrResp_3 struct {
-		Message     string `json:"message"`
-		Certificate string `json:"certificate"`
-		CaCert      string `json:"cacert"`
-	}
-	type ErrResp_4 struct {
-		Message string `json:"message"`
-		User    string `json:"user"`
-	}
-
-	encodedCert := r.Header["X-Mtls-Clientcert"]
-	w.Header().Set("Content-Type", "application/json")
-	if len(encodedCert) != 1 {
-		res := ErrResp_1{Message: "No Certificate"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	decodedCert, err := url.PathUnescape(encodedCert[0])
-	if err != nil {
-		res := ErrResp_1{Message: "Decode header failed"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	certBlock, _ := pem.Decode([]byte(decodedCert))
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		res := ErrResp_1{Message: "Parse Certificate failed"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	now := time.Now()
-	if now.After(cert.NotAfter) || now.Before(cert.NotBefore) {
-		res := ErrResp_2{
-			Message:   "Certificate is expired",
-			NotBefore: cert.NotBefore.String(),
-			NotAfter:  cert.NotAfter.String(),
-			Date:      now.String(),
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	depotPath := envString("SCEP_FILE_DEPOT", "ca-certs")
-	ca_crt, _ := os.ReadFile(depotPath + "/ca.crt")
-	caCertBlock, _ := pem.Decode(ca_crt)
-	caCert, _ := x509.ParseCertificate(caCertBlock.Bytes)
-	certPool := x509.NewCertPool()
-	certPool.AddCert(caCert)
-	opts := x509.VerifyOptions{
-		Roots:     certPool,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	if _, err := cert.Verify(opts); err != nil {
-		res := ErrResp_3{
-			Message:     "Failed to verify certificate",
-			Certificate: string(decodedCert),
-			CaCert:      string(ca_crt),
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-	dsn := envString("SCEP_DSN", "")
-	depot, err := mysql.OpenTable(dsn)
-	if err != nil {
-		res := ErrResp_1{Message: "Failed to open table"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-	client, err := depot.GetClient(cert.Subject.CommonName)
-	if client == nil && err == nil {
-		res := ErrResp_4{
-			Message: "User Not Found",
-			User:    cert.Subject.CommonName,
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	} else if err != nil {
-		res := ErrResp_1{Message: err.Error()}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	} else {
-		res := resClient{
-			Uid:        client.Uid,
-			Attributes: client.Attributes,
-		}
-		b, _ := json.Marshal(res)
-		w.Write(b)
-	}
-}
-
-func getHandler(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	dsn := envString("SCEP_DSN", "")
-	depot, err := mysql.OpenTable(dsn)
-	if err != nil {
-		http.Error(w, "Failed to open table", http.StatusInternalServerError)
-		return
-	}
-	c, err := depot.GetClient(params["CN"])
-	if err != nil {
-		http.Error(w, "Failed to list certificate", http.StatusInternalServerError)
-		return
-	}
-	res := resClient{
-		Uid:        c.Uid,
-		Attributes: c.Attributes,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	b, _ := json.Marshal(res)
-	w.Write(b)
-}
-
-func listHandler(w http.ResponseWriter, r *http.Request) {
-	dsn := envString("SCEP_DSN", "")
-	depot, err := mysql.OpenTable(dsn)
-	if err != nil {
-		http.Error(w, "Failed to open table", http.StatusInternalServerError)
-		return
-	}
-	clientList, err := depot.GetClientList()
-	if err != nil {
-		http.Error(w, "Failed to list certificate", http.StatusInternalServerError)
-		return
-	}
-	var list []resClient
-	for _, c := range clientList {
-		list = append(list, resClient{
-			Uid:        c.Uid,
-			Attributes: c.Attributes,
-		})
-	}
-	w.Header().Set("Content-Type", "application/json")
-	b, _ := json.Marshal(list)
-	w.Write(b)
-}
-
-func addHandler(w http.ResponseWriter, r *http.Request) {
-	type ErrResp struct {
-		Message string `json:"message"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	var c mysql.Client
-	err := decoder.Decode(&c)
-	if err != nil {
-		res := ErrResp{Message: "Failed to decode request"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-	dsn := envString("SCEP_DSN", "")
-	depot, err := mysql.OpenTable(dsn)
-	if err != nil {
-		http.Error(w, "Failed to open table", http.StatusInternalServerError)
-		return
-	}
-	if c.Uid == "" {
-		res := ErrResp{Message: "UID is required"}
-		w.WriteHeader(http.StatusBadRequest)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-	if c.Secret == "" {
-		res := ErrResp{Message: "Secret is required"}
-		w.WriteHeader(http.StatusBadRequest)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-	if c.Attributes == nil {
-		c.Attributes = make(map[string]interface{})
-	}
-	err = depot.AddClient(c)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
-func envString(key, def string) string {
-	if env := os.Getenv(key); env != "" {
-		return env
-	}
-	return def
 }

@@ -30,7 +30,7 @@ func (d *MySQLDepot) GetClient(uid string) (*Client, error) {
 	var c Client
 	var clientAttributes string
 	for rows.Next() {
-		err := rows.Scan(&c.Uid, &c.Secret, clientAttributes)
+		err := rows.Scan(&c.Uid, &c.Secret, &clientAttributes)
 		if err != nil {
 			return nil, err
 		}

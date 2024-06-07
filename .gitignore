@@ -1,7 +1,7 @@
 scepserver-*
 scepclient-*
 
-idm-depot
+ca-certs
 *.key
 *.crt
 *.pem

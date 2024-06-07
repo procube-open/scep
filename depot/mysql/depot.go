@@ -36,6 +36,7 @@ func NewTableDepot(dsn, dirPath string) (*MySQLDepot, error) {
 	CREATE TABLE IF NOT EXISTS clients (
 		uid VARCHAR(255) NOT NULL PRIMARY KEY,
 		secret VARCHAR(255) NOT NULL,
+		status VARCHAR(255) NOT NULL,
 		attributes TEXT DEFAULT NULL
 	);`
 	createCertsTableQuery := `
@@ -68,17 +69,6 @@ func NewTableDepot(dsn, dirPath string) (*MySQLDepot, error) {
 	}
 
 	return &MySQLDepot{db: db, dirPath: dirPath}, nil
-}
-
-func OpenTable(dsn string) (*MySQLDepot, error) {
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return nil, err
-	}
-	if err = db.Ping(); err != nil {
-		return nil, err
-	}
-	return &MySQLDepot{db: db}, nil
 }
 
 func (d *MySQLDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, error) {

@@ -47,7 +47,8 @@ func (d *MySQLDepot) GetRCs() ([]pkix.RevokedCertificate, error) {
 	return rcs, nil
 }
 
-func (d *MySQLDepot) GetCertFromCN(cn string) (*certForJSON, error) {
+func (d *MySQLDepot) GetCertsByCN(cn string) ([]certForJSON, error) {
+	var certs []certForJSON
 	rows, err := d.db.Query("SELECT id, cn, serial, cert_data, status, valid_from, valid_till FROM certificates WHERE cn = ?", cn)
 	if err != nil {
 		return nil, err
@@ -71,24 +72,22 @@ func (d *MySQLDepot) GetCertFromCN(cn string) (*certForJSON, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c.Status == "V" {
-			pemBlock := &pem.Block{
-				Type:  "CERTIFICATE",
-				Bytes: certRaw,
-			}
-			pemBytes := pem.EncodeToMemory(pemBlock)
-			if pemBytes != nil {
-				c.CertData = string(pemBytes)
-			}
-			c.Serial.SetString(serialStr, 16)
-			c.ValidFrom = string(validFromRaw)
-			c.ValidTill = string(validTillRaw)
-			return &c, nil
+		pemBlock := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: certRaw,
 		}
+		pemBytes := pem.EncodeToMemory(pemBlock)
+		if pemBytes != nil {
+			c.CertData = string(pemBytes)
+		}
+		c.Serial.SetString(serialStr, 16)
+		c.ValidFrom = string(validFromRaw)
+		c.ValidTill = string(validTillRaw)
+		certs = append(certs, c)
 	}
 
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	return nil, nil
+	return certs, nil
 }

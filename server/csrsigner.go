@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
+	"strings"
 
+	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
 )
 
@@ -60,15 +62,20 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 	}
 }
 
-// // IDMChallengeMiddleware
-// func MySQLChallengeMiddleWare(url string, next CSRSignerContext) CSRSignerContextFunc {
-// 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-// 		if err := mysql.GETCert(url, m.ChallengePassword); err != nil {
-// 			return nil, err
-// 		}
-// 		return next.SignCSRContext(ctx, m)
-// 	}
-// }
+// IDMChallengeMiddleware
+func MySQLChallengeMiddleWare(depot *mysql.MySQLDepot, next CSRSignerContext) CSRSignerContextFunc {
+	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
+		arr := strings.Split(m.ChallengePassword, "\\")
+		client, err := depot.GetClient(arr[0])
+		if err != nil {
+			return nil, err
+		}
+		if client.Uid == arr[0] && client.Secret == arr[1] {
+			return next.SignCSRContext(ctx, m)
+		}
+		return nil, errors.New("invalid challenge")
+	}
+}
 
 // SignCSRAdapter adapts a next (i.e. no context) to a context signer.
 func SignCSRAdapter(next CSRSigner) CSRSignerContextFunc {

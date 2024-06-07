@@ -7,21 +7,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
-	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"fmt"
 	"math/big"
-	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
 
 	"github.com/go-kit/kit/log"
-	"software.sslmate.com/src/go-pkcs12"
 )
 
 // Service is the interface for all supported SCEP server operations.
@@ -46,14 +39,6 @@ type Service interface {
 	GetNextCACert(ctx context.Context) ([]byte, error)
 
 	GetCRL(ctx context.Context, depotPath string, message string) ([]byte, error)
-
-	CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error)
-}
-
-type createInfo *struct {
-	Uid      string `json:"uid"`
-	Secret   string `json:"secret"`
-	Password string `json:"password"`
 }
 
 type service struct {
@@ -137,9 +122,9 @@ type issuingDistributionPoint struct {
 var oidExtensionIssuingDistributionPoint = []int{2, 5, 29, 28}
 
 func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]byte, error) {
-	dsn := envString("SCEP_DSN", "")
-	port := envString("SCEP_HTTP_LISTEN_PORT", "")
-	caPass := envString("SCEP_CA_PASS", "")
+	dsn := EnvString("SCEP_DSN", "")
+	port := EnvString("SCEP_HTTP_LISTEN_PORT", "")
+	caPass := EnvString("SCEP_CA_PASS", "")
 	depot, err := mysql.NewTableDepot(dsn, depotPath)
 	if err != nil {
 		return nil, err
@@ -188,82 +173,6 @@ func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]b
 		return nil, err
 	}
 	return crl, nil
-}
-
-func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error) {
-	var info createInfo
-	var err error
-	if err := json.Unmarshal(msg, &info); err != nil {
-		return nil, err
-	}
-	if info.Password == "" {
-		return nil, errors.New("cannot set empty password")
-	}
-	if info.Uid != "" && info.Secret != "" {
-		os.RemoveAll("/tmp/" + info.Uid)
-		if err := os.Mkdir("/tmp/"+info.Uid, 0770); err != nil {
-			return nil, err
-		}
-		// cert.pem,key.pem,csr.pemを作成
-		fmt.Println("--- POST CSR myself ---")
-		cmd := exec.Command("./scepclient-opt", "-uid", info.Uid, "-secret", info.Secret, "-out", "/tmp/"+info.Uid+"/")
-		var out strings.Builder
-		cmd.Stdout = &out
-		err = cmd.Run()
-		fmt.Println(out.String())
-	} else {
-		err = errors.New("without uid or secret params")
-	}
-	fmt.Println("--- finish ---")
-	if err != nil {
-		return nil, errors.New("failed to verify CSR")
-	}
-	// pkcs12形式に変換
-	//X509.PrivateKey読み込み
-	key, err := os.ReadFile("/tmp/" + info.Uid + "/key.pem")
-	if err != nil {
-		return nil, err
-	}
-	keyBlock, _ := pem.Decode([]byte(key))
-	k, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	//X509.Certificate読み込み
-	cert, err := os.ReadFile("/tmp/" + info.Uid + "/cert.pem")
-	if err != nil {
-		return nil, err
-	}
-	certBlock, _ := pem.Decode([]byte(cert))
-	c, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	//X509.Certificate読み込み
-	caCert, err := os.ReadFile(depotPath + "/ca.crt")
-	if err != nil {
-		return nil, err
-	}
-	caCertBlock, _ := pem.Decode([]byte(caCert))
-	ca, err := x509.ParseCertificate(caCertBlock.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	var caCerts []*x509.Certificate
-	caCerts = append(caCerts, ca)
-
-	//PKCS12エンコード
-	p12, err := pkcs12.LegacyDES.Encode(k, c, caCerts, info.Password)
-	if err != nil {
-		return nil, err
-	}
-
-	//ファイルを掃除
-	os.RemoveAll("/tmp/" + info.Uid)
-
-	return p12, nil
 }
 
 // ServiceOption is a server configuration option

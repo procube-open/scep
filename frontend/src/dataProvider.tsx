@@ -1,0 +1,147 @@
+import {
+  fetchUtils,
+  GetListParams,
+  GetOneParams,
+} from 'react-admin';
+
+const fetchJson = (url: string, options: any) => fetchUtils.fetchJson(url, options)
+export const baseDataProvider = {
+  getList: (resource: string, params: any): any => Promise,
+  getOne: (resource: string, params: any): any => Promise,
+  getMany: (resource: string, params: any): any => Promise,
+  getManyReference: (resource: string, params: any): any => Promise,
+  create: (resource: string, params: any): any => Promise,
+  update: (resource: string, params: any): any => Promise,
+  updateMany: (resource: string, params: any): any => Promise,
+  delete: (resource: string, params: any): any => Promise,
+  deleteMany: (resource: string, params: any): any => Promise,
+}
+
+export const ClientProvider = {
+  ...baseDataProvider,
+  getList: async (resource: string, params: GetListParams) => {
+    const { page, perPage } = params.pagination;
+    const { field, order } = params.sort;
+    const { json } = await fetchJson(`/api/${resource}`, {
+      method: 'GET',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    });
+    if (!json) return { data: [], total: 0 };
+    json.forEach((client: any) => {
+      client.id = client.uid;
+      client.attributes = JSON.stringify(client.attributes);
+    });
+    let list = json;
+    if (field) list = list.sort((a: any, b: any) => {
+      if (a[field] < b[field]) {
+        if (order === "ASC") return 1;
+        return -1;
+      }
+      if (a[field] > b[field]) {
+        if (order === "ASC") return -1;
+        return 1;
+      }
+      return 0;
+    });
+    if (page && perPage) list = list.slice((page - 1) * perPage, page * perPage);
+    return {
+      data: list,
+      total: json.length
+    };
+  },
+
+  getOne: async (resource: string, params: GetOneParams) => {
+    const { json } = await fetchJson(`/api/${resource}/${params.id}`, {
+      method: 'GET',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    });
+    json.id = json.uid;
+    json.attributes = JSON.stringify(json.attributes);
+    return { data: json };
+  }
+}
+
+export const CertProvider = {
+  ...baseDataProvider,
+  getList: async (resource: string, params: GetListParams) => {
+    const { page, perPage } = params.pagination;
+    const { field, order } = params.sort;
+    const { json } = await fetchJson(`/api/${resource}/list/${params.meta.cn}`, {
+      method: 'GET',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    });
+    if (!json) return { data: [], total: 0 };
+    let list = json;
+    if (field) list = list.sort((a: any, b: any) => {
+      if (a[field] < b[field]) {
+        if (order === "ASC") return 1;
+        return -1;
+      }
+      if (a[field] > b[field]) {
+        if (order === "ASC") return -1;
+        return 1;
+      }
+      return 0;
+    });
+    if (page && perPage) list = list.slice((page - 1) * perPage, page * perPage);
+    return {
+      data: list,
+      total: json.length
+    };
+  },
+
+  pkcs12: async (resource: string, params: { id: string, secret: string, password: string }) => {
+    return fetch(`/api/${resource}/pkcs12`, {
+      method: 'POST',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      }),
+      body: JSON.stringify({ 
+        "uid": params.id,
+        "secret": params.secret,
+        "password": params.password
+       })
+    });
+  }
+}
+
+export const FilesProvider = {
+  ...baseDataProvider,
+  getList: async (resource: string, params: GetListParams) => {
+    const { page, perPage } = params.pagination;
+    const { field, order } = params.sort;
+    const { json } = await fetchJson(`/api${params.meta.path}`, {
+      method: 'GET',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    });
+    if (!json) return { data: [], total: 0 };
+    json.forEach((file: any) => {
+      file.id = file.name;
+    });
+    let list = json;
+    if (field) list = list.sort((a: any, b: any) => {
+      if (a[field] < b[field]) {
+        if (order === "ASC") return 1;
+        return -1;
+      }
+      if (a[field] > b[field]) {
+        if (order === "ASC") return -1;
+        return 1;
+      }
+      return 0;
+    });
+    if (page && perPage) list = list.slice((page - 1) * perPage, page * perPage);
+    return {
+      data: list,
+      total: json.length
+    };
+  }
+}
