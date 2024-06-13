@@ -35,7 +35,6 @@ func NewTableDepot(dsn, dirPath string) (*MySQLDepot, error) {
 	createClientsTableQuery := `
 	CREATE TABLE IF NOT EXISTS clients (
 		uid VARCHAR(255) NOT NULL PRIMARY KEY,
-		secret VARCHAR(255) NOT NULL,
 		status VARCHAR(255) NOT NULL,
 		attributes TEXT DEFAULT NULL
 	);`
@@ -46,15 +45,27 @@ func NewTableDepot(dsn, dirPath string) (*MySQLDepot, error) {
 		serial VARCHAR(255) NOT NULL,
 		cert_data BLOB NOT NULL,
 		status CHAR(1) NOT NULL,
-		valid_from DATETIME NOT NULL,
-		valid_till DATETIME NOT NULL,
-		revocation_date DATETIME DEFAULT NULL
+		valid_from TIMESTAMP NOT NULL,
+		valid_till TIMESTAMP NOT NULL,
+		revocation_date TIMESTAMP DEFAULT NULL
 	);`
 	createSerialTableQuery := `
 	CREATE TABLE IF NOT EXISTS serial_table (
 		id INT AUTO_INCREMENT PRIMARY KEY,
 		serial VARCHAR(255) NOT NULL
 	);`
+	createSecretsTableQuery := `
+	CREATE TABLE IF NOT EXISTS secrets (
+		challenge VARCHAR(255) NOT NULL PRIMARY KEY,
+		secret VARCHAR(255) NOT NULL,
+		target VARCHAR(255) NOT NULL,
+		type VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		delete_at TIMESTAMP NOT NULL,
+		pending_period VARCHAR(255) DEFAULT NULL,
+		FOREIGN KEY (target) REFERENCES clients(uid)
+	);`
+
 	_, err = db.Exec(createClientsTableQuery)
 	if err != nil {
 		return nil, err
@@ -64,6 +75,11 @@ func NewTableDepot(dsn, dirPath string) (*MySQLDepot, error) {
 		return nil, err
 	}
 	_, err = db.Exec(createSerialTableQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(createSecretsTableQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +113,7 @@ func (d *MySQLDepot) Put(cn string, crt *x509.Certificate, challenge string) err
 		cn = fmt.Sprintf("%x", sha256.Sum256(crt.Raw))
 	}
 
-	if err := d.writeDB(cn, serial, crt); err != nil {
+	if err := d.writeDB(cn, serial, challenge, crt); err != nil {
 		return err
 	}
 
@@ -125,7 +141,7 @@ func (d *MySQLDepot) Serial() (*big.Int, error) {
 }
 
 func (d *MySQLDepot) HasCN(cn string, allowTime int, cert *x509.Certificate, revokeOldCertificate bool) (bool, error) {
-	rows, err := d.db.Query("SELECT id, status, valid_till FROM certificates WHERE cn = ?", cn)
+	rows, err := d.db.Query("SELECT id, status, valid_from FROM certificates WHERE cn = ?", cn)
 	if err != nil {
 		return false, err
 	}
@@ -135,15 +151,8 @@ func (d *MySQLDepot) HasCN(cn string, allowTime int, cert *x509.Certificate, rev
 	for rows.Next() {
 		var id int
 		var status string
-		var validTillRaw []byte
-		if err := rows.Scan(&id, &status, &validTillRaw); err != nil {
-			return false, err
-		}
-
-		// Convert validTillRaw to time.Time
-		validTillStr := string(validTillRaw)
-		validTill, err := time.Parse("2006-01-02 15:04:05", validTillStr)
-		if err != nil {
+		var validFrom time.Time
+		if err := rows.Scan(&id, &status, &validFrom); err != nil {
 			return false, err
 		}
 
@@ -152,7 +161,7 @@ func (d *MySQLDepot) HasCN(cn string, allowTime int, cert *x509.Certificate, rev
 			candidates[serial] = fmt.Sprintf("%d", id)
 			delete(candidates, serial)
 		} else if status == "V" {
-			if validTill.After(time.Now().AddDate(0, 0, allowTime)) && allowTime > 0 {
+			if validFrom.After(time.Now().AddDate(0, 0, allowTime)) && allowTime > 0 {
 				candidates[serial] = "no"
 			} else {
 				candidates[serial] = fmt.Sprintf("%d", id)
@@ -177,19 +186,52 @@ func (d *MySQLDepot) HasCN(cn string, allowTime int, cert *x509.Certificate, rev
 	return true, nil
 }
 
-func (d *MySQLDepot) writeDB(cn string, serial *big.Int, cert *x509.Certificate) error {
-
-	if _, err := d.HasCN(cn, 0, cert, true); err != nil {
+func (d *MySQLDepot) writeDB(cn string, serial *big.Int, challenge string, cert *x509.Certificate) error {
+	client, err := d.GetClient(cn)
+	if err != nil {
 		return err
+	}
+	if client.Status == "ISSUABLE" {
+		if _, err := d.HasCN(cn, 0, cert, true); err != nil {
+			return err
+		}
+		if err := d.UpdateStatusClient(cn, "ISSUED"); err != nil {
+			return err
+		}
+	} else if client.Status == "UPDATABLE" {
+		if _, err := d.HasCN(cn, 0, cert, false); err != nil {
+			return err
+		}
+		if err := d.UpdateStatusClient(cn, "PENDING"); err != nil {
+			return err
+		}
+		secret, err := d.GetSecret(challenge)
+		if err != nil {
+			return err
+		}
+		duration, err := time.ParseDuration(secret.Pending_Period)
+		if err != nil {
+			return err
+		}
+		revocation_date := time.Now().Add(duration)
+		_, err = d.db.Exec("UPDATE certificates SET revocation_date = ? WHERE cn = ? AND status = 'V'", revocation_date, cn)
+		if err != nil {
+			return err
+		}
+	} else {
+		return errors.New("client is not issuable or updatable")
 	}
 
 	notBefore := cert.NotBefore
 	notAfter := cert.NotAfter
 
 	serialStr := fmt.Sprintf("%x", serial) // Convert serial to string
-	_, err := d.db.Exec("INSERT INTO certificates (cn, serial, cert_data, status, valid_from, valid_till) VALUES (?, ?, ?, ?, ?, ?)",
+	_, err = d.db.Exec("INSERT INTO certificates (cn, serial, cert_data, status, valid_from, valid_till) VALUES (?, ?, ?, ?, ?, ?)",
 		cn, serialStr, cert.Raw, "V", notBefore, notAfter)
 	if err != nil {
+		return err
+	}
+	if err := d.DeleteSecret(challenge); err != nil {
 		return err
 	}
 	return nil

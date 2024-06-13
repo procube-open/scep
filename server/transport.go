@@ -15,6 +15,8 @@ import (
 	"github.com/groob/finalizer/logutil"
 	"github.com/pkg/errors"
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/server/handler"
+	"github.com/procube-open/scep/utils"
 )
 
 func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
@@ -38,24 +40,27 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 	))
 	frontendPath := "frontend/build"
 	frontendHandler := http.FileServer(http.Dir(frontendPath))
-	r.Methods("GET").Path("/caweb").HandlerFunc(IndexHandler(frontendPath))
+	r.Methods("GET").Path("/caweb").HandlerFunc(handler.IndexHandler(frontendPath))
 	r.Methods("GET").PathPrefix("/caweb/").Handler(http.StripPrefix("/caweb/", frontendHandler))
 
-	downloadPath := EnvString("SCEP_DOWNLOAD_PATH", "/usr/local/download")
+	downloadPath := utils.EnvString("SCEP_DOWNLOAD_PATH", "download")
 	downloadHandler := http.FileServer(http.Dir(downloadPath))
 	r.Methods("GET").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
+	r.Methods("GET").Path("/api/files/{path:.*}").HandlerFunc(handler.ListFilesHandler(downloadPath))
 
-	r.Methods("GET").Path("/api/cert/verify").HandlerFunc(VerifyHandler(depot))
-	r.Methods("GET").Path("/api/cert/list/{CN}").HandlerFunc(CertsHandler(depot))
-	r.Methods("POST").Path("/api/cert/pkcs12").HandlerFunc(Pkcs12Handler(depot))
+	r.Methods("GET").Path("/api/cert/verify").HandlerFunc(handler.VerifyHandler(depot))
+	r.Methods("GET").Path("/api/cert/list/{CN}").HandlerFunc(handler.CertsHandler(depot))
+	r.Methods("POST").Path("/api/cert/pkcs12").HandlerFunc(handler.Pkcs12Handler(depot))
 
-	r.Methods("GET").Path("/api/client").HandlerFunc(ListClientHandler(depot))
-	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(GetClientHandler(depot))
-	r.Methods("POST").Path("/sql/client/add").HandlerFunc(AddClientHandler(depot))
-	// r.Methods("POST").Path("/sql/client/revoke").HandlerFunc(revokeHandler)
-	// r.Methods("PUT").Path("/sql/client/update").HandlerFunc(updateHandler)
+	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
+	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
 
-	r.Methods("GET").Path("/api/files/{path:.*}").HandlerFunc(ListFilesHandler(downloadPath))
+	r.Methods("GET").Path("/sql/ping").HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
+	r.Methods("POST").Path("/sql/client/add").HandlerFunc(handler.AddClientHandler(depot))
+	r.Methods("PUT").Path("/sql/client/revoke").HandlerFunc(handler.UpdateClientHandler(depot, "REVOKED"))
+	r.Methods("PUT").Path("/sql/client/update").HandlerFunc(handler.UpdateClientHandler(depot, "attributes"))
+
+	r.Methods("POST").Path("/sql/secret/create").HandlerFunc(handler.CreateSecretHandler(depot))
 	return r
 }
 
@@ -179,6 +184,7 @@ const (
 	certChainHeader = "application/x-x509-ca-ra-cert"
 	leafHeader      = "application/x-x509-ca-cert"
 	pkiOpHeader     = "application/x-pki-message"
+	crlHeader       = "application/x-pkcs7-crl"
 )
 
 func contentHeader(op string, certNum int) string {
@@ -190,6 +196,8 @@ func contentHeader(op string, certNum int) string {
 		return leafHeader
 	case "PKIOperation":
 		return pkiOpHeader
+	case "GetCRL":
+		return crlHeader
 	default:
 		return "text/plain"
 	}

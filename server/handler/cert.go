@@ -1,4 +1,4 @@
-package scepserver
+package handler
 
 import (
 	"crypto/x509"
@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,20 +16,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/utils"
+
 	"software.sslmate.com/src/go-pkcs12"
 )
-
-func IndexHandler(frontendPath string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data, err := os.ReadFile(frontendPath + "/index.html")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		w.Write(data)
-	}
-}
 
 func CertsHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +99,7 @@ func VerifyHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			return
 		}
 
-		depotPath := EnvString("SCEP_FILE_DEPOT", "ca-certs")
+		depotPath := utils.EnvString("SCEP_FILE_DEPOT", "ca-certs")
 		ca_crt, _ := os.ReadFile(depotPath + "/ca.crt")
 		caCertBlock, _ := pem.Decode(ca_crt)
 		caCert, _ := x509.ParseCertificate(caCertBlock.Bytes)
@@ -241,7 +230,7 @@ func createPKCS12(depot *mysql.MySQLDepot, info createInfo) ([]byte, error) {
 	}
 
 	//X509.Certificate読み込み
-	caPass := EnvString("SCEP_CA_PASS", "")
+	caPass := utils.EnvString("SCEP_CA_PASS", "")
 	caCerts, _, err := depot.CA([]byte(caPass))
 	if err != nil {
 		return nil, err
@@ -257,130 +246,4 @@ func createPKCS12(depot *mysql.MySQLDepot, info createInfo) ([]byte, error) {
 	os.RemoveAll("/tmp/" + info.Uid)
 
 	return p12, nil
-}
-
-type ResClient struct {
-	Uid        string                 `json:"uid"`
-	Attributes map[string]interface{} `json:"attributes"`
-}
-
-func GetClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		params := mux.Vars(r)
-		c, err := depot.GetClient(params["CN"])
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		res := ResClient{
-			Uid:        c.Uid,
-			Attributes: c.Attributes,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		b, _ := json.Marshal(res)
-		w.Write(b)
-	}
-}
-
-func ListClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		clientList, err := depot.GetClientList()
-		if err != nil {
-			http.Error(w, "Failed to list certificate", http.StatusInternalServerError)
-			return
-		}
-		var list []ResClient
-		for _, c := range clientList {
-			list = append(list, ResClient{
-				Uid:        c.Uid,
-				Attributes: c.Attributes,
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		b, _ := json.Marshal(list)
-		w.Write(b)
-	}
-}
-
-func AddClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		type ErrResp struct {
-			Message string `json:"message"`
-		}
-		decoder := json.NewDecoder(r.Body)
-		var c mysql.Client
-		err := decoder.Decode(&c)
-		if err != nil {
-			res := ErrResp{Message: "Failed to decode request"}
-			w.WriteHeader(http.StatusInternalServerError)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
-		}
-		if c.Uid == "" {
-			res := ErrResp{Message: "UID is required"}
-			w.WriteHeader(http.StatusBadRequest)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
-		}
-		if c.Secret == "" {
-			res := ErrResp{Message: "Secret is required"}
-			w.WriteHeader(http.StatusBadRequest)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
-		}
-		if c.Attributes == nil {
-			c.Attributes = make(map[string]interface{})
-		}
-		err = depot.AddClient(c)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-}
-
-func ListFilesHandler(basePath string) http.HandlerFunc {
-	type FileInfo struct {
-		Name    string      `json:"name"`
-		Size    int64       `json:"size"`
-		Mode    os.FileMode `json:"mode"`
-		ModTime time.Time   `json:"mod_time"`
-		IsDir   bool        `json:"is_dir"`
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		params := mux.Vars(r)
-		path := params["path"]
-		files, err := os.ReadDir(filepath.Join(basePath, path))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		var list []FileInfo
-		for _, f := range files {
-			info, err := f.Info()
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			list = append(list, FileInfo{
-				Name:    info.Name(),
-				Size:    info.Size(),
-				Mode:    info.Mode(),
-				ModTime: info.ModTime(),
-				IsDir:   info.IsDir(),
-			})
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		b, err := json.Marshal(list)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Write(b)
-	}
 }

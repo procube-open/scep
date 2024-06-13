@@ -16,6 +16,7 @@ import CircularProgress, {
 import LinearProgress, {
   LinearProgressProps
 } from '@mui/material/LinearProgress';
+
 function download(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -35,9 +36,9 @@ function LinearProgressWithLabel(props: LinearProgressProps & { value: number })
         <LinearProgress variant="determinate" {...props} />
       </Box>
       <Box sx={{ minWidth: 35 }}>
-        <Typography variant="body2" color="text.secondary">{`${Math.round(
-          props.value,
-        )}%`}</Typography>
+        <Typography variant="body2" color="text.secondary">
+          {`${Math.round(props.value,)}%`}
+        </Typography>
       </Box>
     </Box>
   );
@@ -65,7 +66,9 @@ function CircularProgressWithLabel(
           variant="caption"
           component="div"
           color="text.secondary"
-        >{`${Math.round(props.value)}%`}</Typography>
+        >
+          {`${Math.round(props.value)}%`}
+        </Typography>
       </Box>
     </Box>
   );
@@ -74,13 +77,11 @@ function CircularProgressWithLabel(
 const DownloadButton = (props: { downloadProvider: any, filename: string, sx: any, color: any, isLinear: boolean, disabled: boolean, type: "button" | "reset" | "submit" | undefined, children?: any }) => {
   const { downloadProvider, filename, sx, color, children, isLinear, type, disabled } = props
   const notify = useNotify();
-  const translate = useTranslate()
   const refresh = useRefresh();
   const [state, setState] = React.useState(false)
   const [progress, setProgress] = React.useState(0)
   const [total, setTotal] = React.useState(1)
-  const handler = (response: Response) => {
-    setState(true)
+  const handler = (response: Response) => new Promise((resolve, reject) => {
     const contentLength = response.headers.get('content-length');
     if (contentLength === null) return notify('error.contentLengthError', { type: 'error' })
     setTotal(parseInt(contentLength, 10))
@@ -91,12 +92,6 @@ const DownloadButton = (props: { downloadProvider: any, filename: string, sx: an
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            notify(`file.downloaded`, { type: 'success', messageArgs: { filename: filename } })
-            setTimeout(() => {
-              setState(false)
-              setProgress(0)
-              refresh()
-            }, 1500);
             break
           }
           setProgress(progress => progress + value.byteLength)
@@ -105,40 +100,49 @@ const DownloadButton = (props: { downloadProvider: any, filename: string, sx: an
         controller.close();
       },
     }));
-    res.blob().then((blob: Blob) => download(blob, filename));
+    return res.blob().then((blob: Blob) => download(blob, filename)).then(resolve).catch(reject);
+  })
+  if (state) {
+    const percent = total > 0 ? Math.floor((progress / total) * 100) : 100
+    return <Button size="small" disabled sx={sx}>
+      {
+        isLinear ?
+          <LinearProgressWithLabel value={percent} sx={{ mr: 1, mt: -1 }} color={color} /> :
+          <CircularProgressWithLabel size={20} value={percent} sx={{ mr: 1, mt: -1 }} color={color} />
+      }
+    </Button>
   }
-  return React.useMemo(() => {
-    if (state) {
-      const percent = Math.floor((progress / total) * 100)
-      return <Button size="small" disabled sx={sx}>
-        {isLinear ? <LinearProgressWithLabel value={percent} sx={{ mr: 1, mt: -1 }} color={color} /> : <CircularProgressWithLabel size={20} value={percent} sx={{ mr: 1, mt: -1 }} color={color} />}
-      </Button>
-    }
-    else {
-      return (<Button
-        color={color}
-        sx={sx}
-        type={type}
-        disabled={disabled}
-        startIcon={< FaFileDownload />}
-        children={children && children}
-        onClick={() => {
-          notify(`file.downloading`, { type: 'info', messageArgs: { filename: filename } })
-          setState(true)
-          downloadProvider().then(async (response: Response) => {
-            if (!response.ok) {
-              const json = await response.json()
-              notify(json.message, { type: 'error' })
-            }
-            else handler(response)
-          }).finally(() => {
+  else {
+    return (<Button
+      color={color}
+      sx={sx}
+      type={type}
+      disabled={disabled}
+      startIcon={< FaFileDownload />}
+      children={children && children}
+      onClick={() => {
+        notify(`file.downloading`, { type: 'info', messageArgs: { filename: filename } })
+        setState(true)
+        downloadProvider().then(async (response: Response) => {
+          if (!response.ok) {
+            const json = await response.json()
+            throw new Error(json.message)
+          }
+          else return handler(response)
+        }).then(() => {
+          notify(`file.downloaded`, { type: 'success', messageArgs: { filename: filename } })
+        }).catch((error: Error) => {
+          notify(error.message, { type: 'error' })
+        }).finally(() => {
+          setTimeout(() => {
             setState(false)
             setProgress(0)
-          })
-        }}
-      />)
-    }
-  }, [state, total, progress, disabled])
+            refresh()
+          }, 1500);
+        })
+      }}
+    />)
+  }
 
 };
 export default DownloadButton

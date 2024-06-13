@@ -13,12 +13,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/procube-open/scep/csrverifier"
 	executablecsrverifier "github.com/procube-open/scep/csrverifier/executable"
 	scepdepot "github.com/procube-open/scep/depot"
 	"github.com/procube-open/scep/depot/mysql"
 	scepserver "github.com/procube-open/scep/server"
+	"github.com/procube-open/scep/utils"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -43,18 +45,19 @@ func main() {
 	//main flags
 	var (
 		flVersion           = flag.Bool("version", false, "prints version information")
-		flHTTPAddr          = flag.String("http-addr", scepserver.EnvString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
-		flPort              = flag.String("port", scepserver.EnvString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
-		flDepotPath         = flag.String("depot", scepserver.EnvString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
-		flCAPass            = flag.String("capass", scepserver.EnvString("SCEP_CA_PASS", ""), "passwd for the ca.key")
-		flClDuration        = flag.String("crtvalid", scepserver.EnvString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
-		flClAllowRenewal    = flag.String("allowrenew", scepserver.EnvString("SCEP_CERT_RENEW", "0"), "do not allow renewal until n days before expiry, set to 0 to always allow")
-		flChallengePassword = flag.String("challenge", scepserver.EnvString("SCEP_CHALLENGE_PASSWORD", ""), "enforce a challenge password")
-		flCSRVerifierExec   = flag.String("csrverifierexec", scepserver.EnvString("SCEP_CSR_VERIFIER_EXEC", ""), "will be passed the CSRs for verification")
-		flDebug             = flag.Bool("debug", scepserver.EnvBool("SCEP_LOG_DEBUG"), "enable debug logging")
-		flLogJSON           = flag.Bool("log-json", scepserver.EnvBool("SCEP_LOG_JSON"), "output JSON logs")
-		flSignServerAttrs   = flag.Bool("sign-server-attrs", scepserver.EnvBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
-		flDSN               = flag.String("dsn", scepserver.EnvString("SCEP_DSN", ""), "Data Source Name of MySQL")
+		flHTTPAddr          = flag.String("http-addr", utils.EnvString("SCEP_HTTP_ADDR", ""), "http listen address. defaults to \":8080\"")
+		flPort              = flag.String("port", utils.EnvString("SCEP_HTTP_LISTEN_PORT", "3000"), "http port to listen on (if you want to specify an address, use -http-addr instead)")
+		flDepotPath         = flag.String("depot", utils.EnvString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
+		flCAPass            = flag.String("capass", utils.EnvString("SCEP_CA_PASS", ""), "passwd for the ca.key")
+		flClDuration        = flag.String("crtvalid", utils.EnvString("SCEP_CERT_VALID", "365"), "validity for new client certificates in days")
+		flClAllowRenewal    = flag.String("allowrenew", utils.EnvString("SCEP_CERT_RENEW", "0"), "do not allow renewal until n days before expiry, set to 0 to always allow")
+		flChallengePassword = flag.String("challenge", utils.EnvString("SCEP_CHALLENGE_PASSWORD", ""), "enforce a challenge password")
+		flCSRVerifierExec   = flag.String("csrverifierexec", utils.EnvString("SCEP_CSR_VERIFIER_EXEC", ""), "will be passed the CSRs for verification")
+		flDebug             = flag.Bool("debug", utils.EnvBool("SCEP_LOG_DEBUG"), "enable debug logging")
+		flLogJSON           = flag.Bool("log-json", utils.EnvBool("SCEP_LOG_JSON"), "output JSON logs")
+		flSignServerAttrs   = flag.Bool("sign-server-attrs", utils.EnvBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
+		flDSN               = flag.String("dsn", utils.EnvString("SCEP_DSN", ""), "Data Source Name of MySQL")
+		flTicker            = flag.String("ticker", utils.EnvString("SCEP_TICKER", "1m"), "ticker duration")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -126,6 +129,20 @@ func main() {
 		csrVerifier = executableCSRVerifier
 	}
 
+	duration, err := time.ParseDuration(*flTicker)
+	if err != nil {
+		lginfo.Log("err", err, "msg", "No valid ticker duration")
+		os.Exit(1)
+	}
+	ticker := time.NewTicker(duration)
+	go func() {
+		for range ticker.C {
+			lginfo.Log("msg", "Checking certificates")
+			depot.CheckCertRevocation()
+			depot.CheckCertExpiration()
+		}
+	}()
+
 	var svc scepserver.Service // scep service
 	{
 		crts, key, err := depot.CA([]byte(*flCAPass))
@@ -177,7 +194,7 @@ func main() {
 		errs <- http.ListenAndServe(httpAddr, h)
 	}()
 	go func() {
-		c := make(chan os.Signal)
+		c := make(chan os.Signal, 1) // Create a buffered channel with capacity 1
 		signal.Notify(c, syscall.SIGINT)
 		errs <- fmt.Errorf("%s", <-c)
 	}()
@@ -187,15 +204,15 @@ func main() {
 
 func caMain(cmd *flag.FlagSet) int {
 	var (
-		flDepotPath  = cmd.String("depot", scepserver.EnvString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
+		flDepotPath  = cmd.String("depot", utils.EnvString("SCEP_FILE_DEPOT", "ca-certs"), "path to ca folder")
 		flInit       = cmd.Bool("init", false, "create a new CA")
-		flYears      = cmd.Int("years", scepserver.EnvInt("SCEPCA_YEARS", 10), "default CA years")
-		flKeySize    = cmd.Int("keySize", scepserver.EnvInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
-		flCommonName = cmd.String("common_name", scepserver.EnvString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
-		flOrg        = cmd.String("organization", scepserver.EnvString("SCEPCA_ORG", "Procube"), "organization for CA cert")
-		flOrgUnit    = cmd.String("organizational_unit", scepserver.EnvString("SCEPCA_ORG_UNIT", ""), "organizational unit (OU) for CA cert")
+		flYears      = cmd.Int("years", utils.EnvInt("SCEPCA_YEARS", 10), "default CA years")
+		flKeySize    = cmd.Int("keySize", utils.EnvInt("SCEPCA_KEY_SIZE", 4096), "rsa key size")
+		flCommonName = cmd.String("common_name", utils.EnvString("SCEPCA_CN", "Procube SCEP CA"), "common name (CN) for CA cert")
+		flOrg        = cmd.String("organization", utils.EnvString("SCEPCA_ORG", "Procube"), "organization for CA cert")
+		flOrgUnit    = cmd.String("organizational_unit", utils.EnvString("SCEPCA_ORG_UNIT", ""), "organizational unit (OU) for CA cert")
 		flPassword   = cmd.String("key-password", "", "password to store rsa key")
-		flCountry    = cmd.String("country", scepserver.EnvString("SCEPCA_COUNTRY", "JP"), "country for CA cert")
+		flCountry    = cmd.String("country", utils.EnvString("SCEPCA_COUNTRY", "JP"), "country for CA cert")
 	)
 	cmd.Parse(os.Args[2:])
 	if *flInit {

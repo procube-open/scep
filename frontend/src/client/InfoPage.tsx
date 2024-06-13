@@ -12,6 +12,7 @@ import {
   required,
   useTranslate,
   useNotify,
+  useRecordContext,
   RowClickFunction,
 } from 'react-admin';
 import {
@@ -23,15 +24,15 @@ import {
   DialogActions,
   Button,
   IconButton,
-  Card,
-  CardContent,
 } from '@mui/material';
 import DownloadButton from '../layouts/DownloadButton';
 import BackButton from '../layouts/BackButton';
-import { IoIosClose,IoMdCheckmark  } from "react-icons/io";
-import { AiOutlineStop } from "react-icons/ai";
-import { useFormContext } from 'react-hook-form';
+import { IoIosClose } from "react-icons/io";
+import { FaCopy } from "react-icons/fa6";
+import { FcCancel, FcApproval } from "react-icons/fc";
+import { useFormContext, useWatch } from 'react-hook-form';
 import { useParams } from "react-router-dom";
+import EmptyPage from '../layouts/EmptyPage';
 
 const InfoToolbar = () => {
   const dataProvider = useDataProvider();
@@ -57,6 +58,7 @@ const InfoToolbar = () => {
     </Box>
   )
 }
+
 
 const InfoActions = () => {
   return (
@@ -108,7 +110,7 @@ const PEMDialog = (props: {
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button autoFocus onClick={() => copyTextToClipboard(pem)}>
+          <Button autoFocus startIcon={<FaCopy />} onClick={() => copyTextToClipboard(pem)}>
             {translate("cert.copy")}
           </Button>
         </DialogActions>
@@ -117,29 +119,37 @@ const PEMDialog = (props: {
   );
 }
 
-const CertEmptyPage = () => {
+const StatusError = () => {
+  const record = useRecordContext();
   const translate = useTranslate();
-  return (
-    <Box sx={{ width: 1 }}>
-      <Card sx={{ width: 1 }}>
-        <CardContent sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          <Typography variant="body1">
-            {translate("cert.empty")}
-          </Typography>
-        </CardContent>
-      </Card>
-    </Box>
+  if (record.status === "ACTIVE") return null
+  else return (
+    <Typography variant="body2" color={"error"} children={translate("error.statusError")} />
   )
 }
+const validateDownload = (values: any) => {
+  const errors: {
+    [key: string]: string
+  } = {};
+  if (values.status !== "ACTIVE") {
+    errors.status = 'error.statusError';
+  }
+  if (!values.secret) {
+    errors.secret = 'error.secretError';
+  }
+  if (!values.password) {
+    errors.password = 'error.passwordError';
+  }
 
+  return errors;
+}
 const ClientInfo = () => {
   const { uid } = useParams();
   const translate = useTranslate();
   const [open, setOpen] = React.useState(false);
   const [pem, setPem] = React.useState("");
-  const handleClickOpen: RowClickFunction = (id: any,
-    resource: string,
-    record: any) => {
+
+  const handleClickOpen: RowClickFunction = (id: any, resource: string, record: any) => {
     setPem(record.cert_data);
     setOpen(true);
     return false
@@ -153,12 +163,13 @@ const ClientInfo = () => {
         id={uid}
         redirect={false}
         mutationMode="optimistic"
+        mutationOptions={{}}
         resource="client"
         actions={<InfoActions />}
         sx={{ m: 1 }}
         title={uid}
       >
-        <SimpleForm toolbar={<InfoToolbar />} mode="onChange" reValidateMode="onChange">
+        <SimpleForm validate={validateDownload} toolbar={<InfoToolbar />} mode="onChange" reValidateMode="onChange">
           <Typography variant="h6">{translate("client.editTitle")}</Typography>
           <Box sx={{
             display: "flex",
@@ -176,6 +187,7 @@ const ClientInfo = () => {
               source="secret"
               label={translate("client.fields.secret")}
               validate={required()}
+              helperText={translate("error.secretError")}
               type="password"
               variant="outlined"
               sx={{ pr: 1, width: "50%" }}
@@ -185,10 +197,12 @@ const ClientInfo = () => {
             source="password"
             label={translate("cert.password")}
             validate={required()}
+            helperText={translate("error.passwordError")}
             type="password"
             variant="outlined"
             sx={{ pr: 1, width: "80%" }}
           />
+          <StatusError />
         </SimpleForm>
       </Edit>
       <InfiniteList
@@ -200,19 +214,20 @@ const ClientInfo = () => {
           mt: 1,
         }}
         title={<></>}
-        empty={<CertEmptyPage />}
+        empty={<EmptyPage message={translate("cert.empty")} />}
       >
         <Datagrid bulkActionButtons={false} rowClick={handleClickOpen}>
           <TextField source="serial" label={"cert.fields.serial"} />
           <FunctionField source="status" label={"cert.fields.status"} render={(record: any) => {
             if (record.status === "V") {
-              return <IoMdCheckmark />
+              return <FcApproval />
             } else {
-              return <AiOutlineStop />
+              return <FcCancel />
             }
           }} />
-          <DateField source="valid_from" label={"cert.fields.valid_from"} />
+          <DateField source="valid_from" locales="jp-JP" label={"cert.fields.valid_from"} />
           <DateField source="valid_till" label={"cert.fields.valid_till"} />
+          <DateField source="revocation_date" showTime locales="jp-JP" label={"cert.fields.revocation_date"} />
         </Datagrid>
       </InfiniteList>
       <PEMDialog pem={pem} open={open} handleClose={handleClose} />

@@ -78,6 +78,13 @@ export const CertProvider = {
     });
     if (!json) return { data: [], total: 0 };
     let list = json;
+    list.forEach((cert: any) => {
+      cert.valid_from = new Date(cert.valid_from)
+      cert.valid_till = new Date(cert.valid_till)
+      if (cert.revocation_date === "0001-01-01T00:00:00Z")
+        cert.revocation_date = null;
+      else cert.revocation_date = new Date(cert.revocation_date)
+    });
     if (field) list = list.sort((a: any, b: any) => {
       if (a[field] < b[field]) {
         if (order === "ASC") return 1;
@@ -102,11 +109,11 @@ export const CertProvider = {
       headers: new Headers({
         'Content-Type': 'application/json'
       }),
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         "uid": params.id,
         "secret": params.secret,
         "password": params.password
-       })
+      })
     });
   }
 }
@@ -116,7 +123,9 @@ export const FilesProvider = {
   getList: async (resource: string, params: GetListParams) => {
     const { page, perPage } = params.pagination;
     const { field, order } = params.sort;
-    const { json } = await fetchJson(`/api${params.meta.path}`, {
+    const { path } = params.meta;
+    const urlPath = path.join("/");
+    const { json } = await fetchJson(`/api/${urlPath}/`, {
       method: 'GET',
       headers: new Headers({
         'Content-Type': 'application/json'
@@ -142,6 +151,15 @@ export const FilesProvider = {
     return {
       data: list,
       total: json.length
-    };
+    }
+  },
+  download: async (resource: string, params: { path: string }) => {
+    const { path } = params;
+    return fetch(`/api/download/${path}`, {
+      method: 'GET',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    });
   }
 }

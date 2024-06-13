@@ -7,5 +7,6 @@ ca-certs
 *.pem
 .DS_Store
 node_modules
+download
 build
 .env

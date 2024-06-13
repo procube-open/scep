@@ -13,6 +13,7 @@ import (
 
 	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
+	"github.com/procube-open/scep/utils"
 
 	"github.com/go-kit/kit/log"
 )
@@ -122,9 +123,9 @@ type issuingDistributionPoint struct {
 var oidExtensionIssuingDistributionPoint = []int{2, 5, 29, 28}
 
 func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]byte, error) {
-	dsn := EnvString("SCEP_DSN", "")
-	port := EnvString("SCEP_HTTP_LISTEN_PORT", "")
-	caPass := EnvString("SCEP_CA_PASS", "")
+	dsn := utils.EnvString("SCEP_DSN", "")
+	port := utils.EnvString("SCEP_HTTP_LISTEN_PORT", "")
+	caPass := utils.EnvString("SCEP_CA_PASS", "")
 	depot, err := mysql.NewTableDepot(dsn, depotPath)
 	if err != nil {
 		return nil, err

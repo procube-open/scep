@@ -1,4 +1,4 @@
-package scepserver
+package utils
 
 import (
 	"os"

@@ -66,14 +66,24 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 func MySQLChallengeMiddleWare(depot *mysql.MySQLDepot, next CSRSignerContext) CSRSignerContextFunc {
 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
 		arr := strings.Split(m.ChallengePassword, "\\")
+		if len(arr) != 2 {
+			return nil, errors.New("invalid challenge")
+		}
 		client, err := depot.GetClient(arr[0])
 		if err != nil {
 			return nil, err
 		}
-		if client.Uid == arr[0] && client.Secret == arr[1] {
-			return next.SignCSRContext(ctx, m)
+		if !(client.Status == "ISSUABLE" || client.Status == "UPDATABLE") {
+			return nil, errors.New("client is not issuable or updatable")
 		}
-		return nil, errors.New("invalid challenge")
+		secret, err := depot.GetSecret(m.ChallengePassword)
+		if err != nil {
+			return nil, err
+		}
+		if secret.Secret != arr[1] {
+			return nil, errors.New("invalid secret")
+		}
+		return next.SignCSRContext(ctx, m)
 	}
 }
 

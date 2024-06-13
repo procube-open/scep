@@ -5,27 +5,8 @@ import {
   TextField,
   useTranslate
 } from 'react-admin';
-import {
-  Box,
-  Typography,
-  Card,
-  CardContent
-} from '@mui/material';
+import EmptyPage from '../layouts/EmptyPage';
 
-const EmptyPage = () => {
-  const translate = useTranslate();
-  return (
-    <Box sx={{ width: 1 }}>
-      <Card sx={{ width: 1 }}>
-        <CardContent sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          <Typography variant="body1">
-            {translate("client.empty")}
-          </Typography>
-        </CardContent>
-      </Card>
-    </Box>
-  )
-}
 const ClientList = () => {
   const translate = useTranslate();
   return (
@@ -34,10 +15,11 @@ const ClientList = () => {
       title={translate("client.title")}
       actions={false}
       sx={{ mt: 2 }}
-      empty={<EmptyPage />}
+      empty={<EmptyPage message={translate("client.empty")}/>}
     >
       <Datagrid bulkActionButtons={false} rowClick="edit">
         <TextField source="uid" label={"client.fields.uid"} />
+        <TextField source="status" label={"client.fields.status"} />
         <TextField source="attributes" label={"client.fields.attributes"} />
       </Datagrid>
     </List>
