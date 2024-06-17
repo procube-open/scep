@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
   useNotify,
-  useTranslate,
   useRefresh,
 } from 'react-admin';
 import {

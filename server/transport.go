@@ -56,6 +56,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
 
 	r.Methods("GET").Path("/sql/ping").HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
+
 	r.Methods("POST").Path("/sql/client/add").HandlerFunc(handler.AddClientHandler(depot))
 	r.Methods("PUT").Path("/sql/client/revoke").HandlerFunc(handler.UpdateClientHandler(depot, "REVOKED"))
 	r.Methods("PUT").Path("/sql/client/update").HandlerFunc(handler.UpdateClientHandler(depot, "attributes"))

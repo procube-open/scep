@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import { FaRegFolder, FaFile } from "react-icons/fa";
 import EmptyPage from '../layouts/EmptyPage';
-import DownloadButton from '../layouts/DownloadButton';
+import DownloadButton from '../layouts/Buttons/DownloadButton';
 
 const humanFileSize = (bytes: any, si = false, dp = 1) => {
   const thresh = si ? 1000 : 1024;

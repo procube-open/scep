@@ -1,38 +1,25 @@
 import * as React from 'react';
 import {
   Edit,
-  InfiniteList,
   SimpleForm,
   TextInput,
-  Datagrid,
-  TextField,
-  DateField,
-  FunctionField,
   useDataProvider,
   required,
   useTranslate,
-  useNotify,
   useRecordContext,
   RowClickFunction,
 } from 'react-admin';
 import {
   Box,
   Typography,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-  IconButton,
 } from '@mui/material';
-import DownloadButton from '../layouts/DownloadButton';
-import BackButton from '../layouts/BackButton';
-import { IoIosClose } from "react-icons/io";
-import { FaCopy } from "react-icons/fa6";
-import { FcCancel, FcApproval } from "react-icons/fc";
-import { useFormContext, useWatch } from 'react-hook-form';
+import { useFormContext } from 'react-hook-form';
 import { useParams } from "react-router-dom";
-import EmptyPage from '../layouts/EmptyPage';
+import DownloadButton from '../../layouts/Buttons/DownloadButton';
+import BackButton from '../../layouts/Buttons/BackButton';
+import PEMDialog from './PEMDialog';
+import CertList from './CertList';
+import { IsAdminContext } from '../../isAdminContext';
 
 const InfoToolbar = () => {
   const dataProvider = useDataProvider();
@@ -65,73 +52,21 @@ const InfoActions = () => {
     <BackButton color={"inherit"} sx={{ mb: 1 }} />
   )
 }
-const PEMDialog = (props: {
-  pem: string,
-  open: boolean,
-  handleClose: () => void,
-}) => {
-  const { pem, open, handleClose } = props;
-  const translate = useTranslate();
-  const notify = useNotify();
-  const copyTextToClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      notify(translate("cert.copySuccess"));
-    } catch (err) {
-      notify(translate("error.copyError"));
-    }
-  };
-  return (
-    <React.Fragment>
-      <Dialog
-        onClose={handleClose}
-        aria-labelledby="customized-dialog-title"
-        open={open}
-        maxWidth={"md"}
-      >
-        <DialogTitle sx={{ m: 0, p: 2 }} id="customized-dialog-title">
-          {translate("cert.certDataTitle")}
-        </DialogTitle>
-        <IconButton
-          aria-label="close"
-          onClick={handleClose}
-          sx={{
-            position: 'absolute',
-            right: 8,
-            top: 8,
-            color: (theme) => theme.palette.grey[500],
-          }}
-        >
-          <IoIosClose />
-        </IconButton>
-        <DialogContent dividers sx={{ whiteSpace: 'pre-line' }}>
-          <Typography variant="body1">
-            {pem}
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button autoFocus startIcon={<FaCopy />} onClick={() => copyTextToClipboard(pem)}>
-            {translate("cert.copy")}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </React.Fragment>
-  );
-}
 
 const StatusError = () => {
   const record = useRecordContext();
   const translate = useTranslate();
-  if (record.status === "ACTIVE") return null
+  if (record.status === "ISSUABLE" || record.status == "UPDATABLE") return null
   else return (
     <Typography variant="body2" color={"error"} children={translate("error.statusError")} />
   )
 }
+
 const validateDownload = (values: any) => {
   const errors: {
     [key: string]: string
   } = {};
-  if (values.status !== "ACTIVE") {
+  if (values.status !== "ISSUABLE" || values.status !== "UPDATABLE") {
     errors.status = 'error.statusError';
   }
   if (!values.secret) {
@@ -143,12 +78,13 @@ const validateDownload = (values: any) => {
 
   return errors;
 }
+
 const ClientInfo = () => {
   const { uid } = useParams();
   const translate = useTranslate();
   const [open, setOpen] = React.useState(false);
   const [pem, setPem] = React.useState("");
-
+  const { isAdmin } = React.useContext(IsAdminContext);
   const handleClickOpen: RowClickFunction = (id: any, resource: string, record: any) => {
     setPem(record.cert_data);
     setOpen(true);
@@ -205,31 +141,7 @@ const ClientInfo = () => {
           <StatusError />
         </SimpleForm>
       </Edit>
-      <InfiniteList
-        resource="cert"
-        queryOptions={{ meta: { cn: uid } }}
-        disableSyncWithLocation
-        actions={false}
-        sx={{
-          mt: 1,
-        }}
-        title={<></>}
-        empty={<EmptyPage message={translate("cert.empty")} />}
-      >
-        <Datagrid bulkActionButtons={false} rowClick={handleClickOpen}>
-          <TextField source="serial" label={"cert.fields.serial"} />
-          <FunctionField source="status" label={"cert.fields.status"} render={(record: any) => {
-            if (record.status === "V") {
-              return <FcApproval />
-            } else {
-              return <FcCancel />
-            }
-          }} />
-          <DateField source="valid_from" locales="jp-JP" label={"cert.fields.valid_from"} />
-          <DateField source="valid_till" label={"cert.fields.valid_till"} />
-          <DateField source="revocation_date" showTime locales="jp-JP" label={"cert.fields.revocation_date"} />
-        </Datagrid>
-      </InfiniteList>
+      <CertList uid={uid} handleClickOpen={handleClickOpen} />
       <PEMDialog pem={pem} open={open} handleClose={handleClose} />
     </Box>
   )

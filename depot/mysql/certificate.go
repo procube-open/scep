@@ -23,7 +23,7 @@ type certForJSON struct {
 
 func (d *MySQLDepot) GetRCs() ([]pkix.RevokedCertificate, error) {
 	var rcs []pkix.RevokedCertificate
-	rows, err := d.db.Query("SELECT serial, revocation_date FROM certificates WHERE status = ?, valid_till > NOW()", "R")
+	rows, err := d.db.Query("SELECT serial, revocation_date FROM certificates WHERE status = ? AND valid_till > NOW()", "R")
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (d *MySQLDepot) RevokeCertificate(uid string, revocation_date time.Time) er
 }
 
 func (d *MySQLDepot) CheckCertRevocation() error {
-	rows, err := d.db.Query("SELECT cn, id, revocation_date FROM certificates WHERE status = ? AND revocation_date IS NOT NULL AND revocation_date < NOW()", "V")
+	rows, err := d.db.Query("SELECT cn, id FROM certificates WHERE status = ? AND revocation_date IS NOT NULL AND revocation_date < NOW()", "V")
 	if err != nil {
 		return err
 	}

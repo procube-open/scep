@@ -35,7 +35,7 @@ func (d *MySQLDepot) DeleteSecret(challenge string) error {
 
 func (d *MySQLDepot) GetSecret(challenge string) (SecretInfo, error) {
 	var secret SecretInfo
-	rows, err := d.db.Query("SELECT secret, target, type FROM secrets WHERE challenge = ?", challenge)
+	rows, err := d.db.Query("SELECT secret, target, type, pending_period FROM secrets WHERE challenge = ?", challenge)
 	if err != nil {
 		return secret, err
 	}
@@ -43,6 +43,6 @@ func (d *MySQLDepot) GetSecret(challenge string) (SecretInfo, error) {
 	if !rows.Next() {
 		return secret, nil
 	}
-	err = rows.Scan(&secret.Secret, &secret.Target, &secret.Type)
+	err = rows.Scan(&secret.Secret, &secret.Target, &secret.Type, &secret.Pending_Period)
 	return secret, err
 }

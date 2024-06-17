@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.0-rc.6
+
+### Patch Changes
+
+- add admin mode
+
 ## 0.1.0-rc.5
 
 ### Patch Changes

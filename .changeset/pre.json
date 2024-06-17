@@ -5,6 +5,7 @@
     "scep": "0.0.8"
   },
   "changesets": [
+    "chilled-news-play",
     "curvy-shirts-approve",
     "fresh-starfishes-tap",
     "hip-balloons-cough",

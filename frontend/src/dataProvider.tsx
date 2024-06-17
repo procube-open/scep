@@ -62,6 +62,22 @@ export const ClientProvider = {
     json.id = json.uid;
     json.attributes = JSON.stringify(json.attributes);
     return { data: json };
+  },
+
+  createOne: async (resource: string, params: { uid: string, attributes: string }) => {
+    const { uid, attributes } = params;
+    const parsed = JSON.parse(attributes);
+    if (!parsed) throw new Error("Invalid JSON");
+    return fetchJson(`/sql/${resource}/add`,{
+      method: 'POST',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      }),
+      body: JSON.stringify({
+        "uid": uid,
+        "attributes": parsed
+      })
+    });
   }
 }
 

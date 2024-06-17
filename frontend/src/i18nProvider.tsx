@@ -23,6 +23,11 @@ const japanese = {
     title: "クライアント",
     editTitle: "証明書を #PKCS12 形式で発行",
     empty: "クライアントが見つかりません。",
+    create: "作成",
+    created: "クライアントを作成しました。",
+    dialog: {
+      title: "新規クライアント",
+    },
     fields:{ 
       uid: "クライアントID",
       status: "ステータス",
@@ -65,6 +70,9 @@ const japanese = {
     statusError: "このクライアントでは証明書を発行できません。",
     secretError: "クライアントのパスワードを入力して下さい。",
     passwordError: "証明書ファイルのパスワードを任意に設定して下さい。",
+  },
+  other:{
+    changeMode: "Admin",
   }
 }
 
