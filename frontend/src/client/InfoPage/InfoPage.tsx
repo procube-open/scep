@@ -19,6 +19,7 @@ import DownloadButton from '../../layouts/Buttons/DownloadButton';
 import BackButton from '../../layouts/Buttons/BackButton';
 import PEMDialog from './PEMDialog';
 import CertList from './CertList';
+import SecretInfo from './SecretInfo';
 import { IsAdminContext } from '../../isAdminContext';
 
 const InfoToolbar = () => {
@@ -38,7 +39,7 @@ const InfoToolbar = () => {
         color="primary"
         type="submit"
         disabled={!isValid}
-        children={<Typography>{translate("cert.pkcs12Download")}</Typography>}
+        children={<Typography sx={{ ml: 1}}>{translate("cert.pkcs12Download")}</Typography>}
         isLinear={true}
         sx={{ mr: 1, pt: 3, width: 1 }}
       />
@@ -66,7 +67,7 @@ const validateDownload = (values: any) => {
   const errors: {
     [key: string]: string
   } = {};
-  if (values.status !== "ISSUABLE" || values.status !== "UPDATABLE") {
+  if (values.status !== "ISSUABLE" && values.status !== "UPDATABLE") {
     errors.status = 'error.statusError';
   }
   if (!values.secret) {
@@ -75,7 +76,6 @@ const validateDownload = (values: any) => {
   if (!values.password) {
     errors.password = 'error.passwordError';
   }
-
   return errors;
 }
 
@@ -84,15 +84,17 @@ const ClientInfo = () => {
   const translate = useTranslate();
   const [open, setOpen] = React.useState(false);
   const [pem, setPem] = React.useState("");
-  const { isAdmin } = React.useContext(IsAdminContext);
+  const { adminMode } = React.useContext(IsAdminContext);
   const handleClickOpen: RowClickFunction = (id: any, resource: string, record: any) => {
     setPem(record.cert_data);
     setOpen(true);
     return false
   };
+
   const handleClose = () => {
     setOpen(false);
   };
+
   return (
     <Box>
       <Edit
@@ -141,6 +143,7 @@ const ClientInfo = () => {
           <StatusError />
         </SimpleForm>
       </Edit>
+      {adminMode && <SecretInfo uid={uid} />}
       <CertList uid={uid} handleClickOpen={handleClickOpen} />
       <PEMDialog pem={pem} open={open} handleClose={handleClose} />
     </Box>

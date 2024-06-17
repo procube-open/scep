@@ -68,7 +68,7 @@ export const ClientProvider = {
     const { uid, attributes } = params;
     const parsed = JSON.parse(attributes);
     if (!parsed) throw new Error("Invalid JSON");
-    return fetchJson(`/sql/${resource}/add`,{
+    return fetchJson(`/sql/${resource}/add`, {
       method: 'POST',
       headers: new Headers({
         'Content-Type': 'application/json'
@@ -175,6 +175,59 @@ export const FilesProvider = {
       method: 'GET',
       headers: new Headers({
         'Content-Type': 'application/json'
+      })
+    });
+  },
+
+  getUrl: async (resource: string, params: { path: string }) => {
+    const { path } = params;
+    const response = await fetch(`/api/download/${path}`, {
+      method: 'HEAD',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    })
+    return response.url;
+  }
+}
+
+export const SecretProvider = {
+  ...baseDataProvider,
+  getSecret: async (resource: string, params: { uid: string }) => {
+    const { uid } = params;
+    const { json } = await fetchJson(`/sql/${resource}/get/${uid}`, {
+      method: 'GET',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      })
+    });
+    return json;
+  },
+
+  createSecret: async (resource: string, params: { target: string, status: string, secret: string, delete_at: string, pending_period: string }) => {
+    const { target, status, secret, delete_at, pending_period } = params;
+
+    const type = status === "INACTIVE" ? "ACTIVATE" : status === "ISSUED" ? "UPDATE" : "";
+
+    const now_date = new Date();
+    const delete_at_date = delete_at !== null ? new Date(delete_at) : new Date();
+    const diff = delete_at_date.getTime() - now_date.getTime();
+    const diff_suffix = "ms";
+
+    const pd = pending_period !== "" ? parseInt(pending_period, 10) * 24 : 0;
+    const pd_suffix = "h"
+
+    return fetchJson(`/sql/${resource}/create`, {
+      method: 'POST',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      }),
+      body: JSON.stringify({
+        target: target,
+        type: type,
+        secret: secret,
+        available_period: String(diff) + diff_suffix,
+        pending_period: String(pd) + pd_suffix
       })
     });
   }

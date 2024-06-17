@@ -76,7 +76,7 @@ func MySQLChallengeMiddleWare(depot *mysql.MySQLDepot, next CSRSignerContext) CS
 		if !(client.Status == "ISSUABLE" || client.Status == "UPDATABLE") {
 			return nil, errors.New("client is not issuable or updatable")
 		}
-		secret, err := depot.GetSecret(m.ChallengePassword)
+		secret, err := depot.GetSecret(arr[0])
 		if err != nil {
 			return nil, err
 		}

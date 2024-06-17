@@ -45,7 +45,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 
 	downloadPath := utils.EnvString("SCEP_DOWNLOAD_PATH", "download")
 	downloadHandler := http.FileServer(http.Dir(downloadPath))
-	r.Methods("GET").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
+	r.Methods("GET", "HEAD").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
 	r.Methods("GET").Path("/api/files/{path:.*}").HandlerFunc(handler.ListFilesHandler(downloadPath))
 
 	r.Methods("GET").Path("/api/cert/verify").HandlerFunc(handler.VerifyHandler(depot))
@@ -62,6 +62,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 	r.Methods("PUT").Path("/sql/client/update").HandlerFunc(handler.UpdateClientHandler(depot, "attributes"))
 
 	r.Methods("POST").Path("/sql/secret/create").HandlerFunc(handler.CreateSecretHandler(depot))
+	r.Methods("GET").Path("/sql/secret/get/{CN}").HandlerFunc(handler.GetSecretHandler(depot))
 	return r
 }
 

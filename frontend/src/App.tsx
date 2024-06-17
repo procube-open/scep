@@ -20,7 +20,8 @@ import {
   baseDataProvider,
   ClientProvider,
   CertProvider,
-  FilesProvider
+  FilesProvider,
+  SecretProvider
 } from "./dataProvider";
 import i18nProvider from "./i18nProvider";
 
@@ -32,7 +33,8 @@ const layout = (props: LayoutProps) => (<Layout {...props}
 const dataProviders = combineDataProviders((resource: string) => {
   if (resource === "client") return ClientProvider;
   if (resource === "cert") return CertProvider;
-  if (resource === "files") return FilesProvider
+  if (resource === "files") return FilesProvider;
+  if (resource === "secret") return SecretProvider;
   return baseDataProvider
 });
 
@@ -40,7 +42,7 @@ const adminTheme = {
   ...defaultTheme,
   palette: {
     ...defaultTheme.palette,
-    primary: colors.green,
+    primary: colors.lightGreen,
     secondary: {
       light: '#33ab9f',
       main: '#009688',

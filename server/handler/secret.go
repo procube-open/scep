@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/procube-open/scep/depot/mysql"
 )
 
@@ -18,7 +19,7 @@ func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			return
 		}
 		defer r.Body.Close()
-		var secret mysql.SecretInfo
+		var secret mysql.CreateSecretInfo
 		err = json.Unmarshal(body, &secret)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -88,5 +89,22 @@ func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusCreated)
 
+	}
+}
+
+func GetSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		params := mux.Vars(r)
+		secrets, err := depot.GetSecret(params["CN"])
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		body, err := json.Marshal(secrets)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Write(body)
 	}
 }

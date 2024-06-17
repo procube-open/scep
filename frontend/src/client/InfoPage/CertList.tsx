@@ -6,6 +6,9 @@ import {
   InfiniteList,
   useTranslate,
 } from "react-admin";
+import {
+  Typography,
+} from "@mui/material";
 import { FcApproval, FcCancel } from "react-icons/fc";
 import EmptyPage from "../../layouts/EmptyPage";
 
@@ -17,7 +20,7 @@ const CertList = (props: { uid: string | undefined, handleClickOpen: any }) => {
       resource="cert"
       queryOptions={{ meta: { cn: uid } }}
       disableSyncWithLocation
-      actions={false}
+      actions={<Typography variant="h6" sx={{ ml: 1, order: -1 }} children={translate("cert.listTitle")} />}
       sx={{
         mt: 1,
       }}

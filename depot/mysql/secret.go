@@ -1,10 +1,11 @@
 package mysql
 
 import (
+	"database/sql"
 	"time"
 )
 
-type SecretInfo struct {
+type CreateSecretInfo struct {
 	Secret           string `json:"secret"`
 	Type             string `json:"type"`
 	Target           string `json:"target"`
@@ -12,7 +13,14 @@ type SecretInfo struct {
 	Pending_Period   string `json:"pending_period"`
 }
 
-func (d *MySQLDepot) CreateSecret(info SecretInfo) error {
+type GetSecretInfo struct {
+	Secret         string    `json:"secret"`
+	Type           string    `json:"type"`
+	Delete_At      time.Time `json:"delete_at"`
+	Pending_Period string    `json:"pending_period"`
+}
+
+func (d *MySQLDepot) CreateSecret(info CreateSecretInfo) error {
 	now := time.Now()
 	challenge := info.Target + "\\" + info.Secret
 	duration, err := time.ParseDuration(info.Available_Period)
@@ -33,16 +41,16 @@ func (d *MySQLDepot) DeleteSecret(challenge string) error {
 	return err
 }
 
-func (d *MySQLDepot) GetSecret(challenge string) (SecretInfo, error) {
-	var secret SecretInfo
-	rows, err := d.db.Query("SELECT secret, target, type, pending_period FROM secrets WHERE challenge = ?", challenge)
+func (d *MySQLDepot) GetSecret(target string) (GetSecretInfo, error) {
+	var secret GetSecretInfo
+	rows, err := d.db.Query("SELECT secret, type, delete_at, pending_period FROM secrets WHERE target = ?", target)
 	if err != nil {
 		return secret, err
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return secret, nil
+		return secret, sql.ErrNoRows
 	}
-	err = rows.Scan(&secret.Secret, &secret.Target, &secret.Type, &secret.Pending_Period)
+	err = rows.Scan(&secret.Secret, &secret.Type, &secret.Delete_At, &secret.Pending_Period)
 	return secret, err
 }

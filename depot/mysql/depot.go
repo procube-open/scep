@@ -205,7 +205,7 @@ func (d *MySQLDepot) writeDB(cn string, serial *big.Int, challenge string, cert 
 		if err := d.UpdateStatusClient(cn, "PENDING"); err != nil {
 			return err
 		}
-		secret, err := d.GetSecret(challenge)
+		secret, err := d.GetSecret(cn)
 		if err != nil {
 			return err
 		}

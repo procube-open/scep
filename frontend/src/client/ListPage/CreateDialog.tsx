@@ -24,6 +24,7 @@ const CreateDialog: React.FC<CreateDialogProps> = ({ open, handleClose }) => {
   const [attributes, setAttributes] = useState<string>('');
   const [userIdError, setUserIdError] = useState<boolean>(false);
   const [attributesError, setAttributesError] = useState<boolean>(false);
+  const [attributesParseError, setAttributesParseError] = useState<boolean>(false);
   const translate = useTranslate();
   const dataProvider = useDataProvider();
   const notify = useNotify();
@@ -45,6 +46,12 @@ const CreateDialog: React.FC<CreateDialogProps> = ({ open, handleClose }) => {
     } else {
       setAttributesError(false);
     }
+    try {
+      JSON.parse(event.target.value);
+      setAttributesParseError(false);
+    } catch (e) {
+      setAttributesParseError(true);
+    }
   };
 
   const handleSave = () => {
@@ -63,21 +70,29 @@ const CreateDialog: React.FC<CreateDialogProps> = ({ open, handleClose }) => {
       setAttributesError(false);
     }
 
+    try {
+      JSON.parse(attributes);
+      setAttributesParseError(false);
+    } catch (e) {
+      setAttributesParseError(true);
+      isValid = false;
+    }
+
     if (isValid) {
       dataProvider.createOne('client', { uid: userId, attributes: attributes })
         .then(() => {
-          notify('client.created',{type: 'success'});
+          notify('client.created', { type: 'success' });
           handleClose();
           refresh();
         })
         .catch((e: Error) => {
-          notify(`Error: ${e.message}`, {type: 'error'});
+          notify(`Error: ${e.message}`, { type: 'error' });
         });
     }
   };
 
   return (
-    <Dialog open={open} onClose={handleClose}>
+    <Dialog open={open} onClose={handleClose} fullWidth maxWidth={"md"}>
       <DialogTitle>{translate("client.dialog.title")}</DialogTitle>
       <DialogContent>
         <TextField
@@ -90,7 +105,7 @@ const CreateDialog: React.FC<CreateDialogProps> = ({ open, handleClose }) => {
           value={userId}
           onChange={handleUserIdChange}
           error={userIdError}
-          helperText={userIdError ? 'User ID is required' : ''}
+          helperText={userIdError ? translate("error.requiredError") : ''}
         />
         <TextField
           margin="dense"
@@ -100,8 +115,8 @@ const CreateDialog: React.FC<CreateDialogProps> = ({ open, handleClose }) => {
           fullWidth
           value={attributes}
           onChange={handleAttributesChange}
-          error={attributesError}
-          helperText={attributesError ? 'Attributes are required' : ''}
+          error={attributesError || attributesParseError}
+          helperText={attributesError ? translate("error.requiredError") : attributesParseError ? translate("error.parseError") : ''}
         />
       </DialogContent>
       <DialogActions>

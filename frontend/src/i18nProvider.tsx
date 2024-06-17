@@ -36,11 +36,12 @@ const japanese = {
     }
   },
   cert :{
+    listTitle: "証明書一覧",
     password: "ファイルパスワード",
     pkcs12Download: "証明書発行",
     certDataTitle: "クライアント証明書",
     empty: "証明書が発行されていません。",
-    copySuccess: "クリップボードにコピーしました。",
+    copySuccess: "クリップボードに証明書をコピーしました。",
     copy: "コピー",
     fields: {
       serial: "シリアル番号",
@@ -57,10 +58,22 @@ const japanese = {
   files: {
     title: "ダウンロード",
     empty: "ファイルが見つかりません。",
-    download: "ダウンロード",
+    copySuccess: "クリップボードにURLをコピーしました。",
+    download: "ダウンロード/URLコピー",
     fields: {
       name: "ファイル名",
       size: "サイズ",
+    }
+  },
+  secret: {
+    createTitle: "シークレットを作成",
+    create: "作成",
+    created: "シークレットを作成しました。",
+    field: {
+      secret: "シークレット",
+      delete_at: "有効期限",
+      pending_period: "更新前証明書有効期間",
+      pending_period_suffix: "日",
     }
   },
   error: {
@@ -70,6 +83,9 @@ const japanese = {
     statusError: "このクライアントでは証明書を発行できません。",
     secretError: "クライアントのパスワードを入力して下さい。",
     passwordError: "証明書ファイルのパスワードを任意に設定して下さい。",
+    requiredError: "必須項目です。",
+    parseError: "JSON形式で入力して下さい。",
+    createError: "作成に失敗しました。",
   },
   other:{
     changeMode: "Admin",

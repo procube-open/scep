@@ -117,8 +117,7 @@ const DownloadButton = (props: { downloadProvider: any, filename: string, sx: an
       sx={sx}
       type={type}
       disabled={disabled}
-      startIcon={< FaFileDownload />}
-      children={children && children}
+      children={<>< FaFileDownload />{children && children}</>}
       onClick={() => {
         notify(`file.downloading`, { type: 'info', messageArgs: { filename: filename } })
         setState(true)

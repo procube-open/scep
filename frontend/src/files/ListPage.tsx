@@ -5,6 +5,7 @@ import {
   FunctionField,
   useTranslate,
   useDataProvider,
+  useNotify,
 } from 'react-admin';
 import { useLocation } from "react-router-dom";
 import {
@@ -12,8 +13,11 @@ import {
   Typography,
   Link,
   Breadcrumbs,
+  Button,
+  ButtonGroup,
 } from '@mui/material';
 import { FaRegFolder, FaFile } from "react-icons/fa";
+import { FaLink } from "react-icons/fa6";
 import EmptyPage from '../layouts/EmptyPage';
 import DownloadButton from '../layouts/Buttons/DownloadButton';
 
@@ -47,6 +51,25 @@ const PathBreadcrumb = (props: { path: Array<string> }) => {
   </Breadcrumbs>
 }
 
+const CopyButton = (props: { path: string }) => {
+  const { path } = props;
+  const dataProvider = useDataProvider();
+  const notify = useNotify();
+  const copyToClipboard = async () => {
+    try {
+      const text = await dataProvider.getUrl("files", { path: path })
+      await navigator.clipboard.writeText(text);
+      notify("files.copySuccess");
+    } catch (err) {
+      notify("error.copyError");
+    }
+  };
+  return <Button
+    onClick={() => copyToClipboard()}
+    color="primary"
+    children={<FaLink />}
+  />
+}
 const ClientList = () => {
   const translate = useTranslate();
   const location = useLocation();
@@ -92,15 +115,18 @@ const ClientList = () => {
             return null
           } else {
             const downloadPath = paths.slice(1).concat(record.name).join("/");
-            return <DownloadButton
-              downloadProvider={() => dataProvider.download("files", { path: downloadPath })}
-              filename={record.name}
-              color="primary"
-              isLinear={false}
-              type="button"
-              sx={{ maxHeight: 20, maxWidth: "50%", ml: 1 }}
-              disabled={false}
-            />
+            return <ButtonGroup variant="text" >
+              <DownloadButton
+                downloadProvider={() => dataProvider.download("files", { path: downloadPath })}
+                filename={record.name}
+                color="primary"
+                isLinear={false}
+                type="button"
+                sx={{}}
+                disabled={false}
+              />
+              <CopyButton path={downloadPath} />
+            </ButtonGroup>
           }
         }} />
       </Datagrid>
