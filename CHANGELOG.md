@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.0-rc.9
+
+### Patch Changes
+
+- test only ubuntu
+
 ## 0.1.0-rc.8
 
 ### Patch Changes
