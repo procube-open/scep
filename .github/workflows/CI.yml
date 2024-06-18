@@ -14,8 +14,39 @@ jobs:
         go-version: [1.21.x]
         platform: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
+    services:
+      mysql:
+        image: mysql
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: certs
+          TZ: Asia/Tokyo
+        ports:
+          - 3306:3306
+        options: --health-cmd "mysqladmin ping" --health-interval 20s --health-timeout 10s --health-retries 10
     steps:
     - uses: actions/checkout@v2
+
+    # Install MySQL client for Ubuntu
+    - name: Install MySQL client on Ubuntu
+      if: matrix.platform == 'ubuntu-latest'
+      run: sudo apt-get update && sudo apt-get install -y mysql-client
+
+    # Install MySQL client for macOS
+    - name: Install MySQL client on macOS
+      if: matrix.platform == 'macos-latest'
+      run: brew install mysql-client
+
+    # Install MySQL client for Windows
+    - name: Install MySQL client on Windows
+      if: matrix.platform == 'windows-latest'
+      run: choco install mysql
+
+    - name: Health Check
+      run: |
+        until mysqladmin ping --protocol=tcp -h localhost -P 3306 -uroot -proot --silent; do
+        sleep 1
+        done
 
     - name: setup go
       uses: actions/setup-go@v2

@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.0-rc.8
+
+### Patch Changes
+
+- fix workflow
+
 ## 0.1.0-rc.7
 
 ### Patch Changes

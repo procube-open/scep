@@ -3,7 +3,6 @@ package scepserver_test
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/procube-open/scep/depot"
+	"github.com/go-sql-driver/mysql"
 	mysqldepot "github.com/procube-open/scep/depot/mysql"
 	scepserver "github.com/procube-open/scep/server"
 
@@ -123,7 +122,15 @@ func TestPKIOperationGET(t *testing.T) {
 
 func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server, scepserver.Service, func()) {
 	var err error
-	depot, err := mysqldepot.NewTableDepot("", "../scep/testdata/testca")
+	c := mysql.Config{
+		DBName:    "certs",
+		User:      "root",
+		Passwd:    "root",
+		Addr:      "127.0.0.1:3306",
+		Net:       "tcp",
+		ParseTime: true,
+	}
+	depot, err := mysqldepot.NewTableDepot(c.FormatDSN(), "../scep/testdata/testca")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,12 +152,6 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 		os.Remove("../scep/testdata/testca/index.txt")
 	}
 	return server, svc, teardown
-}
-
-type noopDepot struct{ depot.Depot }
-
-func (d *noopDepot) Put(name string, crt *x509.Certificate, challenge string) error {
-	return nil
 }
 
 // /* helpers */
