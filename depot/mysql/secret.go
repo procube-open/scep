@@ -36,8 +36,8 @@ func (d *MySQLDepot) CreateSecret(info CreateSecretInfo) error {
 	return nil
 }
 
-func (d *MySQLDepot) DeleteSecret(challenge string) error {
-	_, err := d.db.Exec("DELETE FROM secrets WHERE challenge = ?", challenge)
+func (d *MySQLDepot) DeleteSecret(target string) error {
+	_, err := d.db.Exec("DELETE FROM secrets WHERE target = ?", target)
 	return err
 }
 

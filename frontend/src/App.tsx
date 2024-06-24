@@ -58,7 +58,7 @@ export const App = () => {
   const { setIsAdmin, adminMode, setAdminMode } = React.useContext(IsAdminContext);
   const [theme, setTheme] = React.useState<RaThemeOptions>(clientTheme);
   React.useEffect(() => {
-    fetch("/sql/ping").then(async (res) => {
+    fetch("/admin/api/ping").then(async (res) => {
       const text = await res.text()
       if (text === "pong") {
         setIsAdmin(true)

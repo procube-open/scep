@@ -3,9 +3,11 @@ import {
   Datagrid,
   List,
   TextField,
+  FunctionField,
   useTranslate
 } from 'react-admin';
 import {
+  Typography,
   Button,
   ButtonProps
 } from '@mui/material';
@@ -47,7 +49,9 @@ const ClientList = () => {
       >
         <Datagrid bulkActionButtons={false} rowClick="edit">
           <TextField source="uid" label={"client.fields.uid"} />
-          <TextField source="status" label={"client.fields.status"} />
+          <FunctionField source="status" label={"client.fields.status"} render={(record: any) => {
+            return <Typography variant="body2"> {translate(`client.status.${record.status}`)}</Typography>
+          }} />
           <TextField source="attributes" label={"client.fields.attributes"} />
         </Datagrid>
       </List>

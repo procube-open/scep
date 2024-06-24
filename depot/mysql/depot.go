@@ -231,7 +231,7 @@ func (d *MySQLDepot) writeDB(cn string, serial *big.Int, challenge string, cert 
 	if err != nil {
 		return err
 	}
-	if err := d.DeleteSecret(challenge); err != nil {
+	if err := d.DeleteSecret(cn); err != nil {
 		return err
 	}
 	return nil

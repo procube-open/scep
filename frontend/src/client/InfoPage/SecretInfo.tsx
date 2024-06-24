@@ -20,6 +20,7 @@ import dayjs, { Dayjs } from 'dayjs';
 
 interface SecretInfoProps {
   uid: string | undefined;
+  render: boolean;
 }
 interface SecretInfoParams {
   secret: string;
@@ -42,7 +43,7 @@ const useTriggerEffect = (callback: () => void): (() => void) => {
 };
 
 const SecretInfo = (props: SecretInfoProps) => {
-  const { uid } = props;
+  const { uid, render } = props;
   const [hasSecret, setHasSecret] = React.useState<boolean>(false);
   const [status, setStatus] = React.useState<string>('');
   const [params, setParams] = React.useState<SecretInfoParams>({ secret: '', delete_at: null, pending_period: "" });
@@ -66,7 +67,7 @@ const SecretInfo = (props: SecretInfoProps) => {
       setParams({
         secret: json.secret,
         delete_at: dayjs(json.delete_at),
-        pending_period: String(parseInt(json.pending_period.slice(0, -1)) % 24)
+        pending_period: String(Math.floor(parseInt(json.pending_period.slice(0, -1)) / 24))
       })
       setHasSecret(true);
     }).catch(() => {
@@ -77,12 +78,11 @@ const SecretInfo = (props: SecretInfoProps) => {
   React.useEffect(() => {
     triggerGetSecretEffect();
     triggerGetClientEffect();
-  }, []);
+  }, [render]);
 
   const onClickCreate = () => {
     dataProvider.createSecret("secret", {
       target: uid,
-      status: status,
       secret: params.secret,
       delete_at: params.delete_at && params.delete_at.toISOString(),
       pending_period: params.pending_period
@@ -101,24 +101,24 @@ const SecretInfo = (props: SecretInfoProps) => {
         <Typography variant="h6" sx={{ ml: 1 }} children={translate("secret.createTitle")} />
         <Card sx={{ width: 1 }}>
           <CardContent sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <Typography variant="body1">
-              {status}
+            <Typography variant="body1" sx={{ mr: 2 }}>
+              {translate("client.fields.status")}:{translate(`client.status.${status}`)}
             </Typography>
             <TextField
-              label={translate("secret.field.secret")}
+              label={translate("secret.fields.secret")}
               value={params.secret}
               variant="outlined"
-              disabled={hasSecret}
+              disabled={hasSecret || status === "PENDING"}
               onChange={(event) => setParams({ ...params, secret: event.target.value })}
               sx={{ ml: 1 }}
             />
             <DateTimePicker
               ampm={false}
               disablePast
-              label={translate("secret.field.delete_at")}
+              label={translate("secret.fields.delete_at")}
               value={params.delete_at}
               onChange={(newValue) => setParams({ ...params, delete_at: newValue })}
-              disabled={hasSecret}
+              disabled={hasSecret || status === "PENDING"}
               slotProps={{
                 textField: { variant: "outlined" },
                 actionBar: {
@@ -128,13 +128,13 @@ const SecretInfo = (props: SecretInfoProps) => {
               sx={{ ml: 1 }}
             />
             <TextField
-              label={translate("secret.field.pending_period")}
+              label={translate("secret.fields.pending_period")}
               value={params.pending_period}
               variant="outlined"
-              disabled={hasSecret || status === "INACTIVE"}
+              disabled={hasSecret || status === "INACTIVE" || status === "PENDING"}
               type="number"
               InputProps={{
-                endAdornment: <Typography>{translate("secret.field.pending_period_suffix")}</Typography>
+                endAdornment: <Typography>{translate("secret.fields.pending_period_suffix")}</Typography>
               }}
               onChange={(event) => setParams({ ...params, pending_period: event.target.value })}
               sx={{ ml: 1 }}

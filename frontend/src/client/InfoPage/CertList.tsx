@@ -36,8 +36,9 @@ const CertList = (props: { uid: string | undefined, handleClickOpen: any }) => {
             return <FcCancel />
           }
         }} />
-        <DateField source="valid_from" locales="jp-JP" label={"cert.fields.valid_from"} />
-        <DateField source="valid_till" label={"cert.fields.valid_till"} />
+        <FunctionField source="valid_from" label={"cert.fields.valid_duration"} render={(record: any) => {
+          return <Typography variant="body2">{new Date(record.valid_from).toLocaleString()} ~ {new Date(record.valid_till).toLocaleString()}</Typography>
+        }} />
         <DateField source="revocation_date" showTime locales="jp-JP" label={"cert.fields.revocation_date"} />
       </Datagrid>
     </InfiniteList>

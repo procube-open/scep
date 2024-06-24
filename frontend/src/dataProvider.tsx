@@ -68,7 +68,7 @@ export const ClientProvider = {
     const { uid, attributes } = params;
     const parsed = JSON.parse(attributes);
     if (!parsed) throw new Error("Invalid JSON");
-    return fetchJson(`/sql/${resource}/add`, {
+    return fetchJson(`/admin/api/${resource}/add`, {
       method: 'POST',
       headers: new Headers({
         'Content-Type': 'application/json'
@@ -76,6 +76,19 @@ export const ClientProvider = {
       body: JSON.stringify({
         "uid": uid,
         "attributes": parsed
+      })
+    });
+  },
+
+  revoke: async (resource: string, params: { uid: string }) => {
+    const { uid } = params;
+    return fetchJson(`/admin/api/${resource}/revoke`, {
+      method: 'POST',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      }),
+      body: JSON.stringify({
+        "uid": uid
       })
     });
   }
@@ -195,7 +208,7 @@ export const SecretProvider = {
   ...baseDataProvider,
   getSecret: async (resource: string, params: { uid: string }) => {
     const { uid } = params;
-    const { json } = await fetchJson(`/sql/${resource}/get/${uid}`, {
+    const { json } = await fetchJson(`/admin/api/${resource}/get/${uid}`, {
       method: 'GET',
       headers: new Headers({
         'Content-Type': 'application/json'
@@ -204,10 +217,8 @@ export const SecretProvider = {
     return json;
   },
 
-  createSecret: async (resource: string, params: { target: string, status: string, secret: string, delete_at: string, pending_period: string }) => {
-    const { target, status, secret, delete_at, pending_period } = params;
-
-    const type = status === "INACTIVE" ? "ACTIVATE" : status === "ISSUED" ? "UPDATE" : "";
+  createSecret: async (resource: string, params: { target: string, secret: string, delete_at: string, pending_period: string }) => {
+    const { target, secret, delete_at, pending_period } = params;
 
     const now_date = new Date();
     const delete_at_date = delete_at !== null ? new Date(delete_at) : new Date();
@@ -217,14 +228,13 @@ export const SecretProvider = {
     const pd = pending_period !== "" ? parseInt(pending_period, 10) * 24 : 0;
     const pd_suffix = "h"
 
-    return fetchJson(`/sql/${resource}/create`, {
+    return fetchJson(`/admin/api/${resource}/create`, {
       method: 'POST',
       headers: new Headers({
         'Content-Type': 'application/json'
       }),
       body: JSON.stringify({
         target: target,
-        type: type,
         secret: secret,
         available_period: String(diff) + diff_suffix,
         pending_period: String(pd) + pd_suffix

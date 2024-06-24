@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -33,6 +34,15 @@ func CertsHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		b, _ := json.Marshal(certs)
 		w.Write(b)
 	}
+}
+
+func checkIfRevoked(cert *x509.Certificate, revokedCerts []pkix.RevokedCertificate) bool {
+	for _, revokedCert := range revokedCerts {
+		if cert.SerialNumber.Cmp(revokedCert.SerialNumber) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func VerifyHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
@@ -121,6 +131,25 @@ func VerifyHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			w.Write(b)
 			return
 		}
+
+		rcs, err := depot.GetRCs()
+		if err != nil {
+			res := ErrResp_1{Message: "Failed to get RCs"}
+			w.WriteHeader(http.StatusInternalServerError)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
+		if checkIfRevoked(cert, rcs) {
+			res := ErrResp_1{
+				Message: "Certificate is revoked",
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
+
 		client, err := depot.GetClient(cert.Subject.CommonName)
 		if client == nil && err == nil {
 			res := ErrResp_4{
@@ -140,6 +169,7 @@ func VerifyHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		} else {
 			res := ResClient{
 				Uid:        client.Uid,
+				Status:     client.Status,
 				Attributes: client.Attributes,
 			}
 			b, _ := json.Marshal(res)

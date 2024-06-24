@@ -55,14 +55,14 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
 	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
 
-	r.Methods("GET").Path("/sql/ping").HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
+	r.Methods("GET").Path("/admin/api/ping").HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
 
-	r.Methods("POST").Path("/sql/client/add").HandlerFunc(handler.AddClientHandler(depot))
-	r.Methods("PUT").Path("/sql/client/revoke").HandlerFunc(handler.UpdateClientHandler(depot, "REVOKED"))
-	r.Methods("PUT").Path("/sql/client/update").HandlerFunc(handler.UpdateClientHandler(depot, "attributes"))
+	r.Methods("POST").Path("/admin/api/client/add").HandlerFunc(handler.AddClientHandler(depot))
+	r.Methods("POST").Path("/admin/api/client/revoke").HandlerFunc(handler.RevokeClientHandler(depot))
+	r.Methods("PUT").Path("/admin/api/client/update").HandlerFunc(handler.UpdateClientHandler(depot))
 
-	r.Methods("POST").Path("/sql/secret/create").HandlerFunc(handler.CreateSecretHandler(depot))
-	r.Methods("GET").Path("/sql/secret/get/{CN}").HandlerFunc(handler.GetSecretHandler(depot))
+	r.Methods("POST").Path("/admin/api/secret/create").HandlerFunc(handler.CreateSecretHandler(depot))
+	r.Methods("GET").Path("/admin/api/secret/get/{CN}").HandlerFunc(handler.GetSecretHandler(depot))
 	return r
 }
 

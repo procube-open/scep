@@ -16,6 +16,17 @@ import LinearProgress, {
   LinearProgressProps
 } from '@mui/material/LinearProgress';
 
+interface DownloadButtonProps {
+  downloadProvider: any;
+  filename: string;
+  sx: any;
+  color: any;
+  isLinear: boolean;
+  disabled: boolean;
+  type: "button" | "reset" | "submit" | undefined;
+  children?: any;
+  afterFunction?: () => void;
+}
 function download(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -73,8 +84,8 @@ function CircularProgressWithLabel(
   );
 }
 
-const DownloadButton = (props: { downloadProvider: any, filename: string, sx: any, color: any, isLinear: boolean, disabled: boolean, type: "button" | "reset" | "submit" | undefined, children?: any }) => {
-  const { downloadProvider, filename, sx, color, children, isLinear, type, disabled } = props
+const DownloadButton = (props: DownloadButtonProps) => {
+  const { downloadProvider, filename, sx, color, children, isLinear, type, disabled, afterFunction } = props
   const notify = useNotify();
   const refresh = useRefresh();
   const [state, setState] = React.useState(false)
@@ -128,6 +139,7 @@ const DownloadButton = (props: { downloadProvider: any, filename: string, sx: an
           }
           else return handler(response)
         }).then(() => {
+          afterFunction && afterFunction()
           notify(`file.downloaded`, { type: 'success', messageArgs: { filename: filename } })
         }).catch((error: Error) => {
           notify(error.message, { type: 'error' })
