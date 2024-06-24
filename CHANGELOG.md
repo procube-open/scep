@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.0-rc.11
+
+### Patch Changes
+
+- change default value of SCEP_TICKER
+
 ## 0.1.0-rc.10
 
 ### Patch Changes

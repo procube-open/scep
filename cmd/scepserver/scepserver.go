@@ -57,7 +57,7 @@ func main() {
 		flLogJSON           = flag.Bool("log-json", utils.EnvBool("SCEP_LOG_JSON"), "output JSON logs")
 		flSignServerAttrs   = flag.Bool("sign-server-attrs", utils.EnvBool("SCEP_SIGN_SERVER_ATTRS"), "sign cert attrs for server usage")
 		flDSN               = flag.String("dsn", utils.EnvString("SCEP_DSN", ""), "Data Source Name of MySQL")
-		flTicker            = flag.String("ticker", utils.EnvString("SCEP_TICKER", "1m"), "ticker duration")
+		flTicker            = flag.String("ticker", utils.EnvString("SCEP_TICKER", "24h"), "ticker duration")
 	)
 	flag.Usage = func() {
 		flag.PrintDefaults()
