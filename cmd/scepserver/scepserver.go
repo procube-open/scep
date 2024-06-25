@@ -140,6 +140,9 @@ func main() {
 			lginfo.Log("msg", "Checking certificates")
 			depot.CheckCertRevocation()
 			depot.CheckCertExpiration()
+
+			lginfo.Log("msg", "Checking secrets")
+			depot.CheckSecretExpiration()
 		}
 	}()
 

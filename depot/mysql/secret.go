@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -53,4 +54,43 @@ func (d *MySQLDepot) GetSecret(target string) (GetSecretInfo, error) {
 	}
 	err = rows.Scan(&secret.Secret, &secret.Type, &secret.Delete_At, &secret.Pending_Period)
 	return secret, err
+}
+
+func (d *MySQLDepot) CheckSecretExpiration() error {
+	rows, err := d.db.Query("SELECT target FROM secrets WHERE delete_at < NOW()")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var target string
+		err := rows.Scan(&target)
+		if err != nil {
+			return err
+		}
+		client, err := d.GetClient(target)
+		if err != nil {
+			return err
+		}
+		if client.Status == "ISSUABLE" {
+			_, err = d.db.Exec("UPDATE clients SET status = 'INACTIVE' WHERE uid = ?", target)
+			if err != nil {
+				return err
+			}
+		} else if client.Status == "UPDATABLE" {
+			_, err = d.db.Exec("UPDATE clients SET status = 'ISSUED' WHERE uid = ?", target)
+			if err != nil {
+				return err
+			}
+		} else {
+			return errors.New("client is not issuable or updatable")
+		}
+
+		err = d.DeleteSecret(target)
+		if err != nil {
+			return err
+		}
+
+	}
+	return nil
 }

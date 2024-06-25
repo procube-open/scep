@@ -74,7 +74,7 @@ const ClientList = () => {
   const translate = useTranslate();
   const location = useLocation();
   const path = location.pathname;
-  const paths = path.split("/").slice(1, -1);
+  const paths = path.split("/").slice(1);
   const dataProvider = useDataProvider();
   return (
     <List
@@ -90,7 +90,7 @@ const ClientList = () => {
           if (record.is_dir) {
             return <Box sx={{ display: "flex" }}>
               <FaRegFolder />
-              <Link href={`./#${path}${record.name}/`} underline="hover" variant="body2" sx={{ pl: 1 }}>
+              <Link href={`#${path}${record.name}`} underline="hover" variant="body2" sx={{ pl: 1 }}>
                 {record.name}
               </Link>
             </Box>

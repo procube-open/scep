@@ -72,7 +72,7 @@ make
 ```
 
 ```
-SCEP_DSN=root@tcp(127.0.0.1:3306)/scep?parseTime=true ./scepserver-opt
+SCEP_DSN="root@tcp(127.0.0.1:3306)/scep?parseTime=true&loc=Asia%2FTokyo" ./scepserver-opt
 ```
 
 MySQL が listen しているアドレスが異なる場合は、SCEP_DSN 環境変数指定の部分を適宜変更して下さい。

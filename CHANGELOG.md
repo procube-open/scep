@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.0-rc.12
+
+### Patch Changes
+
+- fix rendering secretInfo
+
 ## 0.1.0-rc.11
 
 ### Patch Changes

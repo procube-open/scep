@@ -38,6 +38,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 		encodeSCEPResponse,
 		opts...,
 	))
+
 	frontendPath := "frontend/build"
 	frontendHandler := http.FileServer(http.Dir(frontendPath))
 	r.Methods("GET").Path("/caweb").HandlerFunc(handler.IndexHandler(frontendPath))

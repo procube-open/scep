@@ -1,4 +1,4 @@
-import { createContext, useState, Dispatch, SetStateAction } from 'react';
+import { createContext, useState, Dispatch, SetStateAction, ReactNode } from 'react';
 
 type IsAdminType = {
   isAdmin: boolean,
@@ -8,7 +8,7 @@ type IsAdminType = {
 }
 export const IsAdminContext = createContext({} as IsAdminType);
 
-export const IsAdminProvider = (props: { children: any }) => {
+export const IsAdminProvider = (props: { children: ReactNode }) => {
   const { children } = props;
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminMode, setAdminMode] = useState(false);

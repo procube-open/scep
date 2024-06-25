@@ -25,12 +25,7 @@ import CertList from './CertList';
 import SecretInfo from './SecretInfo';
 import { IsAdminContext } from '../../isAdminContext';
 
-interface RerenderProps {
-  Rerender: () => void;
-}
-
-const InfoToolbar = (props: RerenderProps) => {
-  const { Rerender } = props;
+const InfoToolbar = () => {
   const dataProvider = useDataProvider();
   const form = useFormContext();
   const { formState: { isValid } } = form;
@@ -50,19 +45,17 @@ const InfoToolbar = (props: RerenderProps) => {
         children={<Typography sx={{ ml: 1 }}>{translate("cert.pkcs12Download")}</Typography>}
         isLinear={true}
         sx={{ mr: 1, pt: 3, width: 1 }}
-        afterFunction={Rerender}
       />
     </Box>
   )
 }
 
 
-const InfoActions = (props: RerenderProps) => {
-  const { Rerender } = props;
+const InfoActions = () => {
   return (
     <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", }}>
       <BackButton color={"inherit"} />
-      <RevokeButton Rerender={Rerender} />
+      <RevokeButton />
     </Box>
   )
 }
@@ -92,9 +85,8 @@ const validateDownload = (values: any) => {
   return errors;
 }
 
-const RevokeButton = (props: RerenderProps) => {
+const RevokeButton = () => {
   const { adminMode } = React.useContext(IsAdminContext);
-  const { Rerender } = props;
   const dataProvider = useDataProvider();
   const { uid } = useParams();
   const translate = useTranslate();
@@ -105,7 +97,6 @@ const RevokeButton = (props: RerenderProps) => {
     dataProvider.revoke("client", { uid: uid }).then(() => {
       notify('client.revoked', { type: 'info' });
       refresh();
-      Rerender();
     })
   }
   if (!adminMode) return null
@@ -125,10 +116,6 @@ const ClientInfo = () => {
   const translate = useTranslate();
   const [open, setOpen] = React.useState(false);
   const [pem, setPem] = React.useState("");
-  const [rerender, setRerender] = React.useState(false);
-  const Rerender = () => {
-    setRerender(!rerender);
-  };
 
   const { adminMode } = React.useContext(IsAdminContext);
   const handleClickOpen: RowClickFunction = (id: any, resource: string, record: any) => {
@@ -141,7 +128,6 @@ const ClientInfo = () => {
     setOpen(false);
   };
 
-
   return (
     <Box>
       <Edit
@@ -150,11 +136,11 @@ const ClientInfo = () => {
         mutationMode="optimistic"
         mutationOptions={{}}
         resource="client"
-        actions={<InfoActions Rerender={Rerender} />}
+        actions={<InfoActions />}
         sx={{ m: 1 }}
         title={uid}
       >
-        <SimpleForm validate={validateDownload} toolbar={<InfoToolbar Rerender={Rerender} />} mode="onChange" reValidateMode="onChange">
+        <SimpleForm validate={validateDownload} toolbar={<InfoToolbar />} mode="onChange" reValidateMode="onChange">
           <Typography variant="h6">{translate("client.editTitle")}</Typography>
           <Box sx={{
             display: "flex",
@@ -190,7 +176,7 @@ const ClientInfo = () => {
           <StatusError />
         </SimpleForm>
       </Edit>
-      {adminMode && <SecretInfo uid={uid} render={rerender} />}
+      {adminMode && <SecretInfo uid={uid} />}
       <CertList uid={uid} handleClickOpen={handleClickOpen} />
       <PEMDialog pem={pem} open={open} handleClose={handleClose} />
     </Box>
