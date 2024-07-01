@@ -2,21 +2,20 @@ package scepserver
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
-	"encoding/pem"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"errors"
-	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"strings"
+	"math/big"
+	"time"
 
+	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
+	"github.com/procube-open/scep/utils"
 
 	"github.com/go-kit/kit/log"
-	"software.sslmate.com/src/go-pkcs12"
 )
 
 // Service is the interface for all supported SCEP server operations.
@@ -41,14 +40,6 @@ type Service interface {
 	GetNextCACert(ctx context.Context) ([]byte, error)
 
 	GetCRL(ctx context.Context, depotPath string, message string) ([]byte, error)
-
-	CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error)
-}
-
-type createInfo *struct {
-	Uid      string `json:"uid"`
-	Secret   string `json:"secret"`
-	Password string `json:"password"`
 }
 
 type service struct {
@@ -116,92 +107,73 @@ func (svc *service) GetNextCACert(ctx context.Context) ([]byte, error) {
 	panic("not implemented")
 }
 
-func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]byte, error) {
-	fp, err := os.Open(depotPath + "/ca.crl")
-	if err != nil {
-		panic(err)
-	}
-	defer fp.Close()
-	byteData, err := io.ReadAll(fp)
-	return byteData, err
+type distributionPointName struct {
+	FullName     []asn1.RawValue  `asn1:"optional,tag:0"`
+	RelativeName pkix.RDNSequence `asn1:"optional,tag:1"`
+}
+type issuingDistributionPoint struct {
+	DistributionPoint          distributionPointName `asn1:"optional,tag:0"`
+	OnlyContainsUserCerts      bool                  `asn1:"optional,tag:1"`
+	OnlyContainsCACerts        bool                  `asn1:"optional,tag:2"`
+	OnlySomeReasons            asn1.BitString        `asn1:"optional,tag:3"`
+	IndirectCRL                bool                  `asn1:"optional,tag:4"`
+	OnlyContainsAttributeCerts bool                  `asn1:"optional,tag:5"`
 }
 
-func (svc *service) CreatePKCS12(ctx context.Context, depotPath string, msg []byte) ([]byte, error) {
-	var info createInfo
-	var err error
-	if err := json.Unmarshal(msg, &info); err != nil {
-		return nil, err
-	}
-	if info.Password == "" {
-		return nil, errors.New("cannot set empty password")
-	}
-	if info.Uid != "" && info.Secret != "" {
-		os.RemoveAll("/tmp/" + info.Uid)
-		if err := os.Mkdir("/tmp/"+info.Uid, 0770); err != nil {
-			return nil, err
-		}
-		// cert.pem,key.pem,csr.pemを作成
-		fmt.Println("--- POST CSR myself ---")
-		cmd := exec.Command("./scepclient-opt", "-uid", info.Uid, "-secret", info.Secret, "-out", "/tmp/"+info.Uid+"/")
-		var out strings.Builder
-		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
-			fmt.Println("--- finish ---")
-			return nil, errors.New("failed to verify CSR")
-		}
-		fmt.Println(out.String())
-		fmt.Println("--- finish ---")
-	} else {
-		fmt.Println("--- finish ---")
-		return nil, errors.New("without uid or secret params")
-	}
+var oidExtensionIssuingDistributionPoint = []int{2, 5, 29, 28}
 
-	// pkcs12形式に変換
-	//X509.PrivateKey読み込み
-	key, err := os.ReadFile("/tmp/" + info.Uid + "/key.pem")
+func (svc *service) GetCRL(ctx context.Context, depotPath string, _ string) ([]byte, error) {
+	dsn := utils.EnvString("SCEP_DSN", "")
+	port := utils.EnvString("SCEP_HTTP_LISTEN_PORT", "")
+	caPass := utils.EnvString("SCEP_CA_PASS", "")
+	depot, err := mysql.NewTableDepot(dsn, depotPath)
 	if err != nil {
 		return nil, err
 	}
-	keyBlock, _ := pem.Decode([]byte(key))
-	k, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	rcs, err := depot.GetRCs()
 	if err != nil {
 		return nil, err
 	}
 
-	//X509.Certificate読み込み
-	cert, err := os.ReadFile("/tmp/" + info.Uid + "/cert.pem")
-	if err != nil {
-		return nil, err
-	}
-	certBlock, _ := pem.Decode([]byte(cert))
-	c, err := x509.ParseCertificate(certBlock.Bytes)
+	cert, key, err := depot.CA([]byte(caPass))
 	if err != nil {
 		return nil, err
 	}
 
-	//X509.Certificate読み込み
-	caCert, err := os.ReadFile(depotPath + "/ca.crt")
-	if err != nil {
-		return nil, err
+	dp := distributionPointName{
+		FullName: []asn1.RawValue{
+			{Tag: 6, Class: 2, Bytes: []byte("http://localhost:" + port + "/scep?operation=GetCRL")},
+		},
 	}
-	caCertBlock, _ := pem.Decode([]byte(caCert))
-	ca, err := x509.ParseCertificate(caCertBlock.Bytes)
-	if err != nil {
-		return nil, err
+	idp := issuingDistributionPoint{
+		DistributionPoint: dp,
 	}
-	var caCerts []*x509.Certificate
-	caCerts = append(caCerts, ca)
 
-	//PKCS12エンコード
-	p12, err := pkcs12.LegacyDES.Encode(k, c, caCerts, info.Password)
+	v, err := asn1.Marshal(idp)
 	if err != nil {
 		return nil, err
 	}
 
-	//ファイルを掃除
-	os.RemoveAll("/tmp/" + info.Uid)
+	cdpExt := pkix.Extension{
+		Id:       oidExtensionIssuingDistributionPoint,
+		Critical: true,
+		Value:    v,
+	}
 
-	return p12, nil
+	crlTpl := &x509.RevocationList{
+		SignatureAlgorithm:  x509.SHA256WithRSA,
+		RevokedCertificates: rcs,
+		Number:              big.NewInt(2),
+		ThisUpdate:          time.Now(),
+		NextUpdate:          time.Now().Add(24 * time.Hour),
+		ExtraExtensions:     []pkix.Extension{cdpExt},
+	}
+
+	crl, err := x509.CreateRevocationList(rand.Reader, crlTpl, cert[0], key)
+	if err != nil {
+		return nil, err
+	}
+	return crl, nil
 }
 
 // ServiceOption is a server configuration option

@@ -11,7 +11,7 @@ RUN npm run build
 FROM golang:alpine
 RUN apk update
 RUN apk add make
-RUN mkdir /client
+RUN mkdir /download
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download

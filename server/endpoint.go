@@ -21,7 +21,6 @@ const (
 	pkiOperation  = "PKIOperation"
 	getNextCACert = "GetNextCACert"
 	getCRL        = "GetCRL"
-	createPKCS12  = "CreatePKCS12"
 )
 
 type Endpoints struct {
@@ -106,16 +105,6 @@ func (e *Endpoints) GetCRL(ctx context.Context, depotPath string, message string
 	return resp.Data, resp.Err
 }
 
-func (e *Endpoints) CreatePKCS12(ctx context.Context, depotPath string, message []byte) ([]byte, error) {
-	request := SCEPRequest{Operation: createPKCS12, Message: []byte(message)}
-	response, err := e.GetEndpoint(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	resp := response.(SCEPResponse)
-	return resp.Data, resp.Err
-}
-
 func MakeServerEndpoints(svc Service, depotPath string) *Endpoints {
 	e := MakeSCEPEndpoint(svc, depotPath)
 	return &Endpoints{
@@ -167,8 +156,6 @@ func MakeSCEPEndpoint(svc Service, depotPath string) endpoint.Endpoint {
 			resp.Data, resp.Err = svc.PKIOperation(ctx, req.Message)
 		case "GetCRL":
 			resp.Data, resp.Err = svc.GetCRL(ctx, depotPath, string(req.Message))
-		case "CreatePKCS12":
-			resp.Data, resp.Err = svc.CreatePKCS12(ctx, depotPath, req.Message)
 		default:
 			return nil, errors.New("operation not implemented")
 		}

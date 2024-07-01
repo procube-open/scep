@@ -1,11 +1,12 @@
 scepserver-*
 scepclient-*
 
-idm-depot
+ca-certs
 *.key
 *.crt
 *.pem
 .DS_Store
 node_modules
+download
 build
 .env

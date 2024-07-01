@@ -1,5 +1,113 @@
 # scep
 
+## 0.1.0
+
+### Minor Changes
+
+- 0a265d1: mysql
+
+### Patch Changes
+
+- af521ab: add admin mode
+- 4f5e660: test only ubuntu
+- d452af6: fix etc
+- cf4453a: change path of files at download api
+- e9a47b5: fix workflow
+- 9d00749: fix status
+- bec62a2: add secretInfo
+- 88683a3: update frontend
+- 2d024be: fix README
+- 75621f7: fix rendering secretInfo
+- 4bf9845: fix userHandler url
+- c9c4251: fix error handling when not found user
+- cf4453a: fix README
+- 07b85b3: change default value of SCEP_TICKER
+
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- fix README
+
+## 0.1.0-rc.12
+
+### Patch Changes
+
+- fix rendering secretInfo
+
+## 0.1.0-rc.11
+
+### Patch Changes
+
+- change default value of SCEP_TICKER
+
+## 0.1.0-rc.10
+
+### Patch Changes
+
+- fix etc
+
+## 0.1.0-rc.9
+
+### Patch Changes
+
+- test only ubuntu
+
+## 0.1.0-rc.8
+
+### Patch Changes
+
+- fix workflow
+
+## 0.1.0-rc.7
+
+### Patch Changes
+
+- add secretInfo
+
+## 0.1.0-rc.6
+
+### Patch Changes
+
+- add admin mode
+
+## 0.1.0-rc.5
+
+### Patch Changes
+
+- fix status
+
+## 0.1.0-rc.4
+
+### Patch Changes
+
+- update frontend
+
+## 0.1.0-rc.3
+
+### Minor Changes
+
+- mysql
+
+## 0.0.9-rc.2
+
+### Patch Changes
+
+- change path of files at download api
+- fix README
+
+## 0.0.9-rc.1
+
+### Patch Changes
+
+- fix userHandler url
+
+## 0.0.9-rc.0
+
+### Patch Changes
+
+- fix error handling when not found user
+
 ## 0.0.8
 
 ### Patch Changes

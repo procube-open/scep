@@ -5,8 +5,9 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
+	"strings"
 
-	"github.com/procube-open/scep/idm"
+	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
 )
 
@@ -31,7 +32,7 @@ func (f CSRSignerContextFunc) SignCSRContext(ctx context.Context, m *scep.CSRReq
 // SignCSR should take the CSR in the CSRReqMessage and return a
 // Certificate signed by the CA.
 type CSRSigner interface {
-	SignCSR(*scep.CSRReqMessage, string) (*x509.Certificate, error)
+	SignCSR(*scep.CSRReqMessage) (*x509.Certificate, error)
 }
 
 // CSRSignerFunc is an adapter for CSR signing by the CA/RA.
@@ -62,18 +63,33 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 }
 
 // IDMChallengeMiddleware
-func IDMChallengeMiddleware(url string, next CSRSignerContext) CSRSignerContextFunc {
+func MySQLChallengeMiddleWare(depot *mysql.MySQLDepot, next CSRSignerContext) CSRSignerContextFunc {
 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		if err := idm.GETUser(url, m.ChallengePassword); err != nil {
+		arr := strings.Split(m.ChallengePassword, "\\")
+		if len(arr) != 2 {
+			return nil, errors.New("invalid challenge")
+		}
+		client, err := depot.GetClient(arr[0])
+		if err != nil {
 			return nil, err
+		}
+		if !(client.Status == "ISSUABLE" || client.Status == "UPDATABLE") {
+			return nil, errors.New("client is not issuable or updatable")
+		}
+		secret, err := depot.GetSecret(arr[0])
+		if err != nil {
+			return nil, err
+		}
+		if secret.Secret != arr[1] {
+			return nil, errors.New("invalid secret")
 		}
 		return next.SignCSRContext(ctx, m)
 	}
 }
 
 // SignCSRAdapter adapts a next (i.e. no context) to a context signer.
-func SignCSRAdapter(next CSRSigner, putUrl string) CSRSignerContextFunc {
+func SignCSRAdapter(next CSRSigner) CSRSignerContextFunc {
 	return func(_ context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		return next.SignCSR(m, putUrl)
+		return next.SignCSR(m)
 	}
 }

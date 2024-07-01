@@ -3,7 +3,6 @@ package scepserver_test
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/procube-open/scep/depot"
-	filedepot "github.com/procube-open/scep/depot/file"
+	"github.com/go-sql-driver/mysql"
+	mysqldepot "github.com/procube-open/scep/depot/mysql"
 	scepserver "github.com/procube-open/scep/server"
 
 	kitlog "github.com/go-kit/kit/log"
@@ -123,15 +122,19 @@ func TestPKIOperationGET(t *testing.T) {
 
 func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server, scepserver.Service, func()) {
 	var err error
-	var depot depot.Depot // cert storage
-	{
-		depot, err = filedepot.NewFileDepot("../scep/testdata/testca")
-		if err != nil {
-			t.Fatal(err)
-		}
-		depot = &noopDepot{depot}
+	c := mysql.Config{
+		DBName:    "certs",
+		User:      "root",
+		Passwd:    "root",
+		Addr:      "127.0.0.1:3306",
+		Net:       "tcp",
+		ParseTime: true,
 	}
-	crt, key, err := depot.CA([]byte{})
+	depot, err := mysqldepot.NewTableDepot(c.FormatDSN(), "../scep/testdata/testca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crt, key, _ := depot.CA([]byte{})
 	var svc scepserver.Service // scep service
 	{
 		svc, err = scepserver.NewService(crt[0], key, scepserver.NopCSRSigner())
@@ -141,7 +144,7 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 	}
 	logger := kitlog.NewNopLogger()
 	e := scepserver.MakeServerEndpoints(svc, "")
-	handler := scepserver.MakeHTTPHandler(e, svc, logger)
+	handler := scepserver.MakeHTTPHandler(depot, e, svc, logger)
 	server := httptest.NewServer(handler)
 	teardown := func() {
 		server.Close()
@@ -151,17 +154,11 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 	return server, svc, teardown
 }
 
-type noopDepot struct{ depot.Depot }
-
-func (d *noopDepot) Put(name string, crt *x509.Certificate, challenge string, url string) error {
-	return nil
-}
-
-/* helpers */
-const (
-	rsaPrivateKeyPEMBlockType = "RSA PRIVATE KEY"
-	certificatePEMBlockType   = "CERTIFICATE"
-)
+// /* helpers */
+// const (
+// 	rsaPrivateKeyPEMBlockType = "RSA PRIVATE KEY"
+// 	certificatePEMBlockType   = "CERTIFICATE"
+// )
 
 func loadTestFile(t *testing.T, path string) []byte {
 	data, err := os.ReadFile(path)

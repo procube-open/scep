@@ -3,26 +3,23 @@ package scepserver
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"time"
 
 	kitlog "github.com/go-kit/kit/log"
 	kithttp "github.com/go-kit/kit/transport/http"
 	"github.com/gorilla/mux"
 	"github.com/groob/finalizer/logutil"
 	"github.com/pkg/errors"
-	"github.com/procube-open/scep/idm"
+	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/server/handler"
+	"github.com/procube-open/scep/utils"
 )
 
-func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
+func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
 	opts := []kithttp.ServerOption{
 		kithttp.ServerErrorLogger(logger),
 		kithttp.ServerFinalizer(logutil.NewHTTPLogger(logger).LoggingFinalizer),
@@ -42,20 +39,31 @@ func MakeHTTPHandler(e *Endpoints, svc Service, logger kitlog.Logger) http.Handl
 		opts...,
 	))
 
-	// frontend
-	r.HandleFunc("/caweb", indexHandler)
-	r.HandleFunc("/caweb/static/{script}/{filename}", staticHandler)
-	r.HandleFunc("/caweb/manifest.json", manifestHandler)
-	r.HandleFunc("/caweb/favicon.ico", faviconHandler)
-	r.HandleFunc("/caweb/logo192.png", logo192Handler)
-	r.HandleFunc("/caweb/logo512.png", logo512Handler)
+	frontendPath := "frontend/build"
+	frontendHandler := http.FileServer(http.Dir(frontendPath))
+	r.Methods("GET").Path("/caweb").HandlerFunc(handler.IndexHandler(frontendPath))
+	r.Methods("GET").PathPrefix("/caweb/").Handler(http.StripPrefix("/caweb/", frontendHandler))
 
-	//download client
-	r.HandleFunc("/download/{client}", downloadHandler)
+	downloadPath := utils.EnvString("SCEP_DOWNLOAD_PATH", "download")
+	downloadHandler := http.FileServer(http.Dir(downloadPath))
+	r.Methods("GET", "HEAD").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
+	r.Methods("GET").Path("/api/files/{path:.*}").HandlerFunc(handler.ListFilesHandler(downloadPath))
 
-	//get user object
-	r.HandleFunc("/userObject", userHandler)
+	r.Methods("GET").Path("/api/cert/verify").HandlerFunc(handler.VerifyHandler(depot))
+	r.Methods("GET").Path("/api/cert/list/{CN}").HandlerFunc(handler.CertsHandler(depot))
+	r.Methods("POST").Path("/api/cert/pkcs12").HandlerFunc(handler.Pkcs12Handler(depot))
 
+	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
+	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
+
+	r.Methods("GET").Path("/admin/api/ping").HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
+
+	r.Methods("POST").Path("/admin/api/client/add").HandlerFunc(handler.AddClientHandler(depot))
+	r.Methods("POST").Path("/admin/api/client/revoke").HandlerFunc(handler.RevokeClientHandler(depot))
+	r.Methods("PUT").Path("/admin/api/client/update").HandlerFunc(handler.UpdateClientHandler(depot))
+
+	r.Methods("POST").Path("/admin/api/secret/create").HandlerFunc(handler.CreateSecretHandler(depot))
+	r.Methods("GET").Path("/admin/api/secret/get/{CN}").HandlerFunc(handler.GetSecretHandler(depot))
 	return r
 }
 
@@ -179,6 +187,7 @@ const (
 	certChainHeader = "application/x-x509-ca-ra-cert"
 	leafHeader      = "application/x-x509-ca-cert"
 	pkiOpHeader     = "application/x-pki-message"
+	crlHeader       = "application/x-pkcs7-crl"
 )
 
 func contentHeader(op string, certNum int) string {
@@ -190,193 +199,9 @@ func contentHeader(op string, certNum int) string {
 		return leafHeader
 	case "PKIOperation":
 		return pkiOpHeader
+	case "GetCRL":
+		return crlHeader
 	default:
 		return "text/plain"
 	}
-}
-
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := os.ReadFile("frontend/build/index.html")
-	w.Write(data)
-}
-
-func staticHandler(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	if params["script"] == "js" {
-		w.Header().Set("Content-Type", "application/javascript")
-	} else if params["script"] == "css" {
-		w.Header().Set("Content-Type", "text/css")
-	}
-	data, err := os.ReadFile("frontend/build/static/" + params["script"] + "/" + params["filename"])
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	}
-	w.Write(data)
-}
-
-func manifestHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/manifest.json")
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	}
-	w.Write(data)
-}
-
-func faviconHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/favicon.ico")
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	}
-	w.Write(data)
-}
-
-func logo192Handler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/logo192.png")
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	}
-	w.Write(data)
-}
-
-func logo512Handler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("frontend/build/logo512.png")
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	}
-	w.Write(data)
-}
-
-func downloadHandler(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	data, err := os.ReadFile("/client/" + params["client"])
-	if err != nil {
-		w.Write([]byte(err.Error()))
-	} else {
-		w.Write(data)
-	}
-}
-
-func userHandler(w http.ResponseWriter, r *http.Request) {
-	encodedCert := r.Header["X-Mtls-Clientcert"]
-	w.Header().Set("Content-Type", "application/json")
-	if len(encodedCert) != 1 {
-		res := ErrResp_1{Message: "No Certificate"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	decodedCert, err := url.PathUnescape(encodedCert[0])
-	if err != nil {
-		res := ErrResp_1{Message: "Decode header failed"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	certBlock, _ := pem.Decode([]byte(decodedCert))
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		res := ErrResp_1{Message: "Parse Certificate failed"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	now := time.Now()
-	if now.After(cert.NotAfter) || now.Before(cert.NotBefore) {
-		res := ErrResp_2{
-			Message:   "Certificate is expired",
-			NotBefore: cert.NotBefore.String(),
-			NotAfter:  cert.NotAfter.String(),
-			Date:      now.String(),
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	depotPath := envString("SCEP_FILE_DEPOT", "idm-depot")
-	ca_crt, _ := os.ReadFile(depotPath + "/ca.crt")
-	caCertBlock, _ := pem.Decode(ca_crt)
-	caCert, _ := x509.ParseCertificate(caCertBlock.Bytes)
-	certPool := x509.NewCertPool()
-	certPool.AddCert(caCert)
-	opts := x509.VerifyOptions{
-		Roots:     certPool,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	if _, err := cert.Verify(opts); err != nil {
-		res := ErrResp_3{
-			Message:     "Failed to validate certificate",
-			Certificate: string(decodedCert),
-			CaCert:      string(ca_crt),
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-	u, err := url.Parse(envString("SCEP_IDM_USERS_URL", "") + "/" + cert.Subject.CommonName)
-	if err != nil {
-		res := ErrResp_1{Message: "Failed to parse url"}
-		w.WriteHeader(http.StatusInternalServerError)
-		b, _ := json.Marshal(res)
-		w.Write(b)
-		return
-	}
-
-	body, err := idm.GETUserByCN(u.String())
-	if err != nil {
-		if err.Error() == "NotFound" {
-			res := ErrResp_4{
-				Message: "User Not Found",
-				User:    cert.Subject.CommonName,
-			}
-			w.WriteHeader(http.StatusUnauthorized)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
-		} else {
-			res := ErrResp_1{
-				Message: err.Error(),
-			}
-			w.WriteHeader(http.StatusBadGateway)
-			b, _ := json.Marshal(res)
-			w.Write(b)
-			return
-		}
-	}
-	w.Write(body)
-}
-
-type ErrResp_1 struct {
-	Message string `json:"message"`
-}
-type ErrResp_2 struct {
-	Message   string `json:"message"`
-	NotBefore string `json:"notBefore"`
-	NotAfter  string `json:"notAfter"`
-	Date      string `json:"Date"`
-}
-type ErrResp_3 struct {
-	Message     string `json:"message"`
-	Certificate string `json:"certificate"`
-	CaCert      string `json:"cacert"`
-}
-type ErrResp_4 struct {
-	Message string `json:"message"`
-	User    string `json:"user"`
-}
-
-func envString(key, def string) string {
-	if env := os.Getenv(key); env != "" {
-		return env
-	}
-	return def
 }
