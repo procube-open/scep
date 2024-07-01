@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- fix README
+
 ## 0.1.0-rc.12
 
 ### Patch Changes
