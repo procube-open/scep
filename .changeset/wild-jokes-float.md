@@ -1,5 +1,0 @@
----
-"scep": minor
----
-
-mysql

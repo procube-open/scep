@@ -1,5 +1,28 @@
 # scep
 
+## 0.1.0
+
+### Minor Changes
+
+- 0a265d1: mysql
+
+### Patch Changes
+
+- af521ab: add admin mode
+- 4f5e660: test only ubuntu
+- d452af6: fix etc
+- cf4453a: change path of files at download api
+- e9a47b5: fix workflow
+- 9d00749: fix status
+- bec62a2: add secretInfo
+- 88683a3: update frontend
+- 2d024be: fix README
+- 75621f7: fix rendering secretInfo
+- 4bf9845: fix userHandler url
+- c9c4251: fix error handling when not found user
+- cf4453a: fix README
+- 07b85b3: change default value of SCEP_TICKER
+
 ## 0.1.0-rc.13
 
 ### Patch Changes
