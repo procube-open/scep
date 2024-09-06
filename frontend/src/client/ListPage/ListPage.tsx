@@ -9,6 +9,7 @@ import {
 import {
   Typography,
   Button,
+  Box,
   ButtonProps
 } from '@mui/material';
 import EmptyPage from '../../layouts/EmptyPage';
@@ -45,7 +46,11 @@ const ClientList = () => {
         actions={adminMode ? <AdminActions children={translate("client.create")} onClick={handleClickOpen} /> : false}
         sx={{ mt: 2 }}
         hasCreate={false}
-        empty={<EmptyPage message={translate("client.empty")} />}
+        empty={<EmptyPage header={
+          adminMode ? <Box sx={{ width: 1, display: "flex", justifyContent: "end" }}>
+            <AdminActions children={translate("client.create")} onClick={handleClickOpen} />
+          </Box> : null
+        } message={translate("client.empty")} />}
       >
         <Datagrid bulkActionButtons={false} rowClick="edit">
           <TextField source="uid" label={"client.fields.uid"} />
