@@ -1,5 +1,26 @@
 # scep
 
+## 0.1.1
+
+### Patch Changes
+
+- 01d69cf: fix frontend
+- 01d69cf: fix status image
+- 37167c3: fix client list page
+
+## 0.1.1-rc.1
+
+### Patch Changes
+
+- fix frontend
+- fix status image
+
+## 0.1.1-rc.0
+
+### Patch Changes
+
+- fix client list page
+
 ## 0.1.0
 
 ### Minor Changes

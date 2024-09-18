@@ -2,6 +2,7 @@
 
 - [目次](#目次)
 - [環境変数一覧](#環境変数一覧)
+  - [SCEP\_DSN](#scep_dsn)
 - [クライアント実行ファイルをビルド](#クライアント実行ファイルをビルド)
   - [テンプレート](#テンプレート)
 - [バッチ処理](#バッチ処理)
@@ -54,6 +55,14 @@ SCEP サーバは以下の環境変数を参照します。
 | SCEPCA_ORG | "Procube" | 認証局の Organization |
 | SCEPCA_ORG_UNIT | "" | 認証局の Organization Unit |
 | SCEPCA_COUNTRY | "JP" | 認証局の Country |
+
+## SCEP_DSN
+MySQLに接続するために設定必須の環境変数です。
+記法は[こちら](https://github.com/go-sql-driver/mysql?tab=readme-ov-file#dsn-data-source-name)を参考にして下さい。
+また、接続設定で日本時間にすることを推奨します。以下に`127.0.0.1:3306`でMySQLの`certs`というデータベースにroot接続する際の設定例を記述します。
+```
+SCEP_DSN="root@tcp(127.0.0.1:3306)/certs?parseTime=true&loc=Asia%2FTokyo"
+```
 
 # クライアント実行ファイルをビルド
 
