@@ -1,5 +1,12 @@
 # scep
 
+## 0.1.1-rc.1
+
+### Patch Changes
+
+- fix frontend
+- fix status image
+
 ## 0.1.1-rc.0
 
 ### Patch Changes

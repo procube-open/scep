@@ -5,6 +5,8 @@
     "scep": "0.1.0"
   },
   "changesets": [
+    "angry-vans-share",
+    "nervous-carrots-destroy",
     "tidy-plants-grin"
   ]
 }
