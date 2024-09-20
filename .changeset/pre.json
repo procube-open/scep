@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "scep": "0.1.1"
+  },
+  "changesets": [
+    "flat-buttons-yawn"
+  ]
+}

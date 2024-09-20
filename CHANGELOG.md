@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.2-rc.0
+
+### Patch Changes
+
+- fix patch url
+
 ## 0.1.1
 
 ### Patch Changes

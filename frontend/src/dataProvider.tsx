@@ -154,7 +154,7 @@ export const FilesProvider = {
     const { field, order } = params.sort;
     const { path } = params.meta;
     const urlPath = path.join("/");
-    const { json } = await fetchJson(`/api/${urlPath}/`, {
+    const { json } = await fetchJson(`/api/${urlPath}`, {
       method: 'GET',
       headers: new Headers({
         'Content-Type': 'application/json'
@@ -184,7 +184,7 @@ export const FilesProvider = {
   },
   download: async (resource: string, params: { path: string }) => {
     const { path } = params;
-    return fetch(`/api/download/${path}`, {
+    return fetch(`/api/download${path}`, {
       method: 'GET',
       headers: new Headers({
         'Content-Type': 'application/json'
@@ -194,7 +194,7 @@ export const FilesProvider = {
 
   getUrl: async (resource: string, params: { path: string }) => {
     const { path } = params;
-    const response = await fetch(`/api/download/${path}`, {
+    const response = await fetch(`/api/download${path}`, {
       method: 'HEAD',
       headers: new Headers({
         'Content-Type': 'application/json'
