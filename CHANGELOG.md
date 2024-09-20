@@ -1,5 +1,12 @@
 # scep
 
+## 0.1.2
+
+### Patch Changes
+
+- e093c78: fix patch url
+- 65203c0: fix SERVER.md
+
 ## 0.1.2-rc.1
 
 ### Patch Changes
