@@ -57,9 +57,11 @@ SCEP サーバは以下の環境変数を参照します。
 | SCEPCA_COUNTRY | "JP" | 認証局の Country |
 
 ## SCEP_DSN
-MySQLに接続するために設定必須の環境変数です。
+
+MySQL に接続するために設定必須の環境変数です。
 記法は[こちら](https://github.com/go-sql-driver/mysql?tab=readme-ov-file#dsn-data-source-name)を参考にして下さい。
-また、接続設定で日本時間にすることを推奨します。以下に`127.0.0.1:3306`でMySQLの`certs`というデータベースにroot接続する際の設定例を記述します。
+また、接続設定で日本時間にすることを推奨します。以下に`127.0.0.1:3306`で MySQL の`certs`というデータベースに root 接続する際の設定例を記述します。
+
 ```
 SCEP_DSN="root@tcp(127.0.0.1:3306)/certs?parseTime=true&loc=Asia%2FTokyo"
 ```
@@ -136,7 +138,7 @@ SCEP_DSN="root@tcp(127.0.0.1:3306)/certs?parseTime=true&loc=Asia%2FTokyo"
 
 ## SCEP
 
-`/scep`パスでは、基本的な SCEP オペレーションをサポートしています。｀ operation`クエリで各オペレーションを指定することができます。
+`/scep`パスでは、基本的な SCEP オペレーションをサポートしています。`operation`クエリで各オペレーションを指定することができます。
 
 ### SCEP Operation
 

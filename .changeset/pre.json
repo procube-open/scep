@@ -5,6 +5,7 @@
     "scep": "0.1.1"
   },
   "changesets": [
-    "flat-buttons-yawn"
+    "flat-buttons-yawn",
+    "sharp-tigers-turn"
   ]
 }
