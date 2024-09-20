@@ -44,7 +44,7 @@ const PathBreadcrumb = (props: { path: Array<string> }) => {
   return <Breadcrumbs sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", width: 1 }}>
     {path.map((p, i) => {
       currentPath += p + "/";
-      return <Link key={`${i}-${p}`} href={`/caweb#${currentPath}`} underline="hover" variant="body2">
+      return <Link key={`${i}-${p}`} href={`/caweb/#${currentPath}`} underline="hover" variant="body2">
         {p}
       </Link>
     })}
