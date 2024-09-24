@@ -92,14 +92,22 @@ SCEP_DSN="root@tcp(127.0.0.1:3306)/certs?parseTime=true&loc=Asia%2FTokyo"
 ### クライアント作成後
 
 クライアント作成後に`SCEP_ADD_CLIENT_SCRIPT`で設定されたパスのシェルスクリプトを実行します。
-`$UID`で作成したクライアント ID を参照できます。
+参照可能な引数は以下のとおりです。
+
+- `$UID`:作成したクライアント ID を参照できます。
 
 ### クライアント証明書発行後
 
 クライアント証明書発行後に`SCEP_SIGN_SCRIPT`で設定されたパスのシェルスクリプトを実行します。
-`$CN`でCN、`$NOT_BEFORE`で発行日時、`$NOT_AFTER`で有効期限が参照できます。
+参照可能な引数は以下のとおりです。
+
+- `$CN`: 発行された証明書の CN (クライアント ID)
+- `$NOT_BEFORE`: 証明書の開始日時
+- `$NOT_AFTER`: 証明書の有効期限
+
 また、`NOT_BEFORE`と`NOT_AFTER`のフォーマットは`SCEP_SCRIPT_TIME_FORMAT`環境変数を参照します。
-`SCEP_SCRIPT_TIME_FORMAT`は「2006年1月2日15時4分5秒 アメリカ山地標準時MST(GMT-0700)」を表す時刻で記述して下さい。
+
+`SCEP_SCRIPT_TIME_FORMAT`は「2006 年 1 月 2 日 15 時 4 分 5 秒 アメリカ山地標準時 MST(GMT-0700)」を表す時刻で記述して下さい。
 詳細については[こちら](https://pkg.go.dev/time#Time.Format)を参照して下さい。
 
 # クライアント実行ファイルをビルド

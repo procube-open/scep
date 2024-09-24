@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.1
+
+### Patch Changes
+
+- fix SERVER.md
+
 ## 0.1.3-rc.0
 
 ### Patch Changes

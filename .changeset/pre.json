@@ -5,6 +5,7 @@
     "scep": "0.1.2"
   },
   "changesets": [
+    "big-shrimps-approve",
     "six-chairs-hunt"
   ]
 }
