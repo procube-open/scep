@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.0
+
+### Patch Changes
+
+- add hook
+
 ## 0.1.2
 
 ### Patch Changes

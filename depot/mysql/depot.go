@@ -78,7 +78,6 @@ func NewTableDepot(dsn, dirPath string) (*MySQLDepot, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	_, err = db.Exec(createSecretsTableQuery)
 	if err != nil {
 		return nil, err
