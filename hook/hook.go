@@ -13,7 +13,7 @@ func InitialHook() error {
 	if script == "" {
 		return nil
 	}
-	cmd := exec.Command("bash", script)
+	cmd := exec.Command(script)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return err
@@ -32,7 +32,7 @@ func SignHook(cert *x509.Certificate) error {
 	}
 	notBefore := cert.NotBefore.Format(timeFormat)
 	notAfter := cert.NotAfter.Format(timeFormat)
-	cmd := exec.Command("bash", script)
+	cmd := exec.Command(script)
 	cmd.Env = append(cmd.Env, "CN="+cert.Subject.CommonName)
 	cmd.Env = append(cmd.Env, "NOT_BEFORE="+notBefore)
 	cmd.Env = append(cmd.Env, "NOT_AFTER="+notAfter)
@@ -51,7 +51,7 @@ func AddClientHook(uid string) error {
 	if script == "" {
 		return nil
 	}
-	cmd := exec.Command("bash", script)
+	cmd := exec.Command(script)
 	cmd.Env = append(cmd.Env, "UID="+uid)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
