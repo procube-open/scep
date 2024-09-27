@@ -5,6 +5,7 @@
     "scep": "0.1.2"
   },
   "changesets": [
+    "big-actors-swim",
     "big-shrimps-approve",
     "early-wolves-applaud",
     "pink-cows-marry",
