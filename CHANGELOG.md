@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.3
+
+### Patch Changes
+
+- InitialHook でエラーが発生した場合でもコンソールにエラーを出力するのみで強制終了しないように修正しました。
+
 ## 0.1.3-rc.2
 
 ### Patch Changes

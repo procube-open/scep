@@ -77,7 +77,6 @@ func main() {
 
 	if err := hook.InitialHook(); err != nil {
 		fmt.Println(err)
-		os.Exit(1)
 	}
 	// -http-addr and -port conflict. Don't allow the user to set both.
 	httpAddrSet := setByUser("http-addr", "SCEP_HTTP_ADDR")
