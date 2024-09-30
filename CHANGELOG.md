@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.5
+
+### Patch Changes
+
+- add /admin/api/cert/add api
+
 ## 0.1.3-rc.4
 
 ### Patch Changes

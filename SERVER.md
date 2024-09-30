@@ -31,14 +31,17 @@
     - [クライアント単体取得(GET `/api/client/{CN}`)](#クライアント単体取得get-apiclientcn)
   - [管理者 API](#管理者-api)
     - [ping(GET `/admin/api/ping`)](#pingget-adminapiping)
-    - [クライアント追加(POST `/admin/api/client/add`)](#クライアント追加post-adminapiclientadd)
+    - [証明書追加(POST `/admin/api/cert/add`)](#証明書追加post-adminapicertadd)
       - [リクエスト](#リクエスト-1)
-    - [クライアント失効(POST `/admin/api/client/revoke`)](#クライアント失効post-adminapiclientrevoke)
+      - [エラーハンドリング](#エラーハンドリング)
+    - [クライアント追加(POST `/admin/api/client/add`)](#クライアント追加post-adminapiclientadd)
       - [リクエスト](#リクエスト-2)
-    - [クライアントアップデート(PUT `/admin/api/client/update`)](#クライアントアップデートput-adminapiclientupdate)
+    - [クライアント失効(POST `/admin/api/client/revoke`)](#クライアント失効post-adminapiclientrevoke)
       - [リクエスト](#リクエスト-3)
-    - [シークレット作成(POST `/admin/api/secret/create`)](#シークレット作成post-adminapisecretcreate)
+    - [クライアントアップデート(PUT `/admin/api/client/update`)](#クライアントアップデートput-adminapiclientupdate)
       - [リクエスト](#リクエスト-4)
+    - [シークレット作成(POST `/admin/api/secret/create`)](#シークレット作成post-adminapisecretcreate)
+      - [リクエスト](#リクエスト-5)
     - [シークレット取得(GET `/admin/api/secret/get/{CN}`)](#シークレット取得get-adminapisecretgetcn)
       - [レスポンス](#レスポンス-2)
 
@@ -275,6 +278,29 @@ SCEP サーバは以下のオペレーションをサポートしています。
 ### ping(GET `/admin/api/ping`)
 
 `/admin/api/ping`では無条件で`pong`という文字列を返します。WebUI で`/admin`パスが有効かどうか調べるために用います。
+
+### 証明書追加(POST `/admin/api/cert/add`)
+
+`/admin/api/cert/add`では指定されたクライアント証明書を用いて、クライアントが証明書を発行したときと同じ処理をサーバに実行させることができます。
+
+#### リクエスト
+
+リクエストに関して、`Content-Type`ヘッダは`application/json`として、リクエストボディは JSON で以下のパラメータを入力して下さい。
+
+- cert_pem
+
+cert_pem は登録したい PEM 形式のクライアント証明書を URL エンコードした文字列で指定して下さい。
+
+#### エラーハンドリング
+
+以下の条件に合致しなかったとき、この API はエラーを返します。
+
+- cert_pem パラメータが存在すること
+- cert_pem で指定された文字列が証明書としてデコード・パースできること
+- 指定された証明書のシリアル番号が最新のものに 1 足されたものであること
+- クライアント証明書の CN と一致する UID を持つクライアントが存在すること
+- クライアントの状態が`ISSUABLE`もしくは`UPDATABLE`であること
+- 指定された証明書が CA 証明書で認証できること
 
 ### クライアント追加(POST `/admin/api/client/add`)
 

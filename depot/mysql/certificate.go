@@ -93,6 +93,24 @@ func (d *MySQLDepot) GetCertsByCN(cn string) ([]certForJSON, error) {
 	return certs, nil
 }
 
+func (d *MySQLDepot) GetNextSerial() (*big.Int, error) {
+	var serialStr string
+	err := d.db.QueryRow("SELECT serial FROM serial_table LIMIT 1").Scan(&serialStr)
+	if err == sql.ErrNoRows {
+		s := big.NewInt(2)
+		if err := d.writeSerial(s); err != nil {
+			return nil, err
+		}
+		return s, nil
+	} else if err != nil {
+		return nil, err
+	}
+	serial := new(big.Int)
+	serial.SetString(serialStr, 16)
+	serial.Add(serial, big.NewInt(1))
+	return serial, nil
+}
+
 func (d *MySQLDepot) RevokeCertificate(uid string, revocation_date time.Time) error {
 	_, err := d.db.Exec("UPDATE certificates SET status = 'R', revocation_date = ? WHERE cn = ? AND status = 'V'", revocation_date, uid)
 	return err
