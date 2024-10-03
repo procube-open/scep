@@ -25,12 +25,16 @@ func GetClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		if c == nil {
+			w.Write([]byte("null"))
+			return
+		}
 		res := ResClient{
 			Uid:        c.Uid,
 			Status:     c.Status,
 			Attributes: c.Attributes,
 		}
-		w.Header().Set("Content-Type", "application/json")
 		b, _ := json.Marshal(res)
 		w.Write(b)
 	}

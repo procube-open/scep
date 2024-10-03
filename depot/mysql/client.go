@@ -46,6 +46,9 @@ func (d *MySQLDepot) GetClient(uid string) (*Client, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	if !rows.Next() {
+		return nil, nil
+	}
 	var c Client
 	var clientAttributes string
 	for rows.Next() {

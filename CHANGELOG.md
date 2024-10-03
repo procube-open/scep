@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.6
+
+### Patch Changes
+
+- fix get client api
+
 ## 0.1.3-rc.5
 
 ### Patch Changes
