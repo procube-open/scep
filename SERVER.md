@@ -3,6 +3,10 @@
 - [目次](#目次)
 - [環境変数一覧](#環境変数一覧)
   - [SCEP\_DSN](#scep_dsn)
+- [フック処理](#フック処理)
+  - [サーバ起動前](#サーバ起動前)
+  - [クライアント作成後](#クライアント作成後)
+  - [クライアント証明書発行後](#クライアント証明書発行後)
 - [クライアント実行ファイルをビルド](#クライアント実行ファイルをビルド)
   - [テンプレート](#テンプレート)
 - [バッチ処理](#バッチ処理)
@@ -27,14 +31,17 @@
     - [クライアント単体取得(GET `/api/client/{CN}`)](#クライアント単体取得get-apiclientcn)
   - [管理者 API](#管理者-api)
     - [ping(GET `/admin/api/ping`)](#pingget-adminapiping)
-    - [クライアント追加(POST `/admin/api/client/add`)](#クライアント追加post-adminapiclientadd)
+    - [証明書追加(POST `/admin/api/cert/add`)](#証明書追加post-adminapicertadd)
       - [リクエスト](#リクエスト-1)
-    - [クライアント失効(POST `/admin/api/client/revoke`)](#クライアント失効post-adminapiclientrevoke)
+      - [エラーハンドリング](#エラーハンドリング)
+    - [クライアント追加(POST `/admin/api/client/add`)](#クライアント追加post-adminapiclientadd)
       - [リクエスト](#リクエスト-2)
-    - [クライアントアップデート(PUT `/admin/api/client/update`)](#クライアントアップデートput-adminapiclientupdate)
+    - [クライアント失効(POST `/admin/api/client/revoke`)](#クライアント失効post-adminapiclientrevoke)
       - [リクエスト](#リクエスト-3)
-    - [シークレット作成(POST `/admin/api/secret/create`)](#シークレット作成post-adminapisecretcreate)
+    - [クライアントアップデート(PUT `/admin/api/client/update`)](#クライアントアップデートput-adminapiclientupdate)
       - [リクエスト](#リクエスト-4)
+    - [シークレット作成(POST `/admin/api/secret/create`)](#シークレット作成post-adminapisecretcreate)
+      - [リクエスト](#リクエスト-5)
     - [シークレット取得(GET `/admin/api/secret/get/{CN}`)](#シークレット取得get-adminapisecretgetcn)
       - [レスポンス](#レスポンス-2)
 
@@ -49,6 +56,10 @@ SCEP サーバは以下の環境変数を参照します。
 | SCEP_DOWNLOAD_PATH | "download" | 配布するファイルを置くフォルダのパス |
 | SCEP_TICKER | "24h" | 証明書の有効期限を確認する周期 |
 | SCEP_CERT_VALID | "365" | 証明書の有効期限 |
+| SCEP_INITIAL_SCRIPT | "" | サーバ起動時に実行されるシェルスクリプトのパス |
+| SCEP_ADD_CLIENT_SCRIPT | "" | クライアント作成時に実行されるシェルスクリプトのパス |
+| SCEP_SIGN_SCRIPT | "" | クライアント証明書発行時に実行されるシェルスクリプトのパス |
+| SCEP_SCRIPT_TIME_FORMAT | "2006-01-02 15:04:05" | シェルスクリプトに渡される日時のフォーマット |
 | SCEPCA_YEARS | "10" | ca.crt の有効期間(年) |
 | SCEPCA_KEY_SIZE | "4096" | ca.key のサイズ |
 | SCEPCA_CN | "Procube SCEP CA" | 認証局の CN |
@@ -65,6 +76,42 @@ MySQL に接続するために設定必須の環境変数です。
 ```
 SCEP_DSN="root@tcp(127.0.0.1:3306)/certs?parseTime=true&loc=Asia%2FTokyo"
 ```
+
+# フック処理
+
+以下の時点で環境変数で設定したパスのシェルスクリプトを実行するフック処理を追加することができます。
+
+- サーバ起動前
+- クライアント作成後
+- クライアント証明書発行後
+
+また、設定されていない場合は何も実行されません。
+
+## サーバ起動前
+
+サーバ起動前に`SCEP_INITIAL_SCRIPT`で設定されたパスのシェルスクリプトを実行します。
+参照可能な引数はありません。
+
+## クライアント作成後
+
+クライアント作成後に`SCEP_ADD_CLIENT_SCRIPT`で設定されたパスのシェルスクリプトを実行します。
+参照可能な引数は以下のとおりです。
+
+- `$UID`:作成したクライアント ID を参照できます。
+
+## クライアント証明書発行後
+
+クライアント証明書発行後に`SCEP_SIGN_SCRIPT`で設定されたパスのシェルスクリプトを実行します。
+参照可能な引数は以下のとおりです。
+
+- `$CN`: 発行された証明書の CN (クライアント ID)
+- `$NOT_BEFORE`: 証明書の開始日時
+- `$NOT_AFTER`: 証明書の有効期限
+
+また、`NOT_BEFORE`と`NOT_AFTER`のフォーマットは`SCEP_SCRIPT_TIME_FORMAT`環境変数を参照します。
+
+`SCEP_SCRIPT_TIME_FORMAT`は「2006 年 1 月 2 日 15 時 4 分 5 秒 アメリカ山地標準時 MST(GMT-0700)」を表す時刻で記述して下さい。
+詳細については[こちら](https://pkg.go.dev/time#Time.Format)を参照して下さい。
 
 # クライアント実行ファイルをビルド
 
@@ -231,6 +278,29 @@ SCEP サーバは以下のオペレーションをサポートしています。
 ### ping(GET `/admin/api/ping`)
 
 `/admin/api/ping`では無条件で`pong`という文字列を返します。WebUI で`/admin`パスが有効かどうか調べるために用います。
+
+### 証明書追加(POST `/admin/api/cert/add`)
+
+`/admin/api/cert/add`では指定されたクライアント証明書を用いて、クライアントが証明書を発行したときと同じ処理をサーバに実行させることができます。
+
+#### リクエスト
+
+リクエストに関して、`Content-Type`ヘッダは`application/json`として、リクエストボディは JSON で以下のパラメータを入力して下さい。
+
+- cert_pem
+
+cert_pem は登録したい PEM 形式のクライアント証明書を URL エンコードした文字列で指定して下さい。
+
+#### エラーハンドリング
+
+以下の条件に合致しなかったとき、この API はエラーを返します。
+
+- cert_pem パラメータが存在すること
+- cert_pem で指定された文字列が証明書としてデコード・パースできること
+- 指定された証明書のシリアル番号が最新のものに 1 足されたものであること
+- クライアント証明書の CN と一致する UID を持つクライアントが存在すること
+- クライアントの状態が`ISSUABLE`もしくは`UPDATABLE`であること
+- 指定された証明書が CA 証明書で認証できること
 
 ### クライアント追加(POST `/admin/api/client/add`)
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/hook"
 )
 
 type ResClient struct {
@@ -24,12 +25,16 @@ func GetClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		if c == nil {
+			w.Write([]byte("null"))
+			return
+		}
 		res := ResClient{
 			Uid:        c.Uid,
 			Status:     c.Status,
 			Attributes: c.Attributes,
 		}
-		w.Header().Set("Content-Type", "application/json")
 		b, _ := json.Marshal(res)
 		w.Write(b)
 	}
@@ -90,6 +95,11 @@ func AddClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		}
 		initialStatus := "INACTIVE"
 		err = depot.AddClient(c, initialStatus)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		err = hook.AddClientHook(c.Uid)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

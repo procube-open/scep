@@ -1,5 +1,59 @@
 # scep
 
+## 0.1.3-rc.8
+
+### Patch Changes
+
+- fix GetNextSerial
+
+## 0.1.3-rc.7
+
+### Patch Changes
+
+- yarn push-pr
+
+## 0.1.3-rc.6
+
+### Patch Changes
+
+- fix get client api
+
+## 0.1.3-rc.5
+
+### Patch Changes
+
+- add /admin/api/cert/add api
+
+## 0.1.3-rc.4
+
+### Patch Changes
+
+- フック処理時にエラーが発生した場合でも標準出力を表示するように修正
+
+## 0.1.3-rc.3
+
+### Patch Changes
+
+- InitialHook でエラーが発生した場合でもコンソールにエラーを出力するのみで強制終了しないように修正しました。
+
+## 0.1.3-rc.2
+
+### Patch Changes
+
+- フック処理で実行するシェルスクリプトを bash に実行させていましたが、Go の exec で直接実行させるように修正しました。
+
+## 0.1.3-rc.1
+
+### Patch Changes
+
+- fix SERVER.md
+
+## 0.1.3-rc.0
+
+### Patch Changes
+
+- add hook
+
 ## 0.1.2
 
 ### Patch Changes

@@ -1,0 +1,18 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "scep": "0.1.2"
+  },
+  "changesets": [
+    "big-actors-swim",
+    "big-shrimps-approve",
+    "early-wolves-applaud",
+    "modern-pears-drive",
+    "nine-ghosts-obey",
+    "pink-cows-marry",
+    "pink-foxes-notice",
+    "six-chairs-hunt",
+    "stupid-ravens-live"
+  ]
+}

@@ -45,6 +45,16 @@ func checkIfRevoked(cert *x509.Certificate, revokedCerts []pkix.RevokedCertifica
 	return false
 }
 
+func returnError(w http.ResponseWriter, message string, status int) {
+	type ErrResp struct {
+		Message string `json:"message"`
+	}
+	res := ErrResp{Message: message}
+	w.WriteHeader(status)
+	b, _ := json.Marshal(res)
+	w.Write(b)
+}
+
 func VerifyHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type ErrResp_1 struct {
@@ -276,4 +286,107 @@ func createPKCS12(depot *mysql.MySQLDepot, info createInfo) ([]byte, error) {
 	os.RemoveAll("/tmp/" + info.Uid)
 
 	return p12, nil
+}
+
+func AddCertHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(r.Body)
+		type certJson struct {
+			CertData string `json:"cert_pem"`
+		}
+		var encodedCert certJson
+		err := decoder.Decode(&encodedCert)
+		if err != nil {
+			returnError(w, "cert_pem is required", http.StatusInternalServerError)
+			return
+		}
+		if encodedCert.CertData == "" {
+			returnError(w, "No certificate data", http.StatusInternalServerError)
+			return
+		}
+
+		// 証明書のデコード
+		decodedCert, err := url.PathUnescape(encodedCert.CertData)
+		if err != nil {
+			returnError(w, "Failed to decode certificate", http.StatusInternalServerError)
+			return
+		}
+
+		// 証明書のパース
+		certBlock, _ := pem.Decode([]byte(decodedCert))
+		if certBlock == nil {
+			returnError(w, "Failed to parse certificate", http.StatusInternalServerError)
+			return
+		}
+		certX509, err := x509.ParseCertificate(certBlock.Bytes)
+		if err != nil {
+			returnError(w, "Failed to parse certificate", http.StatusInternalServerError)
+			return
+		}
+
+		// シリアル番号の一致確認
+		nextSerial, err := depot.GetNextSerial()
+		if err != nil {
+			returnError(w, "Failed to get next serial number", http.StatusInternalServerError)
+			return
+		}
+		if nextSerial.Cmp(certX509.SerialNumber) != 0 {
+			returnError(w, "Serial number is not matched", http.StatusInternalServerError)
+			return
+		}
+
+		// クライアントの状態確認
+		client, err := depot.GetClient(certX509.Subject.CommonName)
+		if err != nil {
+			returnError(w, "Failed to get client", http.StatusInternalServerError)
+			return
+		}
+		if client == nil {
+			returnError(w, "Client not found", http.StatusInternalServerError)
+			return
+		}
+		if client.Status != "ISSUABLE" && client.Status != "UPDATABLE" {
+			returnError(w, "Client is not in ISSUABLE or UPDATABLE state", http.StatusInternalServerError)
+			return
+		}
+
+		// 証明書の検証
+		depotPath := utils.EnvString("SCEP_FILE_DEPOT", "ca-certs")
+		ca_crt, _ := os.ReadFile(depotPath + "/ca.crt")
+		caCertBlock, _ := pem.Decode(ca_crt)
+		caCert, _ := x509.ParseCertificate(caCertBlock.Bytes)
+		certPool := x509.NewCertPool()
+		certPool.AddCert(caCert)
+		opts := x509.VerifyOptions{
+			Roots:     certPool,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		if _, err := certX509.Verify(opts); err != nil {
+			returnError(w, "Failed to verify certificate", http.StatusUnauthorized)
+			return
+		}
+
+		// 証明書の追加
+		secret, err := depot.GetSecret(certX509.Subject.CommonName)
+		if err != nil {
+			returnError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cn := certX509.Subject.CommonName
+		challenge := cn + "\\" + secret.Secret
+		_, err = depot.Serial()
+		if err != nil {
+			returnError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, err = depot.HasCN(cn, 0, certX509, true)
+		if err != nil {
+			returnError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := depot.Put(cn, certX509, challenge); err != nil {
+			returnError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 }
