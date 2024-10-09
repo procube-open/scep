@@ -98,9 +98,6 @@ func (d *MySQLDepot) GetNextSerial() (*big.Int, error) {
 	err := d.db.QueryRow("SELECT serial FROM serial_table LIMIT 1").Scan(&serialStr)
 	if err == sql.ErrNoRows {
 		s := big.NewInt(2)
-		if err := d.writeSerial(s); err != nil {
-			return nil, err
-		}
 		return s, nil
 	} else if err != nil {
 		return nil, err

@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.8
+
+### Patch Changes
+
+- fix GetNextSerial
+
 ## 0.1.3-rc.7
 
 ### Patch Changes
