@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.9
+
+### Patch Changes
+
+- test patch
+
 ## 0.1.3-rc.8
 
 ### Patch Changes

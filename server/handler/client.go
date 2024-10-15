@@ -42,6 +42,11 @@ func GetClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 
 func ListClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		clientList, err := depot.GetClientList()
 		if err != nil {
 			http.Error(w, "Failed to list client", http.StatusInternalServerError)
