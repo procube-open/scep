@@ -54,6 +54,9 @@ func (d *MySQLDepot) GetClient(uid string) (*Client, error) {
 			return nil, err
 		}
 	}
+	if c.Uid == "" {
+		return nil, nil
+	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}

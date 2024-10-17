@@ -19,6 +19,7 @@ import (
 	executablecsrverifier "github.com/procube-open/scep/csrverifier/executable"
 	scepdepot "github.com/procube-open/scep/depot"
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/hook"
 	scepserver "github.com/procube-open/scep/server"
 	"github.com/procube-open/scep/utils"
 
@@ -74,6 +75,9 @@ func main() {
 		os.Exit(0)
 	}
 
+	if err := hook.InitialHook(); err != nil {
+		fmt.Println(err)
+	}
 	// -http-addr and -port conflict. Don't allow the user to set both.
 	httpAddrSet := setByUser("http-addr", "SCEP_HTTP_ADDR")
 	portSet := setByUser("port", "SCEP_HTTP_LISTEN_PORT")

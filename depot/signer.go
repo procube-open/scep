@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/procube-open/scep/cryptoutil"
+	"github.com/procube-open/scep/hook"
 	"github.com/procube-open/scep/scep"
 )
 
@@ -138,6 +139,10 @@ func (s *Signer) SignCSR(m *scep.CSRReqMessage) (*x509.Certificate, error) {
 	}
 
 	if err := s.depot.Put(name, crt, m.ChallengePassword); err != nil {
+		return nil, err
+	}
+
+	if err = hook.SignHook(crt); err != nil {
 		return nil, err
 	}
 
