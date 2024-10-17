@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.3-rc.10
+
+### Patch Changes
+
+- fix get client list
+
 ## 0.1.3-rc.9
 
 ### Patch Changes

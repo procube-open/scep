@@ -53,7 +53,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 	r.Methods("GET").Path("/api/cert/list/{CN}").HandlerFunc(handler.CertsHandler(depot))
 	r.Methods("POST").Path("/api/cert/pkcs12").HandlerFunc(handler.Pkcs12Handler(depot))
 
-	r.Methods("GET", "OPTIONS").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
+	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
 	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
 
 	pingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
