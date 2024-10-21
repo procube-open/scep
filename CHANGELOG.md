@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.4
+
+### Patch Changes
+
+- 757c3d1: add publish page
+
 ## 0.1.4-rc.0
 
 ### Patch Changes
