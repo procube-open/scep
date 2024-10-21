@@ -118,7 +118,7 @@ const ClientInfo = () => {
   const [pem, setPem] = React.useState("");
 
   const { adminMode } = React.useContext(IsAdminContext);
-  const handleClickOpen: RowClickFunction = (id: any, resource: string, record: any) => {
+  const handleClickOpen: RowClickFunction = (id, resource, record) => {
     setPem(record.cert_data);
     setOpen(true);
     return false
