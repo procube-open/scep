@@ -209,6 +209,14 @@ func Pkcs12Handler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			w.Write(b)
 			return
 		}
+		secret, err := depot.GetSecret(info.Uid)
+		if err != nil || secret.Secret != info.Secret {
+			res := ErrResp{Message: "Failed to create certificate"}
+			w.WriteHeader(http.StatusUnauthorized)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
 		p12, err := createPKCS12(depot, info)
 		if err != nil {
 			res := ErrResp{Message: err.Error()}

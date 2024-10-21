@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.4-rc.0
+
+### Patch Changes
+
+- add publish page
+
 ## 0.1.3
 
 ### Patch Changes

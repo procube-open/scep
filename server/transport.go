@@ -44,6 +44,11 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 	r.Methods("GET").Path("/caweb").HandlerFunc(handler.IndexHandler(frontendPath))
 	r.Methods("GET").PathPrefix("/caweb/").Handler(http.StripPrefix("/caweb/", frontendHandler))
 
+	frontendPublishPath := "frontend-publish/build"
+	frontendPublishHandler := http.FileServer(http.Dir(frontendPublishPath))
+	r.Methods("GET").Path("/publish").HandlerFunc(handler.IndexHandler(frontendPublishPath))
+	r.Methods("GET").PathPrefix("/publish/").Handler(http.StripPrefix("/publish/", frontendPublishHandler))
+
 	downloadPath := utils.EnvString("SCEP_DOWNLOAD_PATH", "download")
 	downloadHandler := http.FileServer(http.Dir(downloadPath))
 	r.Methods("GET", "HEAD").PathPrefix("/api/download/").Handler(http.StripPrefix("/api/download/", downloadHandler))
