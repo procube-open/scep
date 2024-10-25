@@ -1,5 +1,11 @@
 # scep
 
+## 0.1.5-rc.0
+
+### Patch Changes
+
+- add debug log
+
 ## 0.1.4
 
 ### Patch Changes
