@@ -338,6 +338,16 @@ func AddCertHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			returnError(w, "Failed to get next serial number", http.StatusInternalServerError)
 			return
 		}
+		fmt.Println("nextSerial: ")
+		fmt.Println(nextSerial.String())
+		fmt.Println(nextSerial)
+
+		fmt.Println("certX509.SerialNumber: ")
+		fmt.Println(certX509.SerialNumber.String())
+		fmt.Println(certX509.SerialNumber)
+
+		fmt.Println("result")
+		fmt.Println(nextSerial.Cmp(certX509.SerialNumber))
 		if nextSerial.Cmp(certX509.SerialNumber) != 0 {
 			returnError(w, "Serial number is not matched", http.StatusInternalServerError)
 			return
