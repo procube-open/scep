@@ -1,4 +1,4 @@
-FROM node:18-alpine as node-builder
+FROM node:22-alpine as node-builder
 ENV NODE_OPTIONS --openssl-legacy-provider
 # ENV NODE_ENV production
 RUN mkdir -p /usr/src/app
@@ -16,7 +16,7 @@ RUN npm install
 COPY ./frontend-publish/. .
 RUN npm run build
 
-FROM golang:alpine
+FROM golang:1.25-alpine3.22
 RUN apk update
 RUN apk add make
 RUN mkdir /download
