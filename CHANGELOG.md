@@ -1,5 +1,11 @@
 # scep
 
+## 0.2.0
+
+### Minor Changes
+
+- 75e4280: update base image
+
 ## 0.2.0-rc.0
 
 ### Minor Changes
