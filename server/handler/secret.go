@@ -35,11 +35,6 @@ func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			return
 		}
 		if client.Status == "INACTIVE" {
-			duration, err := time.ParseDuration(secret.Available_Period)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
 			err = depot.UpdateStatusClient(secret.Target, "ISSUABLE")
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -47,11 +42,6 @@ func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			}
 			secret.Type = "ACTIVATE"
 		} else if client.Status == "ISSUED" {
-			duration, err := time.ParseDuration(secret.Available_Period)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
 			if _, err := time.ParseDuration(secret.Pending_Period); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
