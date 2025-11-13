@@ -1,5 +1,11 @@
 # scep
 
+## 0.2.1-rc.0
+
+### Patch Changes
+
+- delete process to change client status
+
 ## 0.2.0
 
 ### Minor Changes
