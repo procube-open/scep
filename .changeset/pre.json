@@ -5,6 +5,7 @@
     "scep": "0.2.0"
   },
   "changesets": [
+    "grumpy-hounds-pay",
     "ten-crabs-sin"
   ]
 }
