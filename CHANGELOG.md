@@ -1,5 +1,13 @@
 # scep
 
+## 0.2.1
+
+### Patch Changes
+
+- 4a9f3d0: fix docs
+- 696f300: fix error
+- 5cbbf71: delete process to change client status
+
 ## 0.2.1-rc.2
 
 ### Patch Changes
