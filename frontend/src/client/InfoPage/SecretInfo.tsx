@@ -76,7 +76,7 @@ const SecretInfo = (props: SecretInfoProps) => {
       secret: params.secret,
       delete_at: params.delete_at && params.delete_at.toISOString(),
       pending_period: params.pending_period
-    }).then(async (response: any) => {
+    }).then(async () => {
       notify('secret.created', { type: 'info' });
       refresh();
     }).catch(() => {
@@ -87,7 +87,9 @@ const SecretInfo = (props: SecretInfoProps) => {
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Box sx={{ width: 1 }}>
-        <Typography variant="h6" sx={{ ml: 1 }} children={translate("secret.createTitle")} />
+        <Typography variant="h5" sx={{ mb: 2 }}>
+          {translate("secret.createTitle")}
+        </Typography>
         <Card sx={{ width: 1 }}>
           <CardContent sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <Typography variant="body1" sx={{ mr: 2 }}>
@@ -131,7 +133,6 @@ const SecretInfo = (props: SecretInfoProps) => {
             <Button
               variant="contained"
               color="primary"
-              children={translate("secret.create")}
               onClick={onClickCreate}
               disabled={
                 hasSecret ||
@@ -140,7 +141,9 @@ const SecretInfo = (props: SecretInfoProps) => {
                 (params.pending_period === "" && status === "ISSUED")
               }
               sx={{ ml: 1 }}
-            />
+            >
+              {translate("secret.create")}
+            </Button>
           </CardContent>
         </Card>
       </Box>

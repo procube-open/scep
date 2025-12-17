@@ -43,12 +43,11 @@ const ClientList = () => {
       <List
         resource="client"
         title={translate("client.title")}
-        actions={adminMode ? <AdminActions children={translate("client.create")} onClick={handleClickOpen} /> : false}
+        actions={adminMode ? <AdminActions onClick={handleClickOpen} >{translate("client.create")}</AdminActions> : false}
         sx={{ mt: 2 }}
-        hasCreate={false}
         empty={<EmptyPage header={
           adminMode ? <Box sx={{ width: 1, display: "flex", justifyContent: "end" }}>
-            <AdminActions children={translate("client.create")} onClick={handleClickOpen} />
+            <AdminActions onClick={handleClickOpen} >{translate("client.create")}</AdminActions>
           </Box> : null
         } message={translate("client.empty")} />}
       >

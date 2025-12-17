@@ -20,7 +20,7 @@ const CertList = (props: { uid: string | undefined, handleClickOpen: any }) => {
       resource="cert"
       queryOptions={{ meta: { cn: uid } }}
       disableSyncWithLocation
-      actions={<Typography variant="h6" sx={{ ml: 1, order: -1 }} children={translate("cert.listTitle")} />}
+      actions={<Typography variant="h6" sx={{ ml: 1, order: -1 }}>{translate("cert.listTitle")}</Typography>}
       sx={{
         mt: 1,
       }}
