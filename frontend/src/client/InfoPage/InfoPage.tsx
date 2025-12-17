@@ -42,10 +42,11 @@ const InfoToolbar = () => {
         color="primary"
         type="submit"
         disabled={!isValid}
-        children={<Typography sx={{ ml: 1 }}>{translate("cert.pkcs12Download")}</Typography>}
         isLinear={true}
         sx={{ mr: 1, pt: 3, width: 1 }}
-      />
+      >
+        <Typography sx={{ ml: 1 }}>{translate("cert.pkcs12Download")}</Typography>
+      </DownloadButton>
     </Box>
   )
 }
@@ -63,9 +64,11 @@ const InfoActions = () => {
 const StatusError = () => {
   const record = useRecordContext();
   const translate = useTranslate();
-  if (record.status === "ISSUABLE" || record.status == "UPDATABLE") return null
+  if (record && (record.status === "ISSUABLE" || record.status == "UPDATABLE")) return null
   else return (
-    <Typography variant="body2" color={"error"} children={translate("error.statusError")} />
+    <Typography variant="body2" color={"error"}>
+      {translate("error.statusError")}
+    </Typography>
   )
 }
 
@@ -105,9 +108,10 @@ const RevokeButton = () => {
       variant="contained"
       onClick={handleClick}
       color="error"
-      disabled={record.status === "INACTIVE"}
-      children={translate("client.revoke")}
-    />
+      disabled={record && record.status === "INACTIVE"}
+    >
+      {translate("client.revoke")}
+    </Button>
   )
 }
 

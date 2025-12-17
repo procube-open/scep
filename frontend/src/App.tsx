@@ -66,7 +66,7 @@ export const App = () => {
         setAdminMode(true)
       }
     })
-  }, []);
+  }, [setIsAdmin, setAdminMode]);
 
   React.useEffect(() => {
     if (adminMode) {

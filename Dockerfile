@@ -1,5 +1,4 @@
 FROM node:22-alpine as node-builder
-ENV NODE_OPTIONS --openssl-legacy-provider
 # ENV NODE_ENV production
 RUN mkdir -p /usr/src/app
 RUN mkdir -p /usr/src/app-publish

@@ -1,5 +1,11 @@
 # scep
 
+## 0.2.2-rc.0
+
+### Patch Changes
+
+- fix vulnerability
+
 ## 0.2.1
 
 ### Patch Changes

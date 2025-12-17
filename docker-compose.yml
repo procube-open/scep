@@ -1,0 +1,48 @@
+services:
+  mysql:
+    image: mysql:8.3
+    container_name: scep-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: scep
+      TZ: Asia/Tokyo
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scep-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scep-server
+    environment:
+      SCEP_DSN: "root:rootpassword@tcp(mysql:3306)/scep?parseTime=true&loc=Asia%2FTokyo"
+      SCEP_HTTP_LISTEN_PORT: "3000"
+      SCEP_FILE_DEPOT: "ca-certs"
+      SCEP_DOWNLOAD_PATH: "download"
+      SCEP_TICKER: "24h"
+      SCEP_CERT_VALID: "365"
+      SCEP_SCRIPT_TIME_FORMAT: "2006-01-02 15:04:05"
+      SCEPCA_YEARS: "10"
+      SCEPCA_KEY_SIZE: "4096"
+      SCEPCA_CN: "Procube SCEP CA"
+      SCEPCA_ORG: "Procube"
+      SCEPCA_COUNTRY: "JP"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./download:/download
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
