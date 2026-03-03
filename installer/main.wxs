@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="MyTunnelApp"
+           Manufacturer="MyTunnelApp"
+           Version="0.1.0"
+           Scope="perMachine"
+           UpgradeCode="12345678-1234-1234-1234-1234567890AB">
+    <MediaTemplate />
+    <Property Id="SERVICE_URL" Value="https://example.invalid/scep" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="MyTunnelApp">
+        <Component Id="ServiceComponent" Guid="*" Bitness="always64">
+          <File Id="ServiceExe"
+                Source="..\rust-client\service\target\release\service.exe"
+                KeyPath="yes" />
+          <RegistryValue Root="HKLM"
+                         Key="SOFTWARE\MyTunnelApp"
+                         Name="ConfigURL"
+                         Type="string"
+                         Value="[SERVICE_URL]" />
+          <ServiceInstall Id="ServiceInstaller"
+                          Type="ownProcess"
+                          Name="MyTunnelService"
+                          DisplayName="MyTunnel Service"
+                          Description="Obtains and renews client certificates."
+                          Start="auto"
+                          ErrorControl="normal"
+                          Account="LocalService" />
+          <ServiceControl Id="ServiceController"
+                          Name="MyTunnelService"
+                          Start="install"
+                          Stop="both"
+                          Remove="uninstall"
+                          Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="MyTunnelApp" Level="1">
+      <ComponentRef Id="ServiceComponent" />
+    </Feature>
+  </Package>
+</Wix>

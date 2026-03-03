@@ -178,6 +178,7 @@ func main() {
 		if csrVerifier != nil {
 			signer = csrverifier.Middleware(csrVerifier, signer)
 		}
+		signer = scepserver.AttestationMiddleware(scepserver.MySQLDeviceIDAttestationVerifier(depot), signer)
 		svc, err = scepserver.NewService(crts[0], key, signer, scepserver.WithLogger(logger))
 		if err != nil {
 			lginfo.Log("err", err)

@@ -76,7 +76,8 @@ func (e *Endpoints) PKIOperation(ctx context.Context, msg []byte) ([]byte, error
 		ee = e.GetEndpoint
 	}
 
-	request := SCEPRequest{Operation: pkiOperation, Message: msg}
+	attestation, _ := AttestationFromContext(ctx)
+	request := SCEPRequest{Operation: pkiOperation, Message: msg, Attestation: attestation}
 	response, err := ee(ctx, request)
 	if err != nil {
 		return nil, err
@@ -153,6 +154,8 @@ func MakeSCEPEndpoint(svc Service, depotPath string) endpoint.Endpoint {
 		case "GetCACert":
 			resp.Data, resp.CACertNum, resp.Err = svc.GetCACert(ctx, string(req.Message))
 		case "PKIOperation":
+			ctx = ContextWithRequestMethod(ctx, req.Method)
+			ctx = ContextWithAttestation(ctx, req.Attestation)
 			resp.Data, resp.Err = svc.PKIOperation(ctx, req.Message)
 		case "GetCRL":
 			resp.Data, resp.Err = svc.GetCRL(ctx, depotPath, string(req.Message))
@@ -165,8 +168,10 @@ func MakeSCEPEndpoint(svc Service, depotPath string) endpoint.Endpoint {
 
 // SCEPRequest is a SCEP server request.
 type SCEPRequest struct {
-	Operation string
-	Message   []byte
+	Operation   string
+	Message     []byte
+	Attestation string
+	Method      string
 }
 
 func (r SCEPRequest) scepOperation() string { return r.Operation }

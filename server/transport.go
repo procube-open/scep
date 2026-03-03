@@ -80,6 +80,9 @@ func EncodeSCEPRequest(ctx context.Context, r *http.Request, request interface{}
 	req := request.(SCEPRequest)
 	params := r.URL.Query()
 	params.Set("operation", req.Operation)
+	if req.Attestation != "" {
+		params.Set("attestation", req.Attestation)
+	}
 	switch r.Method {
 	case "GET":
 		if len(req.Message) > 0 {
@@ -121,8 +124,10 @@ func decodeSCEPRequest(ctx context.Context, r *http.Request) (interface{}, error
 	defer r.Body.Close()
 
 	request := SCEPRequest{
-		Message:   msg,
-		Operation: r.URL.Query().Get("operation"),
+		Message:     msg,
+		Operation:   r.URL.Query().Get("operation"),
+		Attestation: r.URL.Query().Get("attestation"),
+		Method:      r.Method,
 	}
 
 	return request, nil

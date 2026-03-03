@@ -82,6 +82,9 @@ const english = {
   },
   other: {
     changeMode: "Admin Mode",
+    serviceStatusLoading: "Service: Checking...",
+    serviceStatusRunning: "Service: Running",
+    serviceStatusStopped: "Service: Stopped",
   }
 }
 
@@ -166,6 +169,9 @@ const japanese = {
   },
   other:{
     changeMode: "管理モード",
+    serviceStatusLoading: "サービス状態: 確認中...",
+    serviceStatusRunning: "サービス状態: 稼働中",
+    serviceStatusStopped: "サービス状態: 停止中",
   }
 }
 

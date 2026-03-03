@@ -33,8 +33,9 @@ func TestCACaps(t *testing.T) {
 func TestEncodePKCSReq_Request(t *testing.T) {
 	pkcsreq := loadTestFile(t, "../scep/testdata/PKCSReq.der")
 	msg := scepserver.SCEPRequest{
-		Operation: "PKIOperation",
-		Message:   pkcsreq,
+		Operation:   "PKIOperation",
+		Message:     pkcsreq,
+		Attestation: testAttestation(),
 	}
 	methods := []string{"POST", "GET"}
 	for _, method := range methods {
@@ -47,6 +48,9 @@ func TestEncodePKCSReq_Request(t *testing.T) {
 
 			q := r.URL.Query()
 			if have, want := q.Get("operation"), msg.Operation; have != want {
+				t.Errorf("have %s, want %s", have, want)
+			}
+			if have, want := q.Get("attestation"), msg.Attestation; have != want {
 				t.Errorf("have %s, want %s", have, want)
 			}
 
@@ -88,6 +92,21 @@ func TestPKIOperation(t *testing.T) {
 	defer teardown()
 	pkcsreq := loadTestFile(t, "../scep/testdata/PKCSReq.der")
 	body := bytes.NewReader(pkcsreq)
+	url := server.URL + "/scep?operation=PKIOperation&attestation=" + testAttestation()
+	resp, err := http.Post(url, "", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Error("expected", http.StatusOK, "got", resp.StatusCode)
+	}
+}
+
+func TestPKIOperationWithoutAttestation(t *testing.T) {
+	server, _, teardown := newServer(t)
+	defer teardown()
+	pkcsreq := loadTestFile(t, "../scep/testdata/PKCSReq.der")
+	body := bytes.NewReader(pkcsreq)
 	url := server.URL + "/scep?operation=PKIOperation"
 	resp, err := http.Post(url, "", body)
 	if err != nil {
@@ -110,6 +129,7 @@ func TestPKIOperationGET(t *testing.T) {
 	params := req.URL.Query()
 	params.Set("operation", "PKIOperation")
 	params.Set("message", message)
+	params.Set("attestation", testAttestation())
 	req.URL.RawQuery = params.Encode()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -137,7 +157,11 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 	crt, key, _ := depot.CA([]byte{})
 	var svc scepserver.Service // scep service
 	{
-		svc, err = scepserver.NewService(crt[0], key, scepserver.NopCSRSigner())
+		signer := scepserver.AttestationMiddleware(
+			scepserver.Base64URLJSONAttestationVerifier(),
+			scepserver.NopCSRSigner(),
+		)
+		svc, err = scepserver.NewService(crt[0], key, signer)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,4 +190,8 @@ func loadTestFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func testAttestation() string {
+	return base64.RawURLEncoding.EncodeToString([]byte(`{"device_id":"test-device"}`))
 }

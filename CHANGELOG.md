@@ -1,5 +1,11 @@
 # scep
 
+## 0.2.3-rc.0
+
+### Patch Changes
+
+- windows クライアントに対応
+
 ## 0.2.2
 
 ### Patch Changes

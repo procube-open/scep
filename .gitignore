@@ -10,3 +10,9 @@ node_modules
 download
 build
 .env
+target
+artifacts
+gcp_credential.json
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
