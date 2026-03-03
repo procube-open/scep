@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/procube-open/scep/depot/mysql"
@@ -83,6 +84,31 @@ func MySQLChallengeMiddleWare(depot *mysql.MySQLDepot, next CSRSignerContext) CS
 		if secret.Secret != arr[1] {
 			return nil, errors.New("invalid secret")
 		}
+		return next.SignCSRContext(ctx, m)
+	}
+}
+
+func AttestationMiddleware(verifier AttestationVerifier, next CSRSignerContext) CSRSignerContextFunc {
+	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
+		if verifier == nil {
+			return nil, errors.New("attestation verifier is nil")
+		}
+
+		method, ok := RequestMethodFromContext(ctx)
+		if !ok || method != http.MethodPost {
+			return next.SignCSRContext(ctx, m)
+		}
+
+		attestation, ok := AttestationFromContext(ctx)
+		if !ok {
+			return next.SignCSRContext(ctx, m)
+		}
+
+		ctx = ContextWithChallengePassword(ctx, m.ChallengePassword)
+		if err := verifier.VerifyAttestation(ctx, attestation); err != nil {
+			return nil, err
+		}
+
 		return next.SignCSRContext(ctx, m)
 	}
 }

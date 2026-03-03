@@ -18,6 +18,7 @@ import (
 
 	scepclient "github.com/procube-open/scep/client"
 	"github.com/procube-open/scep/scep"
+	scepserver "github.com/procube-open/scep/server"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -39,6 +40,7 @@ var (
 	flCountry       = "JP"
 	flCACertMessage = ""
 	flDNSName       = ""
+	flAttestation   = ""
 
 	// in case of multiple certificate authorities, we need to figure out who the recipient of the encrypted
 	// data is.
@@ -70,6 +72,7 @@ type runCfg struct {
 	logfmt          string
 	caCertMsg       string
 	dnsName         string
+	attestation     string
 }
 
 func run(cfg runCfg) error {
@@ -195,8 +198,12 @@ func run(cfg runCfg) error {
 	for {
 		// loop in case we get a PENDING response which requires
 		// a manual approval.
+		reqCtx := ctx
+		if cfg.attestation != "" {
+			reqCtx = scepserver.ContextWithAttestation(reqCtx, cfg.attestation)
+		}
 
-		respBytes, err := client.PKIOperation(ctx, msg.Raw)
+		respBytes, err := client.PKIOperation(reqCtx, msg.Raw)
 		if err != nil {
 			return errors.Wrapf(err, "PKIOperation for %s", msgType)
 		}
@@ -288,9 +295,11 @@ func validateFlags(keyPath, serverURL string) error {
 
 func main() {
 	var (
-		flUid     = flag.String("uid", "", "uid of user")
-		flSecret  = flag.String("secret", "", "password of user")
-		flWorkDir = flag.String("out", ".", "create certificates under this directory")
+		flUid             = flag.String("uid", "", "uid of user")
+		flSecret          = flag.String("secret", "", "password of user")
+		flWorkDir         = flag.String("out", ".", "create certificates under this directory")
+		flServerURLFlag   = flag.String("server-url", flServerURL, "SCEP server URL")
+		flAttestationFlag = flag.String("attestation", flAttestation, "base64url-encoded attestation payload")
 	)
 	flag.Parse()
 
@@ -320,7 +329,7 @@ func main() {
 
 	keySize, _ := strconv.Atoi(flKeySize)
 
-	if err := validateFlags(keyPath, flServerURL); err != nil {
+	if err := validateFlags(keyPath, *flServerURLFlag); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
@@ -349,12 +358,13 @@ func main() {
 		ou:              flOU,
 		province:        flProvince,
 		challenge:       challenge,
-		serverURL:       flServerURL,
+		serverURL:       *flServerURLFlag,
 		caCertsSelector: caCertsSelector,
 		debug:           flDebugLogging,
 		logfmt:          logfmt,
 		caCertMsg:       flCACertMessage,
 		dnsName:         flDNSName,
+		attestation:     *flAttestationFlag,
 	}
 
 	if err := run(cfg); err != nil {
