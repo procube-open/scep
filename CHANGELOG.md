@@ -1,5 +1,11 @@
 # scep
 
+## 0.2.3-rc.1
+
+### Patch Changes
+
+- windows client の実装(途中)
+
 ## 0.2.3-rc.0
 
 ### Patch Changes

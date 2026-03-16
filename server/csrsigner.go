@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
-	"net/http"
 	"strings"
 
 	"github.com/procube-open/scep/depot/mysql"
@@ -93,15 +92,14 @@ func AttestationMiddleware(verifier AttestationVerifier, next CSRSignerContext) 
 		if verifier == nil {
 			return nil, errors.New("attestation verifier is nil")
 		}
+		attestation, _ := AttestationFromContext(ctx)
 
-		method, ok := RequestMethodFromContext(ctx)
-		if !ok || method != http.MethodPost {
-			return next.SignCSRContext(ctx, m)
-		}
-
-		attestation, ok := AttestationFromContext(ctx)
-		if !ok {
-			return next.SignCSRContext(ctx, m)
+		if m.CSR != nil && m.CSR.PublicKey != nil {
+			publicKey, err := x509.MarshalPKIXPublicKey(m.CSR.PublicKey)
+			if err != nil {
+				return nil, err
+			}
+			ctx = ContextWithCSRPublicKey(ctx, publicKey)
 		}
 
 		ctx = ContextWithChallengePassword(ctx, m.ChallengePassword)

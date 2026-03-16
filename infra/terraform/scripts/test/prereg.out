@@ -1,6 +1,0 @@
-uid=device-user-01
-secret=<strong-secret>
-device_id=device-aab43920748e89bae3747fa9
-export SCEP_TEST_UID=device-user-01
-export SCEP_SECRET=\<strong-secret\>
-export SCEP_DEVICE_ID=device-aab43920748e89bae3747fa9

@@ -8,14 +8,14 @@ const LOG_DIR: &str = r"C:\ProgramData\MyTunnelApp\logs";
 const LOG_FILE_PREFIX: &str = "service.log";
 #[cfg(windows)]
 const EVENTLOG_SOURCE: &str = "MyTunnelService";
+const FALLBACK_LOG_FILTER: &str = "info,service=info";
 
-pub fn init_logging() -> Result<WorkerGuard, io::Error> {
+pub fn init_logging(default_level: &str) -> Result<WorkerGuard, io::Error> {
     fs::create_dir_all(LOG_DIR)?;
 
     let appender = tracing_appender::rolling::daily(LOG_DIR, LOG_FILE_PREFIX);
     let (non_blocking, guard) = tracing_appender::non_blocking(appender);
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,service=info"));
+    let filter = build_env_filter(default_level);
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -26,6 +26,16 @@ pub fn init_logging() -> Result<WorkerGuard, io::Error> {
         })?;
 
     Ok(guard)
+}
+
+fn build_env_filter(default_level: &str) -> EnvFilter {
+    if std::env::var_os("RUST_LOG").is_some() {
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(FALLBACK_LOG_FILTER))
+    } else {
+        let directive = format!("{default_level},service={default_level}");
+        EnvFilter::try_new(directive).unwrap_or_else(|_| EnvFilter::new(FALLBACK_LOG_FILTER))
+    }
 }
 
 #[cfg(windows)]

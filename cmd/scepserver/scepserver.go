@@ -151,6 +151,7 @@ func main() {
 	}()
 
 	var svc scepserver.Service // scep service
+	attestationNonces := scepserver.NewAttestationNonceService(5 * time.Minute)
 	{
 		crts, key, err := depot.CA([]byte(*flCAPass))
 		if err != nil {
@@ -178,7 +179,7 @@ func main() {
 		if csrVerifier != nil {
 			signer = csrverifier.Middleware(csrVerifier, signer)
 		}
-		signer = scepserver.AttestationMiddleware(scepserver.MySQLDeviceIDAttestationVerifier(depot), signer)
+		signer = scepserver.AttestationMiddleware(scepserver.MySQLDeviceIDAttestationVerifier(depot, attestationNonces), signer)
 		svc, err = scepserver.NewService(crts[0], key, signer, scepserver.WithLogger(logger))
 		if err != nil {
 			lginfo.Log("err", err)
@@ -192,7 +193,7 @@ func main() {
 		e := scepserver.MakeServerEndpoints(svc, *flDepotPath)
 		e.GetEndpoint = scepserver.EndpointLoggingMiddleware(lginfo)(e.GetEndpoint)
 		e.PostEndpoint = scepserver.EndpointLoggingMiddleware(lginfo)(e.PostEndpoint)
-		h = scepserver.MakeHTTPHandler(depot, e, svc, log.With(lginfo, "component", "http"))
+		h = scepserver.MakeHTTPHandler(depot, e, svc, log.With(lginfo, "component", "http"), attestationNonces)
 	}
 
 	// start http server

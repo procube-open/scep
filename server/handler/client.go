@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/hook"
+	"github.com/procube-open/scep/utils"
 )
 
 type ResClient struct {
@@ -93,6 +95,13 @@ func AddClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		if c.Attributes == nil {
 			c.Attributes = make(map[string]interface{})
 		}
+		if err := normalizeDeviceIDAttribute(c.Attributes); err != nil {
+			res := ErrResp{Message: err.Error()}
+			w.WriteHeader(http.StatusBadRequest)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
 		initialStatus := "INACTIVE"
 		err = depot.AddClient(c, initialStatus)
 		if err != nil {
@@ -125,12 +134,43 @@ func UpdateClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		if c.Attributes == nil {
 			c.Attributes = make(map[string]interface{})
 		}
+		if err := normalizeDeviceIDAttribute(c.Attributes); err != nil {
+			res := ErrResp{Message: err.Error()}
+			w.WriteHeader(http.StatusBadRequest)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
 		err = depot.UpdateAttributesClient(c)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
+}
+
+func normalizeDeviceIDAttribute(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+
+	value, ok := attributes["device_id"]
+	if !ok {
+		return nil
+	}
+
+	deviceID, ok := value.(string)
+	if !ok {
+		return errors.New("device_id must be a string")
+	}
+
+	deviceID = utils.NormalizeDeviceID(deviceID)
+	if deviceID == "" {
+		return errors.New("device_id must not be empty")
+	}
+
+	attributes["device_id"] = deviceID
+	return nil
 }
 
 func RevokeClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {

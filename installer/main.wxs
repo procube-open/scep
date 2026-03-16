@@ -1,24 +1,467 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="MyTunnelApp"
            Manufacturer="MyTunnelApp"
            Version="0.1.0"
            Scope="perMachine"
            UpgradeCode="12345678-1234-1234-1234-1234567890AB">
     <MediaTemplate />
-    <Property Id="SERVICE_URL" Value="https://example.invalid/scep" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
 
-    <StandardDirectory Id="ProgramFilesFolder">
+    <Property Id="SERVICE_URL" Value="https://example.invalid/scep" Secure="yes">
+      <RegistrySearch Id="SearchLegacyConfigUrl"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ConfigURL"
+                      Type="raw" />
+    </Property>
+    <Property Id="SERVER_URL" Value="[SERVICE_URL]" Secure="yes">
+      <RegistrySearch Id="SearchServerUrl"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ServerUrl"
+                      Type="raw" />
+    </Property>
+    <Property Id="CLIENT_UID" Secure="yes">
+      <RegistrySearch Id="SearchClientUid"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ClientUid"
+                      Type="raw" />
+    </Property>
+    <Property Id="ENROLLMENT_SECRET" Hidden="yes" Secure="yes">
+      <RegistrySearch Id="SearchEnrollmentSecret"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="EnrollmentSecret"
+                      Type="raw" />
+    </Property>
+    <Property Id="DEVICE_ID_OVERRIDE" Secure="yes">
+      <RegistrySearch Id="SearchDeviceIdOverride"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="DeviceId"
+                      Type="raw" />
+    </Property>
+    <Property Id="POLL_INTERVAL" Value="1h" Secure="yes">
+      <RegistrySearch Id="SearchPollInterval"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="PollInterval"
+                      Type="raw" />
+    </Property>
+    <Property Id="RENEW_BEFORE" Value="14d" Secure="yes">
+      <RegistrySearch Id="SearchRenewBefore"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="RenewBefore"
+                      Type="raw" />
+    </Property>
+    <Property Id="LOG_LEVEL" Value="info" Secure="yes">
+      <RegistrySearch Id="SearchLogLevel"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="LogLevel"
+                      Type="raw" />
+    </Property>
+    <Property Id="EXISTING_ENROLLMENT_SECRET_PROTECTED" Hidden="yes" Secure="yes">
+      <RegistrySearch Id="SearchProtectedEnrollmentSecret"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="EnrollmentSecretProtected"
+                      Type="raw" />
+    </Property>
+    <Property Id="EXISTING_ENROLLMENT_SECRET_LEGACY" Hidden="yes" Secure="yes">
+      <RegistrySearch Id="SearchLegacyEnrollmentSecret"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="EnrollmentSecret"
+                      Type="raw" />
+    </Property>
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="MyTunnelService runs as LocalService. Uninstall removes installer-managed configuration but intentionally leaves issued certificates and TPM-backed keys in place." />
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+
+    <Condition Message="SERVER_URL must point to the SCEP endpoint and cannot use the example.invalid placeholder.">
+      <![CDATA[REMOVE="ALL" OR (SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://")]]>
+    </Condition>
+    <Condition Message="CLIENT_UID must be specified.">
+      <![CDATA[REMOVE="ALL" OR CLIENT_UID]]>
+    </Condition>
+    <Condition Message="ENROLLMENT_SECRET must be specified for new installs. Repairs and upgrades may leave it blank when the machine is already configured.">
+      <![CDATA[REMOVE="ALL" OR ENROLLMENT_SECRET OR Installed]]>
+    </Condition>
+    <Condition Message="DEVICE_ID_OVERRIDE is required in the current phase until automatic device_id derivation is implemented.">
+      <![CDATA[REMOVE="ALL" OR DEVICE_ID_OVERRIDE]]>
+    </Condition>
+    <Condition Message="LOG_LEVEL must be one of trace, debug, info, warn, or error.">
+      <![CDATA[REMOVE="ALL" OR NOT LOG_LEVEL OR LOG_LEVEL = "trace" OR LOG_LEVEL = "debug" OR LOG_LEVEL = "info" OR LOG_LEVEL = "warn" OR LOG_LEVEL = "error"]]>
+    </Condition>
+
+    <UI>
+      <!-- Keep the standard WixUI flow for directory selection, then collect SCEP values just before ExecuteAction. -->
+      <Dialog Id="ScepConfigDlg" Width="370" Height="270" Title="[ProductName] configuration">
+        <Control Id="IntroTitle"
+                 Type="Text"
+                 X="20"
+                 Y="15"
+                 Width="330"
+                 Height="18"
+                 NoPrefix="yes"
+                 Text="Configure SCEP enrollment" />
+        <Control Id="IntroText"
+                 Type="Text"
+                 X="20"
+                 Y="35"
+                 Width="330"
+                 Height="32"
+                 NoPrefix="yes"
+                 Text="Provide the required SCEP values. MSI stages ENROLLMENT_SECRET so the service can start, then the Windows service migrates it to DPAPI-protected storage on first start." />
+        <Control Id="ServerUrlLabel"
+                 Type="Text"
+                 X="20"
+                 Y="82"
+                 Width="110"
+                 Height="15"
+                 Text="SERVER_URL" />
+        <Control Id="ServerUrlEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="80"
+                 Width="210"
+                 Height="18"
+                 Property="SERVER_URL" />
+        <Control Id="ClientUidLabel"
+                 Type="Text"
+                 X="20"
+                 Y="112"
+                 Width="110"
+                 Height="15"
+                 Text="CLIENT_UID" />
+        <Control Id="ClientUidEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="110"
+                 Width="210"
+                 Height="18"
+                 Property="CLIENT_UID" />
+        <Control Id="EnrollmentSecretLabel"
+                 Type="Text"
+                 X="20"
+                 Y="142"
+                 Width="110"
+                 Height="15"
+                 Text="ENROLLMENT_SECRET" />
+        <Control Id="EnrollmentSecretEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="140"
+                 Width="210"
+                 Height="18"
+                 Property="ENROLLMENT_SECRET"
+                 Password="yes" />
+        <Control Id="SecretHint"
+                 Type="Text"
+                 X="20"
+                 Y="168"
+                 Width="330"
+                 Height="28"
+                 NoPrefix="yes"
+                 Text="Leave ENROLLMENT_SECRET blank only during repair or upgrade of an already configured machine. In the current phase, open Advanced... and set DEVICE_ID_OVERRIDE before installing." />
+        <Control Id="Advanced"
+                 Type="PushButton"
+                 X="20"
+                 Y="240"
+                 Width="80"
+                 Height="17"
+                 Text="Advanced...">
+          <Publish Event="NewDialog" Value="ScepAdvancedDlg">1</Publish>
+        </Control>
+        <Control Id="Install"
+                 Type="PushButton"
+                 X="240"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Text="Install">
+          <Publish Event="SpawnDialog" Value="ServerUrlPlaceholderDlg" Order="1">SERVER_URL = "https://example.invalid/scep"</Publish>
+          <Publish Event="SpawnDialog" Value="ServerUrlFormatDlg" Order="2"><![CDATA[SERVER_URL AND NOT (SERVER_URL >< "://")]]></Publish>
+          <Publish Event="SpawnDialog" Value="MissingRequiredValuesDlg" Order="3">NOT SERVER_URL OR NOT CLIENT_UID OR (NOT ENROLLMENT_SECRET AND (NOT Installed OR (NOT EXISTING_ENROLLMENT_SECRET_PROTECTED AND NOT EXISTING_ENROLLMENT_SECRET_LEGACY)))</Publish>
+          <Publish Event="EndDialog" Value="Return" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND (ENROLLMENT_SECRET OR (Installed AND (EXISTING_ENROLLMENT_SECRET_PROTECTED OR EXISTING_ENROLLMENT_SECRET_LEGACY)))]]></Publish>
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="304"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ScepAdvancedDlg" Width="370" Height="270" Title="[ProductName] advanced settings">
+        <Control Id="AdvancedIntro"
+                 Type="Text"
+                 X="20"
+                 Y="15"
+                 Width="330"
+                 Height="18"
+                 NoPrefix="yes"
+                 Text="Advanced settings (optional)" />
+        <Control Id="AdvancedText"
+                 Type="Text"
+                 X="20"
+                 Y="35"
+                 Width="330"
+                 Height="30"
+                 NoPrefix="yes"
+                 Text="DEVICE_ID_OVERRIDE is required in the current phase because automatic device_id derivation is not wired yet. POLL_INTERVAL, RENEW_BEFORE, and LOG_LEVEL remain optional troubleshooting values." />
+        <Control Id="DeviceIdLabel"
+                 Type="Text"
+                 X="20"
+                 Y="82"
+                 Width="110"
+                 Height="15"
+                 Text="DEVICE_ID_OVERRIDE" />
+        <Control Id="DeviceIdEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="80"
+                 Width="210"
+                 Height="18"
+                 Property="DEVICE_ID_OVERRIDE" />
+        <Control Id="PollIntervalLabel"
+                 Type="Text"
+                 X="20"
+                 Y="112"
+                 Width="110"
+                 Height="15"
+                 Text="POLL_INTERVAL" />
+        <Control Id="PollIntervalEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="110"
+                 Width="210"
+                 Height="18"
+                 Property="POLL_INTERVAL" />
+        <Control Id="RenewBeforeLabel"
+                 Type="Text"
+                 X="20"
+                 Y="142"
+                 Width="110"
+                 Height="15"
+                 Text="RENEW_BEFORE" />
+        <Control Id="RenewBeforeEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="140"
+                 Width="210"
+                 Height="18"
+                 Property="RENEW_BEFORE" />
+        <Control Id="LogLevelLabel"
+                 Type="Text"
+                 X="20"
+                 Y="172"
+                 Width="110"
+                 Height="15"
+                 Text="LOG_LEVEL" />
+        <Control Id="LogLevelEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="170"
+                 Width="210"
+                 Height="18"
+                 Property="LOG_LEVEL" />
+        <Control Id="LogLevelHint"
+                 Type="Text"
+                 X="20"
+                 Y="196"
+                 Width="330"
+                 Height="26"
+                 NoPrefix="yes"
+                 Text="LOG_LEVEL must be trace, debug, info, warn, or error. Duration values accept raw seconds or s/m/h/d suffixes, for example 300, 30m, 1h, or 14d." />
+        <Control Id="Back"
+                 Type="PushButton"
+                 X="180"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Text="Back">
+          <Publish Event="NewDialog" Value="ScepConfigDlg">1</Publish>
+        </Control>
+        <Control Id="Install"
+                 Type="PushButton"
+                 X="240"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Text="Install">
+          <Publish Event="SpawnDialog" Value="ServerUrlPlaceholderDlg" Order="1">SERVER_URL = "https://example.invalid/scep"</Publish>
+          <Publish Event="SpawnDialog" Value="ServerUrlFormatDlg" Order="2"><![CDATA[SERVER_URL AND NOT (SERVER_URL >< "://")]]></Publish>
+          <Publish Event="SpawnDialog" Value="MissingRequiredValuesDlg" Order="3">NOT SERVER_URL OR NOT CLIENT_UID OR NOT DEVICE_ID_OVERRIDE OR (NOT ENROLLMENT_SECRET AND NOT Installed)</Publish>
+          <Publish Event="SpawnDialog" Value="InvalidLogLevelDlg" Order="4">LOG_LEVEL AND LOG_LEVEL &lt;&gt; "trace" AND LOG_LEVEL &lt;&gt; "debug" AND LOG_LEVEL &lt;&gt; "info" AND LOG_LEVEL &lt;&gt; "warn" AND LOG_LEVEL &lt;&gt; "error"</Publish>
+          <Publish Event="EndDialog" Value="Return" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND DEVICE_ID_OVERRIDE AND (ENROLLMENT_SECRET OR Installed) AND (NOT LOG_LEVEL OR LOG_LEVEL = "trace" OR LOG_LEVEL = "debug" OR LOG_LEVEL = "info" OR LOG_LEVEL = "warn" OR LOG_LEVEL = "error")]]></Publish>
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="304"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="MissingRequiredValuesDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="30"
+                 NoPrefix="yes"
+                 Text="SERVER_URL, CLIENT_UID, DEVICE_ID_OVERRIDE, and ENROLLMENT_SECRET are required for new installs." />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ServerUrlPlaceholderDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="30"
+                 NoPrefix="yes"
+                 Text="Replace the example.invalid placeholder with the actual SCEP endpoint URL." />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ServerUrlFormatDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="30"
+                 NoPrefix="yes"
+                 Text="SERVER_URL must include a scheme, for example https://scep.example.com/scep." />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="InvalidLogLevelDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="30"
+                 NoPrefix="yes"
+                 Text="LOG_LEVEL must be trace, debug, info, warn, or error." />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+    </UI>
+
+    <InstallUISequence>
+      <Show Dialog="ScepConfigDlg" Before="ExecuteAction">NOT REMOVE="ALL"</Show>
+    </InstallUISequence>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="MyTunnelApp">
         <Component Id="ServiceComponent" Guid="*" Bitness="always64">
           <File Id="ServiceExe"
                 Source="..\rust-client\service\target\release\service.exe"
                 KeyPath="yes" />
-          <RegistryValue Root="HKLM"
-                         Key="SOFTWARE\MyTunnelApp"
-                         Name="ConfigURL"
-                         Type="string"
-                         Value="[SERVICE_URL]" />
+          <RegistryKey Root="HKLM" Key="SOFTWARE\MyTunnelApp">
+            <Permission Domain="NT AUTHORITY"
+                        User="LocalService"
+                        Read="yes"
+                        Write="yes"
+                        CreateSubkeys="yes"
+                        Delete="yes"
+                        EnumerateSubkeys="yes" />
+            <RegistryValue Name="ConfigURL"
+                           Type="string"
+                           Value="[SERVER_URL]" />
+            <RegistryValue Name="ServerUrl"
+                           Type="string"
+                           Value="[SERVER_URL]" />
+            <RegistryValue Name="ClientUid"
+                           Type="string"
+                           Value="[CLIENT_UID]" />
+            <!-- This WiX-only phase still stages the secret as a registry value so the service can start.
+                 The service immediately migrates it to EnrollmentSecretProtected via DPAPI Machine Scope. -->
+            <RegistryValue Name="EnrollmentSecret"
+                           Type="string"
+                           Value="[ENROLLMENT_SECRET]" />
+            <RegistryValue Name="DeviceId"
+                           Type="string"
+                           Value="[DEVICE_ID_OVERRIDE]" />
+            <RegistryValue Name="DeviceIdOverride"
+                           Type="string"
+                           Value="[DEVICE_ID_OVERRIDE]" />
+            <RegistryValue Name="PollInterval"
+                           Type="string"
+                           Value="[POLL_INTERVAL]" />
+            <RegistryValue Name="RenewBefore"
+                           Type="string"
+                           Value="[RENEW_BEFORE]" />
+            <RegistryValue Name="LogLevel"
+                           Type="string"
+                           Value="[LOG_LEVEL]" />
+          </RegistryKey>
+          <RemoveRegistryKey Root="HKLM"
+                             Key="SOFTWARE\MyTunnelApp"
+                             Action="removeOnUninstall" />
           <ServiceInstall Id="ServiceInstaller"
                           Type="ownProcess"
                           Name="MyTunnelService"

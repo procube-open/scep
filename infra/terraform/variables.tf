@@ -13,11 +13,6 @@ variable "zone" {
   type        = string
 }
 
-variable "credentials_file" {
-  description = "Path to Google service account credentials JSON file."
-  type        = string
-}
-
 variable "network_name" {
   description = "Custom VPC name."
   type        = string

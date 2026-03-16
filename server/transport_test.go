@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	mysqldepot "github.com/procube-open/scep/depot/mysql"
@@ -168,7 +169,7 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 	}
 	logger := kitlog.NewNopLogger()
 	e := scepserver.MakeServerEndpoints(svc, "")
-	handler := scepserver.MakeHTTPHandler(depot, e, svc, logger)
+	handler := scepserver.MakeHTTPHandler(depot, e, svc, logger, scepserver.NewAttestationNonceService(time.Minute))
 	server := httptest.NewServer(handler)
 	teardown := func() {
 		server.Close()

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="MyTunnelApp"
+           Language="1033"
+        Version="0.1.1"
+           Manufacturer="MyTunnelApp"
+           UpgradeCode="12345678-1234-1234-1234-1234567890AB">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MediaTemplate EmbedCab="yes" />
+      <MajorUpgrade AllowSameVersionUpgrades="yes"
+          DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <Property Id="SERVICE_URL" Value="https://example.invalid/scep" Secure="yes">
+      <RegistrySearch Id="SearchLegacyConfigUrl"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ConfigURL"
+                      Type="raw" />
+    </Property>
+    <Property Id="SERVER_URL" Value="https://example.invalid/scep" Secure="yes">
+      <RegistrySearch Id="SearchServerUrl"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ServerUrl"
+                      Type="raw" />
+    </Property>
+    <Property Id="CLIENT_UID" Secure="yes">
+      <RegistrySearch Id="SearchClientUid"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ClientUid"
+                      Type="raw" />
+    </Property>
+    <Property Id="ENROLLMENT_SECRET" Secure="yes">
+      <RegistrySearch Id="SearchEnrollmentSecret"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="EnrollmentSecret"
+                      Type="raw" />
+    </Property>
+    <Property Id="DEVICE_ID_OVERRIDE" Secure="yes">
+      <RegistrySearch Id="SearchDeviceIdOverride"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="DeviceId"
+                      Type="raw" />
+    </Property>
+    <Property Id="POLL_INTERVAL" Value="1h" Secure="yes" />
+    <Property Id="RENEW_BEFORE" Value="14d" Secure="yes" />
+    <Property Id="LOG_LEVEL" Value="info" Secure="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="MyTunnelApp">
+          <Component Id="ServiceComponent" Guid="*" Win64="yes">
+            <File Id="ServiceExe"
+                  Source="../rust-client/service/target/release/service.exe"
+                  KeyPath="yes" />
+            <File Id="ScepClientExe"
+              Source="../cmd/scepclient/scepclient.exe" />
+            <File Id="Pkcs12HelperExe"
+              Source="../cmd/pkcs12helper/pkcs12helper.exe" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="ConfigURL"
+                           Type="string"
+                           Value="[SERVER_URL]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="ServerUrl"
+                           Type="string"
+                           Value="[SERVER_URL]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="ClientUid"
+                           Type="string"
+                           Value="[CLIENT_UID]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="EnrollmentSecret"
+                           Type="string"
+                           Value="[ENROLLMENT_SECRET]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="DeviceId"
+                           Type="string"
+                           Value="[DEVICE_ID_OVERRIDE]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="DeviceIdOverride"
+                           Type="string"
+                           Value="[DEVICE_ID_OVERRIDE]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="PollInterval"
+                           Type="string"
+                           Value="[POLL_INTERVAL]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="RenewBefore"
+                           Type="string"
+                           Value="[RENEW_BEFORE]" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\MyTunnelApp"
+                           Name="LogLevel"
+                           Type="string"
+                           Value="[LOG_LEVEL]" />
+            <ServiceInstall Id="ServiceInstaller"
+                            Type="ownProcess"
+                            Name="MyTunnelService"
+                            DisplayName="MyTunnel Service"
+                            Description="Obtains and renews client certificates."
+                            Start="auto"
+                            ErrorControl="normal"
+                            Account="NT AUTHORITY\LocalSystem" />
+            <ServiceControl Id="ServiceController"
+                            Name="MyTunnelService"
+                            Start="install"
+                            Stop="both"
+                            Remove="uninstall"
+                            Wait="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature" Title="MyTunnelApp" Level="1">
+      <ComponentRef Id="ServiceComponent" />
+    </Feature>
+  </Product>
+</Wix>

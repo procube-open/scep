@@ -1,7 +1,9 @@
 package scepserver
 
 import (
+	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/utils"
 )
 
 var (
@@ -58,6 +61,22 @@ func ChallengePasswordFromContext(ctx context.Context) (string, bool) {
 	return challenge, challenge != ""
 }
 
+type csrPublicKeyContextKey struct{}
+
+func ContextWithCSRPublicKey(ctx context.Context, publicKey []byte) context.Context {
+	copied := append([]byte(nil), publicKey...)
+	return context.WithValue(ctx, csrPublicKeyContextKey{}, copied)
+}
+
+func CSRPublicKeyFromContext(ctx context.Context) ([]byte, bool) {
+	publicKey, ok := ctx.Value(csrPublicKeyContextKey{}).([]byte)
+	if !ok || len(publicKey) == 0 {
+		return nil, false
+	}
+
+	return append([]byte(nil), publicKey...), true
+}
+
 type AttestationVerifier interface {
 	VerifyAttestation(context.Context, string) error
 }
@@ -70,20 +89,18 @@ func (f AttestationVerifierFunc) VerifyAttestation(ctx context.Context, attestat
 
 func Base64URLJSONAttestationVerifier() AttestationVerifierFunc {
 	return func(_ context.Context, attestation string) error {
+		if attestation == "" {
+			return nil
+		}
 		_, err := decodeAttestation(attestation)
 		return err
 	}
 }
 
-func MySQLDeviceIDAttestationVerifier(depot *mysql.MySQLDepot) AttestationVerifierFunc {
+func MySQLDeviceIDAttestationVerifier(depot *mysql.MySQLDepot, nonces *AttestationNonceService) AttestationVerifierFunc {
 	return func(ctx context.Context, attestation string) error {
 		if depot == nil {
 			return errors.New("attestation depot is nil")
-		}
-
-		claims, err := decodeAttestation(attestation)
-		if err != nil {
-			return err
 		}
 
 		challenge, ok := ChallengePasswordFromContext(ctx)
@@ -103,20 +120,68 @@ func MySQLDeviceIDAttestationVerifier(depot *mysql.MySQLDepot) AttestationVerifi
 			return errors.New("invalid challenge")
 		}
 
-		registeredDeviceID, ok := lookupDeviceID(client.Attributes)
-		if !ok {
-			return fmt.Errorf("%w: registered device_id is missing", ErrInvalidAttestation)
+		registeredDeviceID, hasRegisteredDeviceID := lookupDeviceID(client.Attributes)
+		if !hasRegisteredDeviceID {
+			if attestation == "" {
+				return nil
+			}
+			_, err = decodeAttestation(attestation)
+			return err
+		}
+		if attestation == "" {
+			return fmt.Errorf("%w: missing_attestation", ErrMissingAttestation)
+		}
+
+		claims, err := decodeAttestation(attestation)
+		if err != nil {
+			return err
 		}
 		if claims.DeviceID != registeredDeviceID {
-			return fmt.Errorf("%w: device_id mismatch", ErrInvalidAttestation)
+			return fmt.Errorf("%w: device_id_mismatch", ErrInvalidAttestation)
+		}
+		if err := verifyAttestedPublicKey(ctx, claims, true); err != nil {
+			return err
+		}
+		if nonces != nil {
+			if claims.Attestation.Nonce == "" {
+				return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
+			}
+			if !nonces.Consume(client.Uid, claims.DeviceID, claims.Attestation.Nonce) {
+				return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
+			}
 		}
 
 		return nil
 	}
 }
 
+type attestationKey struct {
+	Algorithm        string `json:"algorithm"`
+	Provider         string `json:"provider"`
+	PublicKeySPKIB64 string `json:"public_key_spki_b64"`
+}
+
+type attestationBundle struct {
+	Format            string            `json:"format"`
+	Nonce             string            `json:"nonce"`
+	AIKPublicB64      string            `json:"aik_public_b64"`
+	QuoteB64          string            `json:"quote_b64"`
+	QuoteSignatureB64 string            `json:"quote_signature_b64"`
+	PCRs              []json.RawMessage `json:"pcrs"`
+	EKCertB64         string            `json:"ek_cert_b64"`
+}
+
+type attestationMeta struct {
+	Hostname    string `json:"hostname"`
+	OSVersion   string `json:"os_version"`
+	GeneratedAt string `json:"generated_at"`
+}
+
 type attestationClaims struct {
-	DeviceID string `json:"device_id"`
+	DeviceID    string            `json:"device_id"`
+	Key         attestationKey    `json:"key"`
+	Attestation attestationBundle `json:"attestation"`
+	Meta        attestationMeta   `json:"meta"`
 }
 
 func decodeAttestation(attestation string) (*attestationClaims, error) {
@@ -133,10 +198,22 @@ func decodeAttestation(attestation string) (*attestationClaims, error) {
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, fmt.Errorf("%w: decoded payload is not valid json", ErrInvalidAttestation)
 	}
-	claims.DeviceID = strings.TrimSpace(claims.DeviceID)
+	claims.DeviceID = utils.NormalizeDeviceID(claims.DeviceID)
 	if claims.DeviceID == "" {
-		return nil, fmt.Errorf("%w: missing device_id", ErrInvalidAttestation)
+		return nil, fmt.Errorf("%w: missing_device_id", ErrInvalidAttestation)
 	}
+	claims.Key.Algorithm = strings.TrimSpace(claims.Key.Algorithm)
+	claims.Key.Provider = strings.TrimSpace(claims.Key.Provider)
+	claims.Key.PublicKeySPKIB64 = strings.TrimSpace(claims.Key.PublicKeySPKIB64)
+	claims.Attestation.Format = strings.TrimSpace(claims.Attestation.Format)
+	claims.Attestation.Nonce = strings.TrimSpace(claims.Attestation.Nonce)
+	claims.Attestation.AIKPublicB64 = strings.TrimSpace(claims.Attestation.AIKPublicB64)
+	claims.Attestation.QuoteB64 = strings.TrimSpace(claims.Attestation.QuoteB64)
+	claims.Attestation.QuoteSignatureB64 = strings.TrimSpace(claims.Attestation.QuoteSignatureB64)
+	claims.Attestation.EKCertB64 = strings.TrimSpace(claims.Attestation.EKCertB64)
+	claims.Meta.Hostname = strings.TrimSpace(claims.Meta.Hostname)
+	claims.Meta.OSVersion = strings.TrimSpace(claims.Meta.OSVersion)
+	claims.Meta.GeneratedAt = strings.TrimSpace(claims.Meta.GeneratedAt)
 	return &claims, nil
 }
 
@@ -149,12 +226,39 @@ func lookupDeviceID(attributes map[string]interface{}) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	deviceID = strings.TrimSpace(deviceID)
+	deviceID = utils.NormalizeDeviceID(deviceID)
 	if deviceID == "" {
 		return "", false
 	}
 
 	return deviceID, true
+}
+
+func verifyAttestedPublicKey(ctx context.Context, claims *attestationClaims, required bool) error {
+	if claims == nil {
+		return nil
+	}
+	if claims.Key.PublicKeySPKIB64 == "" {
+		if required {
+			return fmt.Errorf("%w: public_key_mismatch", ErrInvalidAttestation)
+		}
+		return nil
+	}
+
+	attestedPublicKey, err := decodeBase64URL(claims.Key.PublicKeySPKIB64)
+	if err != nil {
+		return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+	}
+	if _, err := x509.ParsePKIXPublicKey(attestedPublicKey); err != nil {
+		return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+	}
+
+	csrPublicKey, ok := CSRPublicKeyFromContext(ctx)
+	if !ok || !bytes.Equal(attestedPublicKey, csrPublicKey) {
+		return fmt.Errorf("%w: public_key_mismatch", ErrInvalidAttestation)
+	}
+
+	return nil
 }
 
 func decodeBase64URL(payload string) ([]byte, error) {

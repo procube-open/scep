@@ -11,6 +11,9 @@ Options:
   --project <PROJECT_ID>             GCP project ID (optional; auto-detected from Terraform)
   --zone <ZONE>                      GCP zone (optional; auto-detected from Terraform)
   --instance <INSTANCE_NAME>         GCE instance name (optional; auto-detected from Terraform)
+  --ssh-user <USERNAME>              SSH username for gcloud compute ssh/scp
+                                     (default: current local user; if running as root,
+                                     derive from active gcloud account)
   --terraform-dir <PATH>             Terraform working directory used for output lookup
                                      (default: <repo-root>/infra/terraform)
   --repo-root <PATH>                 Repository root containing ./cmd/scepserver
@@ -29,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ID=""
 ZONE=""
 INSTANCE=""
+SSH_USER=""
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 TERRAFORM_DIR=""
 LOCAL_BINARY_PATH="/tmp/scepserver-opt"
@@ -50,6 +54,11 @@ while [[ $# -gt 0 ]]; do
     --instance)
       [[ $# -ge 2 ]] || { echo "Missing value for --instance" >&2; usage; exit 1; }
       INSTANCE="$2"
+      shift 2
+      ;;
+    --ssh-user)
+      [[ $# -ge 2 ]] || { echo "Missing value for --ssh-user" >&2; usage; exit 1; }
+      SSH_USER="$2"
       shift 2
       ;;
     --terraform-dir)
@@ -110,6 +119,27 @@ read_tfvars_value() {
   printf '%s' "$raw_value"
 }
 
+derive_ssh_user() {
+  local local_user active_account derived
+
+  local_user="$(id -un)"
+  if [[ -n "$local_user" && "$local_user" != "root" ]]; then
+    printf '%s' "$local_user"
+    return 0
+  fi
+
+  active_account="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -n 1 || true)"
+  [[ -n "$active_account" ]] || return 1
+
+  derived="${active_account,,}"
+  derived="${derived//@/_}"
+  derived="${derived//./_}"
+  derived="$(printf '%s' "$derived" | sed -E 's/[^a-z0-9_-]+/_/g; s/^[^a-z_]+//; s/_+/_/g; s/_$//')"
+  [[ -n "$derived" ]] || return 1
+
+  printf '%s' "$derived"
+}
+
 if [[ -z "$PROJECT_ID" || -z "$ZONE" || -z "$INSTANCE" ]]; then
   if ! command -v terraform >/dev/null 2>&1; then
     echo "Required command not found: terraform (needed for auto-detected values)." >&2
@@ -153,6 +183,17 @@ for required_cmd in go gcloud; do
   fi
 done
 
+if [[ -z "$SSH_USER" ]]; then
+  SSH_USER="$(derive_ssh_user || true)"
+fi
+
+if [[ -z "$SSH_USER" ]]; then
+  echo "Unable to resolve SSH user. Provide --ssh-user explicitly." >&2
+  exit 1
+fi
+
+INSTANCE_TARGET="${SSH_USER}@${INSTANCE}"
+
 mkdir -p "$(dirname "$LOCAL_BINARY_PATH")"
 
 echo "Building linux/amd64 scepserver binary: $LOCAL_BINARY_PATH"
@@ -161,11 +202,11 @@ echo "Building linux/amd64 scepserver binary: $LOCAL_BINARY_PATH"
   GOOS=linux GOARCH=amd64 go build -o "$LOCAL_BINARY_PATH" ./cmd/scepserver
 )
 
-echo "Copying binary to ${INSTANCE}:${REMOTE_STAGED_PATH}"
-gcloud compute scp "$LOCAL_BINARY_PATH" "${INSTANCE}:${REMOTE_STAGED_PATH}" --project "$PROJECT_ID" --zone "$ZONE"
+echo "Copying binary to ${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}"
+gcloud compute scp "$LOCAL_BINARY_PATH" "${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}" --project "$PROJECT_ID" --zone "$ZONE"
 
 echo "Activating binary via ${REMOTE_HELPER_PATH}"
 remote_command="$(printf "sudo %q %q" "$REMOTE_HELPER_PATH" "$REMOTE_STAGED_PATH")"
-gcloud compute ssh "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --command "$remote_command"
+gcloud compute ssh "${INSTANCE_TARGET}" --project "$PROJECT_ID" --zone "$ZONE" --command "$remote_command"
 
 echo "SCEP server binary deployed and activated."

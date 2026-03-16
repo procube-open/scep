@@ -56,6 +56,9 @@ type runCfg struct {
 	dir             string
 	csrPath         string
 	keyPath         string
+	keyProvider     string
+	keyName         string
+	publicKeySPKI   string
 	keyBits         int
 	selfSignPath    string
 	certPath        string
@@ -97,10 +100,11 @@ func run(cfg runCfg) error {
 		return err
 	}
 
-	key, err := loadOrMakeKey(cfg.keyPath, cfg.keyBits)
+	key, cleanup, err := loadKeyMaterial(cfg)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 
 	opts := &csrOptions{
 		cn:        cfg.cn,
@@ -114,7 +118,12 @@ func run(cfg runCfg) error {
 		dnsName:   cfg.dnsName,
 	}
 
-	csr, err := loadOrMakeCSR(cfg.csrPath, opts)
+	var csr *x509.CertificateRequest
+	if cfg.keyProvider != "" {
+		csr, err = makeCSR(opts)
+	} else {
+		csr, err = loadOrMakeCSR(cfg.csrPath, opts)
+	}
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -126,7 +135,12 @@ func run(cfg runCfg) error {
 		if !os.IsNotExist(err) {
 			return err
 		}
-		s, err := loadOrSign(cfg.selfSignPath, key, csr)
+		var s *x509.Certificate
+		if cfg.keyProvider != "" {
+			s, err = selfSign(key, csr)
+		} else {
+			s, err = loadOrSign(cfg.selfSignPath, key, csr)
+		}
 		if err != nil {
 			return err
 		}
@@ -235,7 +249,7 @@ func run(cfg runCfg) error {
 	}
 
 	// remove self signer if used
-	if self != nil {
+	if self != nil && cfg.keyProvider == "" {
 		if err := os.Remove(cfg.selfSignPath); err != nil {
 			return err
 		}
@@ -279,16 +293,20 @@ func validateFingerprint(fingerprint string) (hash []byte, err error) {
 	return
 }
 
-func validateFlags(keyPath, serverURL string) error {
-	if keyPath == "" {
-		return errors.New("must specify private key path")
-	}
+func validateFlags(serverURL string) error {
 	if serverURL == "" {
 		return errors.New("must specify server-url flag parameter")
 	}
 	_, err := url.Parse(serverURL)
 	if err != nil {
 		return fmt.Errorf("invalid server-url flag parameter %s", err)
+	}
+	return nil
+}
+
+func validateFileKeyFlags(keyPath string) error {
+	if keyPath == "" {
+		return errors.New("must specify private key path")
 	}
 	return nil
 }
@@ -300,6 +318,9 @@ func main() {
 		flWorkDir         = flag.String("out", ".", "create certificates under this directory")
 		flServerURLFlag   = flag.String("server-url", flServerURL, "SCEP server URL")
 		flAttestationFlag = flag.String("attestation", flAttestation, "base64url-encoded attestation payload")
+		flKeyProvider     = flag.String("key-provider", "", "Windows key storage provider name")
+		flKeyName         = flag.String("key-name", "", "Windows persisted key name")
+		flPublicKeySPKI   = flag.String("public-key-spki-b64", "", "base64url-encoded SubjectPublicKeyInfo for a Windows persisted key")
 	)
 	flag.Parse()
 
@@ -329,7 +350,16 @@ func main() {
 
 	keySize, _ := strconv.Atoi(flKeySize)
 
-	if err := validateFlags(keyPath, *flServerURLFlag); err != nil {
+	if err := validateFlags(*flServerURLFlag); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if *flKeyProvider != "" || *flKeyName != "" || *flPublicKeySPKI != "" {
+		if *flKeyProvider == "" || *flKeyName == "" || *flPublicKeySPKI == "" {
+			fmt.Println("please set -key-provider, -key-name, and -public-key-spki-b64 together")
+			os.Exit(1)
+		}
+	} else if err := validateFileKeyFlags(keyPath); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
@@ -348,6 +378,9 @@ func main() {
 		dir:             dir,
 		csrPath:         csrPath,
 		keyPath:         keyPath,
+		keyProvider:     *flKeyProvider,
+		keyName:         *flKeyName,
+		publicKeySPKI:   *flPublicKeySPKI,
 		keyBits:         keySize,
 		selfSignPath:    selfSignPath,
 		certPath:        certPath,
@@ -371,4 +404,25 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+}
+
+type keyMaterial interface {
+	crypto.Signer
+	crypto.Decrypter
+}
+
+func loadKeyMaterial(cfg runCfg) (keyMaterial, func(), error) {
+	if cfg.keyProvider != "" {
+		key, err := openWindowsNCryptKey(cfg.keyProvider, cfg.keyName, cfg.publicKeySPKI)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return key, func() { _ = key.Close() }, nil
+	}
+
+	key, err := loadOrMakeKey(cfg.keyPath, cfg.keyBits)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return key, func() {}, nil
 }

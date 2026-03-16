@@ -5,6 +5,7 @@
     "scep": "0.2.2"
   },
   "changesets": [
-    "silent-cups-joke"
+    "silent-cups-joke",
+    "soft-pens-bow"
   ]
 }

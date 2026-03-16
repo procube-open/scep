@@ -1,7 +1,6 @@
 project_id       = "admingate"
 region           = "us-central1"
 zone             = "us-central1-a"
-credentials_file = "/workspaces/scep/gcp_credential.json"
 
 network_name = "scep-vpc"
 subnet_name  = "scep-subnet"

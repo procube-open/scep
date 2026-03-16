@@ -10,7 +10,7 @@ Execute attestation E2E issuance checks against a deployed SCEP endpoint.
 Preconditions:
   1) preregister_client.sh has already run for the target uid/secret/device_id
   2) target server is reachable and supports POST PKIOperation
-  3) curl, python3, and go are available (go required only when building scepclient)
+  3) curl, openssl, python3, and go are available (go required only when building scepclient)
 
 Inputs (choose one approach):
   - provide SCEP_UID / SCEP_SECRET / SCEP_DEVICE_ID env vars
@@ -61,11 +61,24 @@ load_prereg_output() {
 
 write_attestation_payload() {
   local device_id="$1"
-  local out_file="$2"
-  python3 - "$device_id" <<'PY' > "$out_file"
+  local public_key_spki_b64="$2"
+  local nonce="$3"
+  local out_file="$4"
+  python3 - "$device_id" "$public_key_spki_b64" "$nonce" <<'PY' > "$out_file"
 import json
 import sys
-print(json.dumps({"device_id": sys.argv[1]}, separators=(",", ":")))
+print(json.dumps({
+    "device_id": sys.argv[1],
+    "key": {
+        "algorithm": "rsa-2048",
+        "provider": "openssl-test-key",
+        "public_key_spki_b64": sys.argv[2],
+    },
+    "attestation": {
+        "format": "test-nonce-key-binding-v1",
+        "nonce": sys.argv[3],
+    },
+}, separators=(",", ":")))
 PY
 }
 
@@ -81,12 +94,79 @@ print(base64.urlsafe_b64encode(payload).decode().rstrip("="))
 PY
 }
 
+ensure_case_key() {
+  local key_file="$1"
+  if [[ -f "$key_file" ]]; then
+    return 0
+  fi
+  openssl genrsa -traditional -out "$key_file" 2048 >/dev/null 2>&1
+}
+
+public_key_spki_b64() {
+  local key_file="$1"
+  python3 - "$key_file" <<'PY'
+import base64
+import pathlib
+import subprocess
+import sys
+
+key_file = pathlib.Path(sys.argv[1])
+result = subprocess.run(
+    ["openssl", "rsa", "-in", str(key_file), "-pubout", "-outform", "DER"],
+    check=True,
+    capture_output=True,
+)
+print(base64.urlsafe_b64encode(result.stdout).decode().rstrip("="))
+PY
+}
+
+fetch_nonce() {
+  local device_id="$1"
+  python3 - "${SERVER_BASE_URL%/}/api/attestation/nonce" "$SCEP_UID" "$device_id" <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+endpoint, client_uid, device_id = sys.argv[1:4]
+request = urllib.request.Request(
+    endpoint,
+    data=json.dumps({"client_uid": client_uid, "device_id": device_id}).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(request) as response:
+    payload = json.load(response)
+nonce = str(payload.get("nonce", "")).strip()
+if not nonce:
+    raise SystemExit(f"nonce response from {endpoint} did not include a nonce")
+print(nonce)
+PY
+}
+
 run_case() {
   local case_name="$1"
-  local attestation="$2"
+  local payload_device_id="$2"
   local expected="$3"
   local case_dir="$ARTIFACT_DIR/$case_name"
   mkdir -p "$case_dir"
+  local attestation=""
+
+  if [[ "$expected" == "success" || "$case_name" == "failure_mismatched_device_id" ]]; then
+    local key_file="$case_dir/key.pem"
+    local payload_file="$case_dir/attestation.json"
+    local nonce_file="$case_dir/nonce.txt"
+    ensure_case_key "$key_file"
+    local public_key_b64
+    public_key_b64="$(public_key_spki_b64 "$key_file")"
+    local nonce
+    nonce="$(fetch_nonce "$SCEP_DEVICE_ID")"
+    printf '%s\n' "$nonce" > "$nonce_file"
+    write_attestation_payload "$payload_device_id" "$public_key_b64" "$nonce" "$payload_file"
+    attestation="$(encode_base64url_file "$payload_file")"
+  else
+    attestation='%%%'
+  fi
 
   {
     printf 'case=%s\n' "$case_name"
@@ -129,11 +209,15 @@ run_case() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-SERVER_BASE_URL="${SERVER_BASE_URL:-http://localhost:3000}"
+SERVER_BASE_URL_EXPLICIT=0
 SCEP_URL_EXPLICIT=0
+if [[ -n "${SERVER_BASE_URL+x}" ]]; then
+  SERVER_BASE_URL_EXPLICIT=1
+fi
 if [[ -n "${SCEP_SERVER_URL+x}" ]]; then
   SCEP_URL_EXPLICIT=1
 fi
+SERVER_BASE_URL="${SERVER_BASE_URL:-http://localhost:3000}"
 SCEP_SERVER_URL="${SCEP_SERVER_URL:-${SERVER_BASE_URL%/}/scep}"
 PREREG_OUTPUT_FILE="${PREREG_OUTPUT_FILE:-}"
 SCEP_UID="${SCEP_UID:-}"
@@ -147,6 +231,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --server-base-url)
       SERVER_BASE_URL="${2:?missing value for --server-base-url}"
+      SERVER_BASE_URL_EXPLICIT=1
       shift 2
       ;;
     --scep-url)
@@ -196,6 +281,9 @@ fi
 
 if [[ "$SCEP_URL_EXPLICIT" -eq 0 ]]; then
   SCEP_SERVER_URL="${SERVER_BASE_URL%/}/scep"
+elif [[ "$SERVER_BASE_URL_EXPLICIT" -eq 0 ]]; then
+  SERVER_BASE_URL="${SCEP_SERVER_URL%/}"
+  SERVER_BASE_URL="${SERVER_BASE_URL%/scep}"
 fi
 
 if [[ -z "$SCEP_UID" ]]; then
@@ -212,6 +300,7 @@ if [[ -z "$SCEP_DEVICE_ID" ]]; then
 fi
 
 require_command curl
+require_command openssl
 require_command python3
 if [[ -z "$SCEPCLIENT_BIN" ]]; then
   require_command go
@@ -245,23 +334,9 @@ if [[ ! -x "$SCEPCLIENT_BIN" ]]; then
   exit 1
 fi
 
-success_payload="$ARTIFACT_DIR/attestation_success.json"
-mismatch_payload="$ARTIFACT_DIR/attestation_mismatch.json"
-
-write_attestation_payload "$SCEP_DEVICE_ID" "$success_payload"
-write_attestation_payload "${SCEP_DEVICE_ID}-mismatch" "$mismatch_payload"
-
-success_attestation="$(encode_base64url_file "$success_payload")"
-mismatch_attestation="$(encode_base64url_file "$mismatch_payload")"
-invalid_attestation='%%%'
-
-printf '%s\n' "$success_attestation" > "$ARTIFACT_DIR/attestation_success.b64url"
-printf '%s\n' "$mismatch_attestation" > "$ARTIFACT_DIR/attestation_mismatch.b64url"
-printf '%s\n' "$invalid_attestation" > "$ARTIFACT_DIR/attestation_invalid.txt"
-
-run_case "success_matching_device_id" "$success_attestation" "success"
-run_case "failure_mismatched_device_id" "$mismatch_attestation" "failure"
-run_case "failure_invalid_attestation" "$invalid_attestation" "failure"
+run_case "success_matching_device_id" "$SCEP_DEVICE_ID" "success"
+run_case "failure_mismatched_device_id" "${SCEP_DEVICE_ID}-mismatch" "failure"
+run_case "failure_invalid_attestation" "$SCEP_DEVICE_ID" "failure"
 
 cat > "$ARTIFACT_DIR/summary.txt" <<EOF
 artifact_dir=$ARTIFACT_DIR

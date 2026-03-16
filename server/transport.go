@@ -19,7 +19,7 @@ import (
 	"github.com/procube-open/scep/utils"
 )
 
-func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
+func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger, nonces *AttestationNonceService) http.Handler {
 	opts := []kithttp.ServerOption{
 		kithttp.ServerErrorLogger(logger),
 		kithttp.ServerFinalizer(logutil.NewHTTPLogger(logger).LoggingFinalizer),
@@ -60,6 +60,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 
 	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
 	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
+	r.Methods("POST").Path("/api/attestation/nonce").HandlerFunc(NewAttestationNonceHandler(depot, nonces))
 
 	pingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
 	r.Methods("GET").Path("/admin/api/ping").HandlerFunc(pingHandler)

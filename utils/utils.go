@@ -3,6 +3,7 @@ package utils
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 func EnvString(key, def string) string {
@@ -25,4 +26,8 @@ func EnvBool(key string) bool {
 		return true
 	}
 	return false
+}
+
+func NormalizeDeviceID(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
 }
