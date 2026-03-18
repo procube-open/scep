@@ -47,6 +47,7 @@ SCEPCLIENT_BINARY_RELATIVE="cmd/scepclient/scepclient.exe"
 WIXL_SOURCE_RELATIVE="installer/main.wixl.wxs"
 WINDOWS_STARTUP_SCRIPT_RELATIVE="infra/terraform/scripts/windows/windows-client-startup.ps1"
 WINDOWS_PUBLIC_MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
+SSH_COPY_TIMEOUT_SECONDS=45
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -166,7 +167,7 @@ transfer_via_startup_script() {
 
   expected_hash="$(sha256sum "$OUTPUT_PATH" | awk '{print $1}')"
   transfer_script="$(mktemp)"
-  trap 'restore_windows_startup_script; cleanup_transfer_bucket "$bucket_name"; rm -f "$transfer_script"' RETURN
+  trap "restore_windows_startup_script; cleanup_transfer_bucket '$bucket_name'; rm -f '$transfer_script'" EXIT
 
   echo "SSH transfer unavailable; falling back to GCS + startup-script delivery to ${WINDOWS_PUBLIC_MSI_PATH}"
 
@@ -202,7 +203,7 @@ EOF
 
   echo "Waiting for Windows startup-script transfer to complete"
   for _ in $(seq 1 40); do
-    serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null || true)"
+    serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null | tr -d '\000' || true)"
     if printf '%s\n' "$serial_output" | grep -q "COPILOT_MSI_TRANSFER_DONE id=${transfer_id}"; then
       printf '%s\n' "$serial_output" | grep "COPILOT_MSI_TRANSFER_.*id=${transfer_id}"
       if ! printf '%s\n' "$serial_output" | grep -q "sha256=${expected_hash}"; then
@@ -292,7 +293,7 @@ echo "Building MSI locally: ${OUTPUT_PATH}"
 
 if [[ -n "$WINDOWS_USER" ]]; then
   echo "Copying MSI to ${WINDOWS_USER}@${INSTANCE}:~/MyTunnelApp.msi"
-  if ! gcloud compute scp "$OUTPUT_PATH" "${WINDOWS_USER}@${INSTANCE}:~/MyTunnelApp.msi" --project "$PROJECT_ID" --zone "$ZONE"; then
+  if ! timeout "${SSH_COPY_TIMEOUT_SECONDS}" gcloud compute scp "$OUTPUT_PATH" "${WINDOWS_USER}@${INSTANCE}:~/MyTunnelApp.msi" --project "$PROJECT_ID" --zone "$ZONE"; then
     transfer_via_startup_script
   fi
 fi

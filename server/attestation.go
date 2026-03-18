@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/scep"
 	"github.com/procube-open/scep/utils"
 )
 
@@ -61,6 +62,14 @@ func ChallengePasswordFromContext(ctx context.Context) (string, bool) {
 	return challenge, challenge != ""
 }
 
+func challengePasswordValueFromContext(ctx context.Context) (string, bool) {
+	challenge, ok := ctx.Value(challengePasswordContextKey{}).(string)
+	if !ok {
+		return "", false
+	}
+	return challenge, true
+}
+
 type csrPublicKeyContextKey struct{}
 
 func ContextWithCSRPublicKey(ctx context.Context, publicKey []byte) context.Context {
@@ -75,6 +84,126 @@ func CSRPublicKeyFromContext(ctx context.Context) ([]byte, bool) {
 	}
 
 	return append([]byte(nil), publicKey...), true
+}
+
+type scepMessageTypeContextKey struct{}
+
+func ContextWithSCEPMessageType(ctx context.Context, messageType scep.MessageType) context.Context {
+	return context.WithValue(ctx, scepMessageTypeContextKey{}, messageType)
+}
+
+func SCEPMessageTypeFromContext(ctx context.Context) (scep.MessageType, bool) {
+	messageType, ok := ctx.Value(scepMessageTypeContextKey{}).(scep.MessageType)
+	if !ok {
+		return "", false
+	}
+	return messageType, messageType != ""
+}
+
+type signerCertificateContextKey struct{}
+
+func ContextWithSignerCertificate(ctx context.Context, cert *x509.Certificate) context.Context {
+	if cert == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, signerCertificateContextKey{}, cert)
+}
+
+func SignerCertificateFromContext(ctx context.Context) (*x509.Certificate, bool) {
+	cert, ok := ctx.Value(signerCertificateContextKey{}).(*x509.Certificate)
+	if !ok || cert == nil {
+		return nil, false
+	}
+	return cert, true
+}
+
+type requestClientStore interface {
+	GetClient(uid string) (*mysql.Client, error)
+	HasActiveCertificate(cn string, cert *x509.Certificate) (bool, error)
+}
+
+type requestIdentityAuthMethod int
+
+const (
+	requestIdentityByChallenge requestIdentityAuthMethod = iota
+	requestIdentityBySignerCertificate
+)
+
+type requestIdentity struct {
+	client     *mysql.Client
+	secret     string
+	authMethod requestIdentityAuthMethod
+}
+
+func resolveRequestIdentity(ctx context.Context, depot requestClientStore) (*requestIdentity, error) {
+	if depot == nil {
+		return nil, errors.New("challenge depot is nil")
+	}
+
+	if challenge, ok := challengePasswordValueFromContext(ctx); ok {
+		challenge = strings.TrimSpace(challenge)
+		if challenge != "" {
+			arr := strings.SplitN(challenge, "\\", 2)
+			if len(arr) != 2 {
+				return nil, errors.New("invalid challenge")
+			}
+			clientUID := strings.TrimSpace(arr[0])
+			if clientUID == "" || arr[1] == "" {
+				return nil, errors.New("invalid challenge")
+			}
+			client, err := depot.GetClient(clientUID)
+			if err != nil {
+				return nil, err
+			}
+			if client == nil {
+				return nil, errors.New("invalid challenge")
+			}
+			return &requestIdentity{
+				client:     client,
+				secret:     arr[1],
+				authMethod: requestIdentityByChallenge,
+			}, nil
+		}
+	}
+
+	messageType, ok := SCEPMessageTypeFromContext(ctx)
+	if !ok || !isRenewalMessageType(messageType) {
+		return nil, errors.New("invalid challenge")
+	}
+
+	signerCert, ok := SignerCertificateFromContext(ctx)
+	if !ok {
+		return nil, errors.New("invalid renewal signer")
+	}
+	clientUID := strings.TrimSpace(signerCert.Subject.CommonName)
+	if clientUID == "" {
+		return nil, errors.New("invalid renewal signer")
+	}
+
+	client, err := depot.GetClient(clientUID)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, errors.New("invalid renewal signer")
+	}
+
+	active, err := depot.HasActiveCertificate(clientUID, signerCert)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, errors.New("invalid renewal signer")
+	}
+
+	return &requestIdentity{
+		client:     client,
+		authMethod: requestIdentityBySignerCertificate,
+	}, nil
+}
+
+func isRenewalMessageType(messageType scep.MessageType) bool {
+	return messageType == scep.RenewalReq || messageType == scep.UpdateReq
 }
 
 type AttestationVerifier interface {
@@ -97,28 +226,17 @@ func Base64URLJSONAttestationVerifier() AttestationVerifierFunc {
 	}
 }
 
-func MySQLDeviceIDAttestationVerifier(depot *mysql.MySQLDepot, nonces *AttestationNonceService) AttestationVerifierFunc {
+func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *AttestationNonceService) AttestationVerifierFunc {
 	return func(ctx context.Context, attestation string) error {
 		if depot == nil {
 			return errors.New("attestation depot is nil")
 		}
 
-		challenge, ok := ChallengePasswordFromContext(ctx)
-		if !ok {
-			return errors.New("invalid challenge")
-		}
-		arr := strings.Split(challenge, "\\")
-		if len(arr) != 2 {
-			return errors.New("invalid challenge")
-		}
-
-		client, err := depot.GetClient(arr[0])
+		identity, err := resolveRequestIdentity(ctx, depot)
 		if err != nil {
 			return err
 		}
-		if client == nil {
-			return errors.New("invalid challenge")
-		}
+		client := identity.client
 
 		registeredDeviceID, hasRegisteredDeviceID := lookupDeviceID(client.Attributes)
 		if !hasRegisteredDeviceID {

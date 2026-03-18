@@ -560,71 +560,133 @@ fn capture_registry_value(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EnrollmentSecretSelection {
+    None,
+    UseProtected {
+        secret: String,
+        delete_legacy_plaintext: bool,
+    },
+    UseLegacy {
+        secret: String,
+        rewrite_protected: bool,
+        delete_legacy_plaintext: bool,
+    },
+}
+
+fn select_enrollment_secret(
+    protected_secret: Option<String>,
+    legacy_secret: Option<String>,
+) -> EnrollmentSecretSelection {
+    match (protected_secret, legacy_secret) {
+        (Some(protected_secret), Some(legacy_secret)) => {
+            if protected_secret == legacy_secret {
+                EnrollmentSecretSelection::UseProtected {
+                    secret: protected_secret,
+                    delete_legacy_plaintext: true,
+                }
+            } else {
+                EnrollmentSecretSelection::UseLegacy {
+                    secret: legacy_secret,
+                    rewrite_protected: true,
+                    delete_legacy_plaintext: true,
+                }
+            }
+        }
+        (Some(protected_secret), None) => EnrollmentSecretSelection::UseProtected {
+            secret: protected_secret,
+            delete_legacy_plaintext: false,
+        },
+        (None, Some(legacy_secret)) => EnrollmentSecretSelection::UseLegacy {
+            secret: legacy_secret,
+            rewrite_protected: true,
+            delete_legacy_plaintext: true,
+        },
+        (None, None) => EnrollmentSecretSelection::None,
+    }
+}
+
 #[cfg(windows)]
 fn capture_enrollment_secret(
     key: &winreg::RegKey,
     writable: bool,
     warnings: &mut Vec<String>,
 ) -> Option<String> {
-    let protected_secret =
+    let protected_secret_raw =
         capture_registry_value(key, REGISTRY_ENROLLMENT_SECRET_PROTECTED_VALUE, warnings);
     let legacy_secret = capture_registry_value(key, REGISTRY_ENROLLMENT_SECRET_VALUE, warnings);
-
-    if let Some(protected_secret) = protected_secret {
-        match decrypt_enrollment_secret(&protected_secret) {
-            Ok(secret) => {
-                if legacy_secret.is_some() && writable {
-                    if let Err(err) = delete_registry_value(key, REGISTRY_ENROLLMENT_SECRET_VALUE) {
-                        warnings.push(format!(
-                            "{err}; keeping EnrollmentSecretProtected and leaving the legacy plaintext value in place"
-                        ));
-                    }
-                }
-                return Some(secret);
+    let protected_secret = match protected_secret_raw {
+        Some(protected_secret) => match decrypt_enrollment_secret(&protected_secret) {
+            Ok(secret) => Some(secret),
+            Err(err) => {
+                warnings.push(format!(
+                    "{err}; falling back to the legacy registry value if it is still present"
+                ));
+                None
             }
-            Err(err) => warnings.push(format!(
-                "{err}; falling back to the legacy registry value if it is still present"
-            )),
-        }
-    }
-
-    let Some(legacy_secret) = legacy_secret else {
-        return None;
+        },
+        None => None,
     };
 
-    if writable {
-        match protect_enrollment_secret(&legacy_secret) {
-            Ok(protected_secret) => {
-                if let Err(err) = write_registry_value(
-                    key,
-                    REGISTRY_ENROLLMENT_SECRET_PROTECTED_VALUE,
-                    &protected_secret,
-                ) {
+    match select_enrollment_secret(protected_secret, legacy_secret) {
+        EnrollmentSecretSelection::None => None,
+        EnrollmentSecretSelection::UseProtected {
+            secret,
+            delete_legacy_plaintext,
+        } => {
+            if delete_legacy_plaintext && writable {
+                if let Err(err) = delete_registry_value(key, REGISTRY_ENROLLMENT_SECRET_VALUE) {
                     warnings.push(format!(
-                        "{err}; leaving {}\\{} in plaintext until migration succeeds",
-                        REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
-                    ));
-                } else if let Err(err) =
-                    delete_registry_value(key, REGISTRY_ENROLLMENT_SECRET_VALUE)
-                {
-                    warnings.push(format!(
-                        "{err}; a protected copy was written but the legacy plaintext value could not be removed"
+                        "{err}; keeping EnrollmentSecretProtected and leaving the legacy plaintext value in place"
                     ));
                 }
             }
-            Err(err) => warnings.push(format!(
-                "{err}; leaving {}\\{} in plaintext until migration succeeds",
-                REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
-            )),
+            Some(secret)
         }
-    } else {
-        warnings.push(format!(
-            "opened {REGISTRY_PATH} read-only; {}\\{} remains plaintext until the service can migrate it to DPAPI-protected storage",
-            REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
-        ));
+        EnrollmentSecretSelection::UseLegacy {
+            secret,
+            rewrite_protected,
+            delete_legacy_plaintext,
+        } => {
+            if rewrite_protected && writable {
+                warnings.push(format!(
+                    "{}\\{} overrides the existing protected enrollment secret; rewriting DPAPI-protected storage",
+                    REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
+                ));
+                match protect_enrollment_secret(&secret) {
+                    Ok(protected_secret) => {
+                        if let Err(err) = write_registry_value(
+                            key,
+                            REGISTRY_ENROLLMENT_SECRET_PROTECTED_VALUE,
+                            &protected_secret,
+                        ) {
+                            warnings.push(format!(
+                                "{err}; leaving {}\\{} in plaintext until migration succeeds",
+                                REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
+                            ));
+                        } else if delete_legacy_plaintext
+                            && let Err(err) =
+                                delete_registry_value(key, REGISTRY_ENROLLMENT_SECRET_VALUE)
+                        {
+                            warnings.push(format!(
+                                "{err}; a protected copy was written but the legacy plaintext value could not be removed"
+                            ));
+                        }
+                    }
+                    Err(err) => warnings.push(format!(
+                        "{err}; leaving {}\\{} in plaintext until migration succeeds",
+                        REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
+                    )),
+                }
+            } else if delete_legacy_plaintext {
+                warnings.push(format!(
+                    "opened {REGISTRY_PATH} read-only; {}\\{} remains plaintext until the service can migrate it to DPAPI-protected storage",
+                    REGISTRY_PATH, REGISTRY_ENROLLMENT_SECRET_VALUE
+                ));
+            }
+            Some(secret)
+        }
     }
-
-    Some(legacy_secret)
 }
 
 #[cfg(windows)]
@@ -871,5 +933,51 @@ mod tests {
         );
 
         assert_eq!(config.device_id.as_deref(), Some("device-abc"));
+    }
+
+    #[test]
+    fn enrollment_secret_selection_prefers_matching_protected_secret() {
+        assert_eq!(
+            select_enrollment_secret(Some("secret-001".to_owned()), Some("secret-001".to_owned())),
+            EnrollmentSecretSelection::UseProtected {
+                secret: "secret-001".to_owned(),
+                delete_legacy_plaintext: true,
+            }
+        );
+    }
+
+    #[test]
+    fn enrollment_secret_selection_prefers_new_plaintext_override() {
+        assert_eq!(
+            select_enrollment_secret(Some("old-secret".to_owned()), Some("new-secret".to_owned())),
+            EnrollmentSecretSelection::UseLegacy {
+                secret: "new-secret".to_owned(),
+                rewrite_protected: true,
+                delete_legacy_plaintext: true,
+            }
+        );
+    }
+
+    #[test]
+    fn enrollment_secret_selection_migrates_plaintext_when_protected_missing() {
+        assert_eq!(
+            select_enrollment_secret(None, Some("bootstrap-secret".to_owned())),
+            EnrollmentSecretSelection::UseLegacy {
+                secret: "bootstrap-secret".to_owned(),
+                rewrite_protected: true,
+                delete_legacy_plaintext: true,
+            }
+        );
+    }
+
+    #[test]
+    fn enrollment_secret_selection_uses_protected_when_plaintext_missing() {
+        assert_eq!(
+            select_enrollment_secret(Some("protected-secret".to_owned()), None),
+            EnrollmentSecretSelection::UseProtected {
+                secret: "protected-secret".to_owned(),
+                delete_legacy_plaintext: false,
+            }
+        );
     }
 }

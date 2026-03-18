@@ -476,18 +476,19 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ## Current Implementation Status
 
-最終更新日: 2026-03-17
+最終更新日: 2026-03-18
 
 この節は、現在の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。
 
-このセッションの終了時点で、Terraform 管理下の検証環境は `terraform destroy -auto-approve -var-file=terraform.tfvars` により破棄済みである。次セッションでは GCP 検証を再開する前に、必ず `infra/terraform` で `terraform apply` から開始すること。
+この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。現時点では Terraform 管理下の検証環境は live のままで、`scep-server-vm` と `scep-client-vm` は稼働中である。
 
 ### Overall Verdict
 
-- source code は計画書へかなり寄せ直されているが、GCP 上の Windows 実ランタイムはまだ完全には追随していない
+- GCP 上の Linux / Windows 実ランタイムは、Phase 1 の persisted TPM/CNG 経路について source と概ね一致する状態まで追随した
 - Linux 側の `scep-server-vm` は live 応答しており、SCEP endpoint と nonce endpoint は動作している
-- Windows 側の deployed service は直近検証ではまだ file-based key path を踏んでおり、計画書どおりの TPM-backed 実装へ完全移行できていない
-- same-key renewal は source 上でも未完了であり、Phase 3 完了条件は未達
+- Windows 側の deployed service は `Microsoft Platform Crypto Provider` と `LocalMachine\\My` install を使う persisted-key path で初回発行できることを実測済みである
+- server 側の certificate-based renewal authorization を実装し、same-key renewal も GCP 上で end-to-end 成功を確認済みである
+- 極端に大きい `renew_before` を与えると renewal が即時再実行され続けるため、validation 後は通常設定へ戻してある
 - TPM attestation は nonce と CSR 公開鍵 binding までは実装済みだが、AIK / quote / quote signature の暗号学的検証は未完了
 
 ### Implemented In Source
@@ -519,9 +520,10 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 現在の到達点:
 
-- 初回発行の TPM/CNG 経路は source には入っている
-- same-key renewal submit は source 上で helper 経由に接続済み
-- renewal certificate replacement も source 上では接続済みだが、GCP 上の end-to-end 実測証跡は未取得
+- 初回発行の TPM/CNG 経路は source と GCP 実測の両方で確認済み
+- same-key renewal submit は server 側の certificate-based authorization を含めて GCP 上で end-to-end 確認済み
+- renewal certificate replacement は同一 key name を維持したまま `LocalMachine\\My` に繰り返し install できることを GCP で確認済み
+- Windows Machine Store probe script は managed `cert.pem` の parse 失敗を握りつぶさず simple-name fallback へ進むよう harden 済み
 
 #### MSI / Packaging / Terraform Docs
 
@@ -544,7 +546,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - Terraform は `scep-server-vm` と `scep-client-vm` を作成する構成である
 - Windows VM は `enable_vtpm = true`, `enable_secure_boot = true`, `enable_integrity_monitoring = true`
 - live environment でも両 VM は `RUNNING` を確認済み
-- ただし上記は destroy 前の最終確認結果であり、現時点では検証環境は破棄済みである
+- 現時点では検証環境は破棄しておらず、そのまま追加検証を継続できる
 
 #### Server VM Runtime
 
@@ -561,21 +563,22 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 直近の serial / probe ベース検証では以下を観測した。
 
-- managed directory 配下に `key.pem` が存在していた
-- service log に `Software RSA Key (managed file)` と出ていた
-- service は `WaitingForEnrollment -> GeneratingKey -> SubmittingCSR -> ErrorBackoff` を反復していた
-- log 文言上は TPM-backed key 準備をうたっているが、実際の SCEP submit はまだ managed file key 経路だった
+- fresh install 後の managed directory で `cert.pem` は存在し、`key.pem` は存在しない
+- service log は `Microsoft Platform Crypto Provider` を示し、managed-file fallback は出ていない
+- 初回発行では `SubmittingCSR -> Issued` まで遷移し、証明書は `LocalMachine\\My` に install される
+- forced renewal validation (`poll_interval=10s`, `renew_before=9000h`) では `Issued -> RenewalDue -> Issued` を繰り返し、同じ persisted key name のまま新しい thumbprint の証明書が連続発行された
+- 上記 forced validation 後に通常設定 (`poll_interval=1h`, `renew_before=14d`) で再インストールし、reboot 後も `NotConfigured -> Issued` へ復帰して `ErrorBackoff` に落ちないことを確認した
 
 判断:
 
-- GCP Windows VM 上の deployed runtime は、source にある TPM/CNG persisted-key 実装へまだ切り替わっていない
-- source と deployed VM の実体を混同しないこと
+- GCP Windows VM 上の deployed runtime は、source にある TPM/CNG persisted-key 実装へ切り替わっている
+- same-key renewal の certificate-based authorization と renewal install path は remote 実測で確認済みである
+- 極端な renewal 設定に対する運用 guardrail は未実装のため、validation 用設定を常用しないこと
 
 ### Remaining Gaps Against This Plan
 
 #### Phase 1 Gaps
 
-- GCP Windows VM で、TPM-backed key を使った初回発行成功の実測証跡がまだ取れていない
 - Windows startup script が placeholder のままで、Terraform だけで MSI / service 実装が再現される状態ではない
 - GUI MSI と wixl-based silent MSI の実体が二重化しており、検証時にどちらを source of truth とするかを明示維持する必要がある
 - silent MSI は `LocalSystem`、GUI MSI は `LocalService + ACL` という一時差分が残っている
@@ -588,27 +591,25 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 #### Phase 3 Gaps
 
-- same-key renewal の source 実装は接続済みだが、certificate-based renewal authorization を含む end-to-end 成功証跡は未取得
-- renewal 後の certificate replacement も remote 実測での成功確認が未完了
-- 実 certificate ベースの renewal authorization 完了証跡が未取得
+- certificate-based same-key renewal は end-to-end で通るが、`renew_before` が証明書寿命を大きく上回る pathological config に対する guardrail は未実装
+- forced renewal validation では同一 CN の証明書が Machine Store に積み上がるため、運用時の cleanup / retention policy を別途詰める余地がある
 
 ### Recommended Next Actions
 
 次セッションは以下の順で進めること。
 
-1. `infra/terraform` で `terraform apply` を実行し、`scep-server-vm` と `scep-client-vm` を再作成する
-2. 新しい MSI / service binary を Windows VM に再配備し、deployed runtime が本当に TPM/CNG persisted-key 経路へ切り替わるかを再検証する
-3. Windows VM 上で `key.pem` 非依存、`LocalMachine\\My` install、`Microsoft Platform Crypto Provider` 使用を実測で確認する
-4. same-key renewal submission を実装し、renewal install path まで end-to-end でつなぐ
-5. server 側に AIK / quote / quote signature 検証を追加し、Phase 2 の必須ラインを満たす
-6. Terraform / README だけで再現できるよう、Windows startup script と MSI 配布手順の役割分担を整理する
+1. server 側に AIK / quote / quote signature 検証を追加し、Phase 2 の必須ラインを満たす
+2. client 側の real TPM quote / AIK material 生成を実装し、`invalid_quote_signature` を拒否できるようにする
+3. renewal 設定の運用 guardrail (`renew_before` と certificate validity / `poll_interval` の組み合わせ) を整理し、必要なら validation を追加する
+4. Terraform / README だけで再現できるよう、Windows startup script と MSI 配布手順の役割分担を整理する
+5. `installer/main.wxs` と `installer/main.wixl.wxs` の parity 差分を詰め、silent MSI の `LocalSystem` 例外を縮小または文書化する
 
 ### Session Handoff Notes
 
-- 次セッションの GCP 検証は environment 作成から始めること。現時点で Terraform state は空であり、VM は残していない
-- まず source code と deployed VM runtime を分けて考えること
+- 現時点の Terraform state は live で、`scep-server-vm` / `scep-client-vm` は残っている
 - `scep-server-vm` は local server ではなく GCP 上の remote server を前提に検証すること
-- Windows 側の最新実測では file-based key path が残っていたため、次セッションの最優先は「実装した persisted-key path が本当に配備されているか」の確認である
+- Windows VM は最後に stable config (`poll_interval=1h`, `renew_before=14d`) へ戻してあり、reboot 後も `Issued` に復帰することを確認済み
+- forced renewal validation で使った `msi-renew-*` 系の CN には複数の旧証明書が残っているため、運用 cleanup を試す場合はその CN を対象にすること
 - generated wixl staging は `build/windows-msi` を見ること。`installer/` 配下の source と混同しないこと
 - MySQL を要求する server test はローカル環境依存で失敗しうるため、GCP 検証とは分けて扱うこと
 

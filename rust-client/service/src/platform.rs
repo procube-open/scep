@@ -1112,14 +1112,23 @@ $renewThreshold = (Get-Date).ToUniversalTime().AddSeconds({renew_before_secs})
 $managedCertPath = '{managed_cert_path}'
 $cert = $null
 if (Test-Path $managedCertPath) {{
-  $pem = Get-Content $managedCertPath -Raw
-  $body = (($pem -split "`r?`n") | Where-Object {{ $_ -and ($_ -notmatch '^-----') }}) -join ''
-  $managedBytes = [Convert]::FromBase64String($body)
-  $managedCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$managedBytes)
-  $cert = Get-ChildItem Cert:\LocalMachine\My |
-    Where-Object {{ $_.Thumbprint -eq $managedCert.Thumbprint }} |
-    Sort-Object NotAfter -Descending |
-    Select-Object -First 1 Thumbprint,Subject,NotAfter
+  try {{
+    $pem = Get-Content $managedCertPath -Raw
+    $match = [regex]::Match($pem, '-----BEGIN CERTIFICATE-----\s*(?<body>[A-Za-z0-9+/=\r\n]+?)\s*-----END CERTIFICATE-----')
+    if ($match.Success) {{
+      $body = (($match.Groups['body'].Value -split "`r?`n") | Where-Object {{ $_ }}) -join ''
+      if ($body) {{
+        $managedBytes = [Convert]::FromBase64String($body)
+        $managedCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$managedBytes)
+        $cert = Get-ChildItem Cert:\LocalMachine\My |
+          Where-Object {{ $_.Thumbprint -eq $managedCert.Thumbprint }} |
+          Sort-Object NotAfter -Descending |
+          Select-Object -First 1 Thumbprint,Subject,NotAfter
+      }}
+    }}
+  }} catch {{
+    $cert = $null
+  }}
 }}
 if ($null -eq $cert) {{
   $cert = Get-ChildItem Cert:\LocalMachine\My |
@@ -1950,6 +1959,8 @@ mod tests {
 
         assert!(script.contains("$managedCertPath = 'C:\\ProgramData\\MyTunnelApp\\managed\\client-001-device-001\\cert.pem'"));
         assert!(script.contains("$_.Thumbprint -eq $managedCert.Thumbprint"));
+        assert!(script.contains("try {"));
+        assert!(script.contains("catch {"));
         assert!(script.contains("X509NameType]::SimpleName"));
         assert!(script.contains("-eq 'client-001'"));
         assert!(!script.contains("$_.Subject -eq 'CN=client-001'"));

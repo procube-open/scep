@@ -6,6 +6,8 @@ usage() {
 Usage: build_and_scp_scepserver.sh [options]
 
 Builds local linux/amd64 scepserver binary, transfers it to the VM, and activates it.
+When SSH/SCP is unavailable, the script falls back to a one-time GCS +
+startup-script deployment and waits for serial-port markers.
 
 Options:
   --project <PROJECT_ID>             GCP project ID (optional; auto-detected from Terraform)
@@ -38,6 +40,7 @@ TERRAFORM_DIR=""
 LOCAL_BINARY_PATH="/tmp/scepserver-opt"
 REMOTE_STAGED_PATH="/tmp/scepserver-opt"
 REMOTE_HELPER_PATH="/usr/local/bin/deploy-scepserver-binary.sh"
+SSH_COPY_TIMEOUT_SECONDS=45
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -119,6 +122,128 @@ read_tfvars_value() {
   printf '%s' "$raw_value"
 }
 
+capture_linux_startup_script() {
+  local output_path="$1"
+  local metadata_file
+
+  metadata_file="$(mktemp)"
+  gcloud compute instances describe "$INSTANCE" \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    --format=json >"$metadata_file"
+
+  python3 - "$metadata_file" "$output_path" <<'PY'
+import json
+import pathlib
+import sys
+
+metadata_path = pathlib.Path(sys.argv[1])
+output_path = pathlib.Path(sys.argv[2])
+data = json.loads(metadata_path.read_text(encoding="utf-8"))
+items = data.get("metadata", {}).get("items", [])
+for item in items:
+    if item.get("key") == "startup-script":
+        output_path.write_text(item.get("value", ""), encoding="utf-8")
+        break
+else:
+    output_path.write_text("", encoding="utf-8")
+PY
+
+  rm -f "$metadata_file"
+}
+
+cleanup_transfer_bucket() {
+  local bucket_name="$1"
+  [[ -n "$bucket_name" ]] || return 0
+  gcloud storage rm -r "gs://${bucket_name}" >/dev/null 2>&1 || true
+  gcloud storage buckets delete "gs://${bucket_name}" >/dev/null 2>&1 || true
+}
+
+restore_linux_startup_script() {
+  local saved_script="$1"
+  if [[ -s "$saved_script" ]]; then
+    gcloud compute instances add-metadata "$INSTANCE" \
+      --project "$PROJECT_ID" \
+      --zone "$ZONE" \
+      --metadata-from-file "startup-script=${saved_script}" \
+      >/dev/null 2>&1 || true
+  else
+    gcloud compute instances remove-metadata "$INSTANCE" \
+      --project "$PROJECT_ID" \
+      --zone "$ZONE" \
+      --keys startup-script \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+transfer_via_startup_script() {
+  local bucket_name="scepserver-transfer-$(date +%s)-$RANDOM"
+  local object_name="scepserver-opt"
+  local transfer_id="copilot-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+  local expected_hash downloaded_hash original_startup_script transfer_script serial_output
+
+  expected_hash="$(sha256sum "$LOCAL_BINARY_PATH" | awk '{print $1}')"
+  original_startup_script="$(mktemp)"
+  transfer_script="$(mktemp)"
+  capture_linux_startup_script "$original_startup_script"
+  trap "restore_linux_startup_script '$original_startup_script'; cleanup_transfer_bucket '$bucket_name'; rm -f '$transfer_script' '$original_startup_script'" EXIT
+
+  echo "SSH transfer unavailable; falling back to GCS + Linux startup-script deployment"
+
+  gcloud storage buckets create "gs://${bucket_name}" \
+    --project "$PROJECT_ID" \
+    --location us-central1 \
+    --uniform-bucket-level-access \
+    >/dev/null
+  gcloud storage buckets add-iam-policy-binding "gs://${bucket_name}" \
+    --member=allUsers \
+    --role=roles/storage.objectViewer \
+    >/dev/null
+  gcloud storage cp "$LOCAL_BINARY_PATH" "gs://${bucket_name}/${object_name}" >/dev/null
+
+  cat "$original_startup_script" >"$transfer_script"
+  printf '\n' >>"$transfer_script"
+  cat >>"$transfer_script" <<EOF
+command -v curl >/dev/null 2>&1 || { apt-get update -y && apt-get install -y --no-install-recommends curl; }
+echo "COPILOT_SCEPSERVER_DEPLOY_START id=${transfer_id} url=https://storage.googleapis.com/${bucket_name}/${object_name}"
+curl -fsSL "https://storage.googleapis.com/${bucket_name}/${object_name}" -o "${REMOTE_STAGED_PATH}"
+downloaded_hash="\$(sha256sum "${REMOTE_STAGED_PATH}" | awk '{print \$1}')"
+echo "COPILOT_SCEPSERVER_DEPLOY_DOWNLOADED id=${transfer_id} sha256=\${downloaded_hash}"
+if [[ "\$downloaded_hash" != "${expected_hash}" ]]; then
+  echo "COPILOT_SCEPSERVER_DEPLOY_FAILED id=${transfer_id} reason=sha256_mismatch expected=${expected_hash} actual=\${downloaded_hash}"
+  exit 1
+fi
+"${REMOTE_HELPER_PATH}" "${REMOTE_STAGED_PATH}"
+ping_value="\$(curl -fsS http://127.0.0.1:3000/admin/api/ping || true)"
+echo "COPILOT_SCEPSERVER_DEPLOY_DONE id=${transfer_id} sha256=\${downloaded_hash} ping=\${ping_value}"
+EOF
+
+  gcloud compute instances add-metadata "$INSTANCE" \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    --metadata-from-file "startup-script=${transfer_script}" \
+    >/dev/null
+  gcloud compute instances reset "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" >/dev/null
+
+  echo "Waiting for Linux startup-script deployment to complete"
+  for _ in $(seq 1 40); do
+    serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null || true)"
+    if printf '%s\n' "$serial_output" | grep -q "COPILOT_SCEPSERVER_DEPLOY_DONE id=${transfer_id}"; then
+      printf '%s\n' "$serial_output" | grep "COPILOT_SCEPSERVER_DEPLOY_.*id=${transfer_id}"
+      return 0
+    fi
+    if printf '%s\n' "$serial_output" | grep -q "COPILOT_SCEPSERVER_DEPLOY_FAILED id=${transfer_id}"; then
+      printf '%s\n' "$serial_output" | grep "COPILOT_SCEPSERVER_DEPLOY_.*id=${transfer_id}" >&2
+      return 1
+    fi
+    sleep 15
+  done
+
+  echo "Timed out waiting for Linux startup-script deployment output." >&2
+  printf '%s\n' "$serial_output" | tail -n 120 >&2 || true
+  return 1
+}
+
 derive_ssh_user() {
   local local_user active_account derived
 
@@ -176,7 +301,7 @@ if [[ -z "$PROJECT_ID" || -z "$ZONE" || -z "$INSTANCE" ]]; then
   exit 1
 fi
 
-for required_cmd in go gcloud; do
+for required_cmd in go gcloud python3 sha256sum; do
   if ! command -v "$required_cmd" >/dev/null 2>&1; then
     echo "Required command not found: $required_cmd" >&2
     exit 1
@@ -203,10 +328,16 @@ echo "Building linux/amd64 scepserver binary: $LOCAL_BINARY_PATH"
 )
 
 echo "Copying binary to ${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}"
-gcloud compute scp "$LOCAL_BINARY_PATH" "${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}" --project "$PROJECT_ID" --zone "$ZONE"
+used_startup_fallback=0
+if ! timeout "${SSH_COPY_TIMEOUT_SECONDS}" gcloud compute scp "$LOCAL_BINARY_PATH" "${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}" --project "$PROJECT_ID" --zone "$ZONE"; then
+  transfer_via_startup_script
+  used_startup_fallback=1
+fi
 
-echo "Activating binary via ${REMOTE_HELPER_PATH}"
-remote_command="$(printf "sudo %q %q" "$REMOTE_HELPER_PATH" "$REMOTE_STAGED_PATH")"
-gcloud compute ssh "${INSTANCE_TARGET}" --project "$PROJECT_ID" --zone "$ZONE" --command "$remote_command"
+if [[ "$used_startup_fallback" -eq 0 ]]; then
+  echo "Activating binary via ${REMOTE_HELPER_PATH}"
+  remote_command="$(printf "sudo %q %q" "$REMOTE_HELPER_PATH" "$REMOTE_STAGED_PATH")"
+  gcloud compute ssh "${INSTANCE_TARGET}" --project "$PROJECT_ID" --zone "$ZONE" --command "$remote_command"
+fi
 
 echo "SCEP server binary deployed and activated."

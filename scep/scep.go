@@ -264,6 +264,7 @@ func ParsePKIMessage(data []byte, opts ...Option) (*PKIMessage, error) {
 		TransactionID: tID,
 		MessageType:   msgType,
 		Raw:           data,
+		SignerCert:    p7.GetOnlySigner(),
 		p7:            p7,
 		logger:        conf.logger,
 	}

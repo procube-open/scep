@@ -1,6 +1,7 @@
 package scep_test
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -201,6 +202,43 @@ func TestNewCSRRequest(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestParsePKIMessageSetsSignerCertificate(t *testing.T) {
+	key, err := newRSAKey(2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derBytes, err := newCSR(key, "john.doe@example.com", "US", "client-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := x509.ParseCertificateRequest(derBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientcert, clientkey := loadClientCredentials(t)
+	cacert, _ := createCaCertWithKeyUsage(t, x509.KeyUsageCertSign|x509.KeyUsageKeyEncipherment)
+	tmpl := &scep.PKIMessage{
+		MessageType: scep.RenewalReq,
+		Recipients:  []*x509.Certificate{cacert},
+		SignerCert:  clientcert,
+		SignerKey:   clientkey,
+	}
+
+	req, err := scep.NewCSRRequest(csr, tmpl, scep.WithCertsSelector(scep.EnciphermentCertsSelector()))
+	if err != nil {
+		t.Fatalf("failed creating renewal request: %v", err)
+	}
+
+	msg := testParsePKIMessage(t, req.Raw)
+	if msg.SignerCert == nil {
+		t.Fatal("expected parsed message to expose signer certificate")
+	}
+	if !bytes.Equal(msg.SignerCert.Raw, clientcert.Raw) {
+		t.Fatal("parsed signer certificate did not match request signer")
 	}
 }
 

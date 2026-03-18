@@ -64,7 +64,11 @@ if [[ ! -f "$STAGED_BINARY_PATH" ]]; then
   exit 1
 fi
 
-install -m 0755 "$STAGED_BINARY_PATH" "$TARGET_BINARY_PATH"
+if [[ "$STAGED_BINARY_PATH" != "$TARGET_BINARY_PATH" ]]; then
+  install -m 0755 "$STAGED_BINARY_PATH" "$TARGET_BINARY_PATH"
+else
+  chmod 0755 "$TARGET_BINARY_PATH"
+fi
 
 if [[ ! -x "$TARGET_BINARY_PATH" ]]; then
   echo "Installed scepserver binary is not executable: $TARGET_BINARY_PATH" >&2

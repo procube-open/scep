@@ -5,12 +5,46 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
 )
+
+type stubChallengeStore struct {
+	clients       map[string]*mysql.Client
+	secret        mysql.GetSecretInfo
+	getClientErr  error
+	getSecretErr  error
+	activeCert    bool
+	activeCertErr error
+}
+
+func (s *stubChallengeStore) GetClient(uid string) (*mysql.Client, error) {
+	if s.getClientErr != nil {
+		return nil, s.getClientErr
+	}
+	return s.clients[uid], nil
+}
+
+func (s *stubChallengeStore) GetSecret(string) (mysql.GetSecretInfo, error) {
+	if s.getSecretErr != nil {
+		return mysql.GetSecretInfo{}, s.getSecretErr
+	}
+	return s.secret, nil
+}
+
+func (s *stubChallengeStore) HasActiveCertificate(string, *x509.Certificate) (bool, error) {
+	if s.activeCertErr != nil {
+		return false, s.activeCertErr
+	}
+	return s.activeCert, nil
+}
 
 func TestChallengeMiddleware(t *testing.T) {
 	testPW := "RIGHT"
@@ -273,5 +307,97 @@ func TestVerifyAttestedPublicKeyRequiresBindingWhenConfigured(t *testing.T) {
 	}
 	if err := verifyAttestedPublicKey(ctx, claims, true); err != nil {
 		t.Fatalf("expected matching bound public key to pass, got %v", err)
+	}
+}
+
+func TestMySQLChallengeMiddlewareAllowsRenewalWithActiveSigner(t *testing.T) {
+	depot := &stubChallengeStore{
+		clients: map[string]*mysql.Client{
+			"client-001": {
+				Uid:    "client-001",
+				Status: "ISSUED",
+			},
+		},
+		activeCert: true,
+	}
+	signer := MySQLChallengeMiddleWare(depot, NopCSRSigner())
+
+	ctx := ContextWithSCEPMessageType(context.Background(), scep.RenewalReq)
+	ctx = ContextWithSignerCertificate(ctx, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "client-001"},
+	})
+
+	if _, err := signer.SignCSRContext(ctx, &scep.CSRReqMessage{}); err != nil {
+		t.Fatalf("expected renewal signer to authorize request, got %v", err)
+	}
+}
+
+func TestMySQLChallengeMiddlewareRejectsRenewalWithoutActiveSigner(t *testing.T) {
+	depot := &stubChallengeStore{
+		clients: map[string]*mysql.Client{
+			"client-001": {
+				Uid:    "client-001",
+				Status: "ISSUED",
+			},
+		},
+	}
+	signer := MySQLChallengeMiddleWare(depot, NopCSRSigner())
+
+	ctx := ContextWithSCEPMessageType(context.Background(), scep.RenewalReq)
+	ctx = ContextWithSignerCertificate(ctx, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "client-001"},
+	})
+
+	if _, err := signer.SignCSRContext(ctx, &scep.CSRReqMessage{}); err == nil {
+		t.Fatal("expected renewal without active signer certificate to fail")
+	}
+}
+
+func TestMySQLDeviceIDAttestationVerifierAllowsRenewalSignerIdentity(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := x509.MarshalPKIXPublicKey(privateKey.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	depot := &stubChallengeStore{
+		clients: map[string]*mysql.Client{
+			"client-001": {
+				Uid:    "client-001",
+				Status: "ISSUED",
+				Attributes: map[string]interface{}{
+					"device_id": "device-001",
+				},
+			},
+		},
+		activeCert: true,
+	}
+	nonces := NewAttestationNonceService(time.Minute)
+	nonce, _, err := nonces.Issue("client-001", "device-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	attestation := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
+		`{"device_id":"device-001","key":{"public_key_spki_b64":"%s"},"attestation":{"nonce":"%s"}}`,
+		base64.RawURLEncoding.EncodeToString(publicKey),
+		nonce,
+	)))
+
+	ctx := ContextWithSCEPMessageType(context.Background(), scep.RenewalReq)
+	ctx = ContextWithSignerCertificate(ctx, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "client-001"},
+	})
+	ctx = ContextWithCSRPublicKey(ctx, publicKey)
+
+	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces)
+	if err := verifier(ctx, attestation); err != nil {
+		t.Fatalf("expected renewal attestation to pass, got %v", err)
+	}
+	if nonces.Consume("client-001", "device-001", nonce) {
+		t.Fatal("expected attestation verifier to consume nonce")
 	}
 }
