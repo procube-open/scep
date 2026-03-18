@@ -311,6 +311,27 @@ func validateFileKeyFlags(keyPath string) error {
 	return nil
 }
 
+func buildChallenge(uid, secret, certPath string) (string, error) {
+	uid = strings.TrimSpace(uid)
+	secret = strings.TrimSpace(secret)
+	if uid == "" {
+		return "", errors.New("please set -uid option")
+	}
+	if secret != "" {
+		return uid + "\\" + secret, nil
+	}
+	if certPath == "" {
+		return "", errors.New("please set -secret option for initial enrollment")
+	}
+	if _, err := loadPEMCertFromFile(certPath); err == nil {
+		return "", nil
+	} else if os.IsNotExist(err) {
+		return "", errors.New("please set -secret option for initial enrollment")
+	} else {
+		return "", fmt.Errorf("renewal without -secret requires a readable existing certificate at %s: %w", certPath, err)
+	}
+}
+
 func main() {
 	var (
 		flUid             = flag.String("uid", "", "uid of user")
@@ -330,18 +351,16 @@ func main() {
 		os.Exit(0)
 	}
 
-	var challenge string
-	if *flUid == "" || *flSecret == "" {
-		fmt.Fprintln(os.Stderr, "please set -uid and -secret option")
-		os.Exit(1)
-	}
-
-	challenge = *flUid + "\\" + *flSecret
 	dir := filepath.Dir(*flWorkDir)
 	keyPath := filepath.Join(dir, flPKeyFileName)
 	certPath := filepath.Join(dir, flCertFileName)
 	csrPath := filepath.Join(dir, "csr.pem")
 	selfSignPath := filepath.Join(dir, "self.pem")
+	challenge, err := buildChallenge(*flUid, *flSecret, certPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	var logfmt string
 	if flLogJSON {

@@ -250,9 +250,21 @@ impl ServiceConfig {
 
     fn missing_identity_fields(&self) -> Vec<RequiredField> {
         let mut missing = Vec::new();
-        push_missing(&mut missing, self.server_url.as_ref(), RequiredField::ServerUrl);
-        push_missing(&mut missing, self.client_uid.as_ref(), RequiredField::ClientUid);
-        push_missing(&mut missing, self.device_id.as_ref(), RequiredField::DeviceId);
+        push_missing(
+            &mut missing,
+            self.server_url.as_ref(),
+            RequiredField::ServerUrl,
+        );
+        push_missing(
+            &mut missing,
+            self.client_uid.as_ref(),
+            RequiredField::ClientUid,
+        );
+        push_missing(
+            &mut missing,
+            self.device_id.as_ref(),
+            RequiredField::DeviceId,
+        );
         missing
     }
 }
@@ -319,7 +331,9 @@ fn load_from_registry() -> SourceLoad {
         Err(err) => {
             return SourceLoad {
                 raw: None,
-                warnings: vec![format!("failed to open registry key {REGISTRY_PATH}: {err}")],
+                warnings: vec![format!(
+                    "failed to open registry key {REGISTRY_PATH}: {err}"
+                )],
             };
         }
     };
@@ -640,11 +654,7 @@ fn read_registry_value(key: &winreg::RegKey, value_name: &str) -> Result<Option<
 }
 
 #[cfg(windows)]
-fn write_registry_value(
-    key: &winreg::RegKey,
-    value_name: &str,
-    value: &str,
-) -> Result<(), String> {
+fn write_registry_value(key: &winreg::RegKey, value_name: &str, value: &str) -> Result<(), String> {
     key.set_value(value_name, &value).map_err(|err| {
         format!(
             "failed to write registry value {}\\{}: {err}",
@@ -694,15 +704,16 @@ fn decrypt_enrollment_secret(encoded: &str) -> Result<String, String> {
 fn protect_with_dpapi(secret: &[u8]) -> Result<Vec<u8>, String> {
     use std::ptr::{null, null_mut};
     use std::slice;
-    use windows_sys::Win32::Security::Cryptography::{
-        CRYPTPROTECT_LOCAL_MACHINE, CRYPT_INTEGER_BLOB, CryptProtectData,
-    };
     use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_LOCAL_MACHINE, CryptProtectData,
+    };
 
     let mut input = CRYPT_INTEGER_BLOB {
-        cbData: secret.len().try_into().map_err(|_| {
-            "enrollment secret is too large to protect with DPAPI".to_owned()
-        })?,
+        cbData: secret
+            .len()
+            .try_into()
+            .map_err(|_| "enrollment secret is too large to protect with DPAPI".to_owned())?,
         pbData: secret.as_ptr() as *mut u8,
     };
     let mut output = CRYPT_INTEGER_BLOB {
@@ -803,7 +814,10 @@ mod tests {
             Vec::new(),
         );
 
-        assert_eq!(config.server_url.as_deref(), Some("https://file.example/scep"));
+        assert_eq!(
+            config.server_url.as_deref(),
+            Some("https://file.example/scep")
+        );
         assert_eq!(config.client_uid.as_deref(), Some("registry-client"));
         assert_eq!(config.log_level, "debug");
         assert_eq!(config.poll_interval, Duration::from_secs(30 * 60));

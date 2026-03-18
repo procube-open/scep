@@ -15,8 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::ptr::null_mut;
 #[cfg(windows)]
 use windows_sys::Win32::Security::Cryptography::{
-    NCryptCreatePersistedKey, NCryptExportKey, NCryptFinalizeKey, NCryptFreeObject,
-    NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty,
+    NCryptCreatePersistedKey, NCryptExportKey, NCryptFinalizeKey, NCryptFreeObject, NCryptOpenKey,
+    NCryptOpenStorageProvider, NCryptSetProperty,
 };
 
 const MACHINE_STORE_PATH: &str = r"LocalMachine\My";
@@ -46,12 +46,10 @@ const REGISTRY_ENROLLMENT_SECRET_PROTECTED_VALUE: &str = "EnrollmentSecretProtec
 type NowFn = dyn Fn() -> SystemTime + Send + Sync;
 type StageSecretFn =
     dyn Fn(&EnrollmentSettings) -> Result<StagedEnrollmentSecret, PlatformError> + Send + Sync;
-type ClearSecretFn =
-    dyn Fn(&StagedEnrollmentSecret) -> Result<(), PlatformError> + Send + Sync;
-type EnsureMachineKeyFn =
-    dyn Fn(&EnrollmentSettings, &StagedEnrollmentSecret) -> Result<TpmKeyHandle, PlatformError>
-        + Send
-        + Sync;
+type ClearSecretFn = dyn Fn(&StagedEnrollmentSecret) -> Result<(), PlatformError> + Send + Sync;
+type EnsureMachineKeyFn = dyn Fn(&EnrollmentSettings, &StagedEnrollmentSecret) -> Result<TpmKeyHandle, PlatformError>
+    + Send
+    + Sync;
 type ProbeCurrentCertificateFn =
     dyn Fn(&RenewalSettings, Duration) -> Result<CertificateInventory, PlatformError> + Send + Sync;
 type InstallIssuedCertificateFn =
@@ -60,14 +58,12 @@ type InstallRenewedCertificateFn =
     dyn Fn(&RenewalContext, &[u8]) -> Result<InstalledCertificate, PlatformError> + Send + Sync;
 type FetchInitialNonceFn =
     dyn Fn(&EnrollmentSettings) -> Result<AttestationNonce, PlatformError> + Send + Sync;
-type BuildInitialAttestationFn =
-    dyn Fn(&PendingEnrollment, &AttestationNonce) -> Result<AttestationPayload, PlatformError>
-        + Send
-        + Sync;
-type SubmitInitialScepFn =
-    dyn Fn(PreparedInitialEnrollment) -> Result<IssuedCertificateArtifact, PlatformError>
-        + Send
-        + Sync;
+type BuildInitialAttestationFn = dyn Fn(&PendingEnrollment, &AttestationNonce) -> Result<AttestationPayload, PlatformError>
+    + Send
+    + Sync;
+type SubmitInitialScepFn = dyn Fn(PreparedInitialEnrollment) -> Result<IssuedCertificateArtifact, PlatformError>
+    + Send
+    + Sync;
 type FetchRenewalNonceFn =
     dyn Fn(&RenewalContext) -> Result<AttestationNonce, PlatformError> + Send + Sync;
 type BuildRenewalAttestationFn = dyn Fn(
@@ -537,10 +533,7 @@ impl RenewalProcessor {
 
     pub fn with_fetch_renewal_nonce<F>(mut self, fetch: F) -> Self
     where
-        F: Fn(&RenewalContext) -> Result<AttestationNonce, PlatformError>
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(&RenewalContext) -> Result<AttestationNonce, PlatformError> + Send + Sync + 'static,
     {
         self.fetch_renewal_nonce_override = Some(Arc::new(fetch));
         self
@@ -639,63 +632,63 @@ fn default_ensure_machine_key(
     plan: &EnrollmentSettings,
     _secret: &StagedEnrollmentSecret,
 ) -> Result<TpmKeyHandle, PlatformError> {
-	#[cfg(windows)]
-	{
-		return ensure_windows_managed_key(plan);
-	}
+    #[cfg(windows)]
+    {
+        return ensure_windows_managed_key(plan);
+    }
 
-	#[cfg(not(windows))]
-	{
-    Ok(TpmKeyHandle {
-        provider: TPM_KEY_PROVIDER,
-        algorithm: DEFAULT_KEY_ALGORITHM,
-        key_name_hint: format!("{}-{}", plan.client_uid, plan.device_id),
-        material_state: KeyMaterialState::Planned,
-        reuse_policy: KeyReusePolicy::SameKey,
-        public_key_spki_b64: None,
-    })
-	}
+    #[cfg(not(windows))]
+    {
+        Ok(TpmKeyHandle {
+            provider: TPM_KEY_PROVIDER,
+            algorithm: DEFAULT_KEY_ALGORITHM,
+            key_name_hint: format!("{}-{}", plan.client_uid, plan.device_id),
+            material_state: KeyMaterialState::Planned,
+            reuse_policy: KeyReusePolicy::SameKey,
+            public_key_spki_b64: None,
+        })
+    }
 }
 
 fn default_probe_current_certificate(
     plan: &RenewalSettings,
     renew_before: Duration,
 ) -> Result<CertificateInventory, PlatformError> {
-	#[cfg(windows)]
-	{
-		return probe_windows_machine_store(plan, renew_before);
-	}
+    #[cfg(windows)]
+    {
+        return probe_windows_machine_store(plan, renew_before);
+    }
 
-	#[cfg(not(windows))]
-	{
-    Err(PlatformError::not_implemented(
-        "machine-store",
-        format!(
-            "{MACHINE_STORE_PATH} certificate discovery and renewal window inspection are not wired yet"
-        ),
-    ))
-	}
+    #[cfg(not(windows))]
+    {
+        Err(PlatformError::not_implemented(
+            "machine-store",
+            format!(
+                "{MACHINE_STORE_PATH} certificate discovery and renewal window inspection are not wired yet"
+            ),
+        ))
+    }
 }
 
 fn default_install_issued_certificate(
     pending: &PendingEnrollment,
     certificate_der: &[u8],
 ) -> Result<InstalledCertificate, PlatformError> {
-	#[cfg(windows)]
-	{
-		return install_windows_issued_certificate(pending, certificate_der);
-	}
+    #[cfg(windows)]
+    {
+        return install_windows_issued_certificate(pending, certificate_der);
+    }
 
-	#[cfg(not(windows))]
-	{
-    Err(PlatformError::not_implemented(
-        "machine-store",
-        format!(
-            "{MACHINE_STORE_PATH} certificate installation is not wired yet for key {}",
-            pending.key.key_name_hint
-        ),
-    ))
-	}
+    #[cfg(not(windows))]
+    {
+        Err(PlatformError::not_implemented(
+            "machine-store",
+            format!(
+                "{MACHINE_STORE_PATH} certificate installation is not wired yet for key {}",
+                pending.key.key_name_hint
+            ),
+        ))
+    }
 }
 
 fn default_install_renewed_certificate(
@@ -723,17 +716,17 @@ fn default_install_renewed_certificate(
 
     #[cfg(not(windows))]
     {
-    Err(PlatformError::not_implemented(
-        "machine-store",
-        format!(
-            "{MACHINE_STORE_PATH} certificate replacement is not wired yet for same-key renewal on {}",
-            context
-                .certificate
-                .key_name_hint
-                .as_deref()
-                .unwrap_or("<missing-key-reference>")
-        ),
-    ))
+        Err(PlatformError::not_implemented(
+            "machine-store",
+            format!(
+                "{MACHINE_STORE_PATH} certificate replacement is not wired yet for same-key renewal on {}",
+                context
+                    .certificate
+                    .key_name_hint
+                    .as_deref()
+                    .unwrap_or("<missing-key-reference>")
+            ),
+        ))
     }
 }
 
@@ -743,7 +736,9 @@ fn default_fetch_initial_nonce(
     fetch_attestation_nonce(&plan.server_url, &plan.client_uid, &plan.device_id)
 }
 
-fn default_fetch_renewal_nonce(context: &RenewalContext) -> Result<AttestationNonce, PlatformError> {
+fn default_fetch_renewal_nonce(
+    context: &RenewalContext,
+) -> Result<AttestationNonce, PlatformError> {
     fetch_attestation_nonce(
         &context.plan.server_url,
         &context.plan.client_uid,
@@ -768,10 +763,11 @@ fn default_build_renewal_attestation(
     key: &TpmKeyHandle,
     nonce: &AttestationNonce,
 ) -> Result<AttestationPayload, PlatformError> {
+    let key = key_with_public_spki(key)?;
     build_placeholder_attestation(
         PLACEHOLDER_ATTESTATION_FORMAT_RENEWAL,
         &context.plan.device_id,
-        key,
+        &key,
         nonce,
     )
 }
@@ -779,24 +775,24 @@ fn default_build_renewal_attestation(
 fn default_submit_initial_scep(
     request: PreparedInitialEnrollment,
 ) -> Result<IssuedCertificateArtifact, PlatformError> {
-	#[cfg(windows)]
-	{
-		return submit_initial_scep_via_helper(request);
-	}
+    #[cfg(windows)]
+    {
+        return submit_initial_scep_via_helper(request);
+    }
 
-	#[cfg(not(windows))]
-	{
-    Err(PlatformError::not_implemented(
-        "scep-submission",
-        format!(
-            "CSR construction and SCEP PKIOperation submission are not wired yet for device_id={} using reserved key {}; nonce {} from {} and attestation format {} were prepared",
-            request.pending.plan.device_id,
-            request.pending.key.key_name_hint,
-            request.nonce.value,
-            request.nonce.endpoint,
-            request.attestation.format
-        ),
-    ))
+    #[cfg(not(windows))]
+    {
+        Err(PlatformError::not_implemented(
+            "scep-submission",
+            format!(
+                "CSR construction and SCEP PKIOperation submission are not wired yet for device_id={} using reserved key {}; nonce {} from {} and attestation format {} were prepared",
+                request.pending.plan.device_id,
+                request.pending.key.key_name_hint,
+                request.nonce.value,
+                request.nonce.endpoint,
+                request.attestation.format
+            ),
+        ))
     }
 }
 
@@ -806,7 +802,10 @@ fn ensure_windows_managed_key(plan: &EnrollmentSettings) -> Result<TpmKeyHandle,
     fs::create_dir_all(&dir).map_err(|err| {
         PlatformError::temporary(
             "key-management",
-            format!("failed to create managed key directory {}: {err}", dir.display()),
+            format!(
+                "failed to create managed key directory {}: {err}",
+                dir.display()
+            ),
         )
     })?;
     let key_name_hint = windows_paths::key_dir_name(&plan.client_uid, &plan.device_id);
@@ -984,6 +983,51 @@ fn export_public_key_spki_b64(key: usize) -> Result<String, PlatformError> {
 }
 
 #[cfg(windows)]
+fn load_windows_persisted_key_public_spki_b64(
+    key_name_hint: &str,
+) -> Result<String, PlatformError> {
+    let provider_name = wide_null(TPM_KEY_PROVIDER);
+    let key_name = wide_null(key_name_hint);
+
+    let mut provider = 0usize;
+    ncrypt_status(
+        "renewal-processing",
+        unsafe { NCryptOpenStorageProvider(&mut provider, provider_name.as_ptr(), 0) },
+        format!("failed to open NCrypt provider {TPM_KEY_PROVIDER}"),
+    )?;
+
+    let mut key = 0usize;
+    let open_result = ncrypt_status(
+        "renewal-processing",
+        unsafe {
+            NCryptOpenKey(
+                provider,
+                &mut key,
+                key_name.as_ptr(),
+                0,
+                NCRYPT_MACHINE_KEY_FLAG_VALUE,
+            )
+        },
+        format!("failed to open persisted TPM key {key_name_hint} for same-key renewal"),
+    );
+    if let Err(err) = open_result {
+        unsafe {
+            NCryptFreeObject(provider);
+        }
+        return Err(err);
+    }
+
+    let public_key_spki_b64 = export_public_key_spki_b64(key)?;
+
+    unsafe {
+        NCryptFreeObject(key);
+        NCryptFreeObject(provider);
+    }
+
+    Ok(public_key_spki_b64)
+}
+
+#[cfg(windows)]
 fn managed_dir_for_plan(plan: &EnrollmentSettings) -> PathBuf {
     windows_paths::managed_dir(&plan.client_uid, &plan.device_id)
 }
@@ -998,23 +1042,14 @@ fn probe_windows_machine_store(
     plan: &RenewalSettings,
     renew_before: Duration,
 ) -> Result<CertificateInventory, PlatformError> {
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-$renewThreshold = (Get-Date).ToUniversalTime().AddSeconds({renew_before_secs})
-$cert = Get-ChildItem Cert:\LocalMachine\My |
-  Where-Object {{ $_.Subject -eq 'CN={client_uid}' }} |
-  Sort-Object NotAfter -Descending |
-  Select-Object -First 1 Thumbprint,Subject,NotAfter
-if ($null -eq $cert) {{
-    [Console]::Out.Write('{{"status":"missing"}}')
-  exit 0
-}}
-$status = if ($cert.NotAfter.ToUniversalTime() -le $renewThreshold) {{ 'renewal_due' }} else {{ 'active' }}
-[Console]::Out.Write(($cert | Select-Object @{{n='status';e={{$status}}}},Thumbprint,Subject,NotAfter | ConvertTo-Json -Compress))
-"#,
-        renew_before_secs = renew_before.as_secs(),
-        client_uid = escape_ps_single_quoted(&plan.client_uid),
+    let managed_cert_path = windows_paths::cert_path(&windows_paths::managed_dir(
+        &plan.client_uid,
+        &plan.device_id,
+    ));
+    let script = build_windows_machine_store_probe_script(
+        &plan.client_uid,
+        &managed_cert_path,
+        renew_before,
     );
     let output = run_windows_command(
         "machine-store",
@@ -1025,24 +1060,84 @@ $status = if ($cert.NotAfter.ToUniversalTime() -le $renewThreshold) {{ 'renewal_
             .arg(script),
     )?;
     let value: serde_json::Value = serde_json::from_slice(&output).map_err(|err| {
-        PlatformError::temporary("machine-store", format!("failed to decode PowerShell store probe output: {err}"))
+        PlatformError::temporary(
+            "machine-store",
+            format!("failed to decode PowerShell store probe output: {err}"),
+        )
     })?;
-    match value.get("status").and_then(|v| v.as_str()).unwrap_or("missing") {
+    match value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("missing")
+    {
         "active" => Ok(CertificateInventory::Active(InstalledCertificate {
             store_path: MACHINE_STORE_PATH,
-            thumbprint: value.get("Thumbprint").and_then(|v| v.as_str()).map(|v| v.to_owned()),
-            key_name_hint: Some(windows_paths::key_dir_name(&plan.client_uid, &plan.device_id)),
+            thumbprint: value
+                .get("Thumbprint")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_owned()),
+            key_name_hint: Some(windows_paths::key_dir_name(
+                &plan.client_uid,
+                &plan.device_id,
+            )),
         })),
         "renewal_due" => Ok(CertificateInventory::RenewalDue(RenewalContext {
             plan: plan.clone(),
             certificate: InstalledCertificate {
                 store_path: MACHINE_STORE_PATH,
-                thumbprint: value.get("Thumbprint").and_then(|v| v.as_str()).map(|v| v.to_owned()),
-                key_name_hint: Some(windows_paths::key_dir_name(&plan.client_uid, &plan.device_id)),
+                thumbprint: value
+                    .get("Thumbprint")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_owned()),
+                key_name_hint: Some(windows_paths::key_dir_name(
+                    &plan.client_uid,
+                    &plan.device_id,
+                )),
             },
         })),
         _ => Ok(CertificateInventory::Missing),
     }
+}
+
+#[cfg(any(windows, test))]
+fn build_windows_machine_store_probe_script(
+    client_uid: &str,
+    managed_cert_path: &Path,
+    renew_before: Duration,
+) -> String {
+    format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$renewThreshold = (Get-Date).ToUniversalTime().AddSeconds({renew_before_secs})
+$managedCertPath = '{managed_cert_path}'
+$cert = $null
+if (Test-Path $managedCertPath) {{
+  $pem = Get-Content $managedCertPath -Raw
+  $body = (($pem -split "`r?`n") | Where-Object {{ $_ -and ($_ -notmatch '^-----') }}) -join ''
+  $managedBytes = [Convert]::FromBase64String($body)
+  $managedCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$managedBytes)
+  $cert = Get-ChildItem Cert:\LocalMachine\My |
+    Where-Object {{ $_.Thumbprint -eq $managedCert.Thumbprint }} |
+    Sort-Object NotAfter -Descending |
+    Select-Object -First 1 Thumbprint,Subject,NotAfter
+}}
+if ($null -eq $cert) {{
+  $cert = Get-ChildItem Cert:\LocalMachine\My |
+    Where-Object {{ $_.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -eq '{client_uid}' }} |
+    Sort-Object NotAfter -Descending |
+    Select-Object -First 1 Thumbprint,Subject,NotAfter
+}}
+if ($null -eq $cert) {{
+  [Console]::Out.Write('{{"status":"missing"}}')
+  exit 0
+}}
+$status = if ($cert.NotAfter.ToUniversalTime() -le $renewThreshold) {{ 'renewal_due' }} else {{ 'active' }}
+[Console]::Out.Write(($cert | Select-Object @{{n='status';e={{$status}}}},Thumbprint,Subject,NotAfter | ConvertTo-Json -Compress))
+"#,
+        renew_before_secs = renew_before.as_secs(),
+        managed_cert_path = escape_ps_single_quoted(&managed_cert_path.display().to_string()),
+        client_uid = escape_ps_single_quoted(client_uid),
+    )
 }
 
 #[cfg(windows)]
@@ -1051,7 +1146,13 @@ fn submit_initial_scep_via_helper(
 ) -> Result<IssuedCertificateArtifact, PlatformError> {
     let dir = managed_dir_for_plan(&request.pending.plan);
     fs::create_dir_all(&dir).map_err(|err| {
-        PlatformError::temporary("scep-submission", format!("failed to create enrollment directory {}: {err}", dir.display()))
+        PlatformError::temporary(
+            "scep-submission",
+            format!(
+                "failed to create enrollment directory {}: {err}",
+                dir.display()
+            ),
+        )
     })?;
     let helper = bundled_helper_path("scepclient.exe")?;
     let helper_out = windows_paths::cert_path(&dir);
@@ -1104,7 +1205,11 @@ fn install_windows_issued_certificate(
     pending: &PendingEnrollment,
     certificate_der: &[u8],
 ) -> Result<InstalledCertificate, PlatformError> {
-    install_windows_certificate_for_key(&pending.key.key_name_hint, pending.key.provider, certificate_der)
+    install_windows_certificate_for_key(
+        &pending.key.key_name_hint,
+        pending.key.provider,
+        certificate_der,
+    )
 }
 
 #[cfg(windows)]
@@ -1115,7 +1220,13 @@ fn install_windows_certificate_for_key(
 ) -> Result<InstalledCertificate, PlatformError> {
     let dir = managed_dir_for_key_name(key_name_hint);
     fs::create_dir_all(&dir).map_err(|err| {
-        PlatformError::temporary("machine-store", format!("failed to create managed cert directory {}: {err}", dir.display()))
+        PlatformError::temporary(
+            "machine-store",
+            format!(
+                "failed to create managed cert directory {}: {err}",
+                dir.display()
+            ),
+        )
     })?;
     let cert_path = windows_paths::cert_path(&dir);
     write_pem_certificate(&cert_path, certificate_der)?;
@@ -1147,11 +1258,17 @@ $store.Close()
             .arg(script),
     )?;
     let value: serde_json::Value = serde_json::from_slice(&output).map_err(|err| {
-        PlatformError::temporary("machine-store", format!("failed to decode imported certificate metadata: {err}"))
+        PlatformError::temporary(
+            "machine-store",
+            format!("failed to decode imported certificate metadata: {err}"),
+        )
     })?;
     Ok(InstalledCertificate {
         store_path: MACHINE_STORE_PATH,
-        thumbprint: value.get("Thumbprint").and_then(|v| v.as_str()).map(|v| v.to_owned()),
+        thumbprint: value
+            .get("Thumbprint")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_owned()),
         key_name_hint: Some(key_name_hint.to_owned()),
     })
 }
@@ -1159,10 +1276,16 @@ $store.Close()
 #[cfg(windows)]
 fn bundled_helper_path(name: &str) -> Result<PathBuf, PlatformError> {
     let exe = std::env::current_exe().map_err(|err| {
-        PlatformError::temporary("helper-discovery", format!("failed to resolve current executable path: {err}"))
+        PlatformError::temporary(
+            "helper-discovery",
+            format!("failed to resolve current executable path: {err}"),
+        )
     })?;
     let dir = exe.parent().ok_or_else(|| {
-        PlatformError::temporary("helper-discovery", "service executable directory is missing")
+        PlatformError::temporary(
+            "helper-discovery",
+            "service executable directory is missing",
+        )
     })?;
     let helper = dir.join(name);
     if helper.exists() {
@@ -1176,10 +1299,17 @@ fn bundled_helper_path(name: &str) -> Result<PathBuf, PlatformError> {
 }
 
 #[cfg(windows)]
-fn run_windows_command(component: &'static str, command: &mut Command) -> Result<Vec<u8>, PlatformError> {
-    let output = command.stdout(Stdio::piped()).stderr(Stdio::piped()).output().map_err(|err| {
-        PlatformError::temporary(component, format!("failed to spawn helper command: {err}"))
-    })?;
+fn run_windows_command(
+    component: &'static str,
+    command: &mut Command,
+) -> Result<Vec<u8>, PlatformError> {
+    let output = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|err| {
+            PlatformError::temporary(component, format!("failed to spawn helper command: {err}"))
+        })?;
     if output.status.success() {
         return Ok(output.stdout);
     }
@@ -1282,40 +1412,131 @@ fn write_pem_certificate(path: &Path, certificate_der: &[u8]) -> Result<(), Plat
     }
     pem.push_str("-----END CERTIFICATE-----\n");
     fs::write(path, pem).map_err(|err| {
-        PlatformError::temporary("machine-store", format!("failed to write certificate PEM {}: {err}", path.display()))
+        PlatformError::temporary(
+            "machine-store",
+            format!("failed to write certificate PEM {}: {err}", path.display()),
+        )
     })
 }
 
 #[cfg(windows)]
 fn read_pem_certificate(path: &Path) -> Result<Vec<u8>, PlatformError> {
     let pem = fs::read_to_string(path).map_err(|err| {
-        PlatformError::temporary("scep-submission", format!("failed to read issued certificate {}: {err}", path.display()))
+        PlatformError::temporary(
+            "scep-submission",
+            format!(
+                "failed to read issued certificate {}: {err}",
+                path.display()
+            ),
+        )
     })?;
-    let body: String = pem.lines().filter(|line| !line.starts_with("-----")).collect();
-    base64::engine::general_purpose::STANDARD.decode(body.as_bytes()).map_err(|err| {
-        PlatformError::permanent("scep-submission", format!("failed to decode issued certificate PEM {}: {err}", path.display()))
-    })
+    let body: String = pem
+        .lines()
+        .filter(|line| !line.starts_with("-----"))
+        .collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(body.as_bytes())
+        .map_err(|err| {
+            PlatformError::permanent(
+                "scep-submission",
+                format!(
+                    "failed to decode issued certificate PEM {}: {err}",
+                    path.display()
+                ),
+            )
+        })
+}
+
+#[cfg(any(windows, test))]
+fn escape_ps_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 #[cfg(windows)]
-fn escape_ps_single_quoted(value: &str) -> String {
-    value.replace('\'', "''")
+fn submit_renewal_scep_via_helper(
+    request: PreparedRenewal,
+) -> Result<IssuedCertificateArtifact, PlatformError> {
+    let key = key_with_public_spki(&request.key)?;
+    let dir = managed_dir_for_key_name(&key.key_name_hint);
+    fs::create_dir_all(&dir).map_err(|err| {
+        PlatformError::temporary(
+            "renewal-processing",
+            format!(
+                "failed to create renewal directory {}: {err}",
+                dir.display()
+            ),
+        )
+    })?;
+
+    let cert_path = windows_paths::cert_path(&dir);
+    if !cert_path.exists() {
+        return Err(PlatformError::permanent(
+            "renewal-processing",
+            format!(
+                "same-key renewal requires an existing managed certificate at {}",
+                cert_path.display()
+            ),
+        ));
+    }
+
+    let helper = bundled_helper_path("scepclient.exe")?;
+    let output = run_windows_command(
+        "renewal-processing",
+        Command::new(helper)
+            .arg("-out")
+            .arg(&cert_path)
+            .arg("-key-provider")
+            .arg(key.provider)
+            .arg("-key-name")
+            .arg(&key.key_name_hint)
+            .arg("-public-key-spki-b64")
+            .arg(key.public_key_spki_b64.as_deref().ok_or_else(|| {
+                PlatformError::permanent(
+                    "renewal-processing",
+                    format!(
+                        "TPM key {} is missing SubjectPublicKeyInfo required for renewal attestation",
+                        key.key_name_hint
+                    ),
+                )
+            })?)
+            .arg("-uid")
+            .arg(&request.context.plan.client_uid)
+            .arg("-server-url")
+            .arg(&request.context.plan.server_url)
+            .arg("-attestation")
+            .arg(&request.attestation.encoded),
+    )?;
+    let _ = output;
+
+    let cert_der = read_pem_certificate(&cert_path)?;
+    Ok(IssuedCertificateArtifact {
+        certificate_der: cert_der,
+        transport: "bundled-scepclient",
+    })
 }
 
 fn default_submit_renewal_scep(
     request: PreparedRenewal,
 ) -> Result<IssuedCertificateArtifact, PlatformError> {
-    Err(PlatformError::not_implemented(
-        "renewal-processing",
-        format!(
-            "same-key renewal submission is not wired yet for device_id={} using existing key {}; nonce {} from {} and attestation format {} were prepared",
-            request.context.plan.device_id,
-            request.key.key_name_hint,
-            request.nonce.value,
-            request.nonce.endpoint,
-            request.attestation.format
-        ),
-    ))
+    #[cfg(windows)]
+    {
+        return submit_renewal_scep_via_helper(request);
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err(PlatformError::not_implemented(
+            "renewal-processing",
+            format!(
+                "same-key renewal submission is not wired yet for device_id={} using existing key {}; nonce {} from {} and attestation format {} were prepared",
+                request.context.plan.device_id,
+                request.key.key_name_hint,
+                request.nonce.value,
+                request.nonce.endpoint,
+                request.attestation.format
+            ),
+        ))
+    }
 }
 
 fn build_initial_challenge_password(plan: &EnrollmentSettings) -> String {
@@ -1343,6 +1564,26 @@ fn same_key_handle_for_renewal(context: &RenewalContext) -> Result<TpmKeyHandle,
     })
 }
 
+fn key_with_public_spki(key: &TpmKeyHandle) -> Result<TpmKeyHandle, PlatformError> {
+    if key.public_key_spki_b64.is_some() {
+        return Ok(key.clone());
+    }
+
+    #[cfg(windows)]
+    {
+        let mut key = key.clone();
+        key.public_key_spki_b64 = Some(load_windows_persisted_key_public_spki_b64(
+            &key.key_name_hint,
+        )?);
+        return Ok(key);
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(key.clone())
+    }
+}
+
 fn fetch_attestation_nonce(
     server_url: &str,
     client_uid: &str,
@@ -1361,12 +1602,13 @@ fn fetch_attestation_nonce(
     })?;
 
     let response_bytes = post_json_with_curl(&endpoint, &request_body)?;
-    let response: AttestationNonceResponse = serde_json::from_slice(&response_bytes).map_err(|err| {
-        PlatformError::temporary(
-            "attestation-nonce",
-            format!("failed to decode nonce response from {endpoint}: {err}"),
-        )
-    })?;
+    let response: AttestationNonceResponse =
+        serde_json::from_slice(&response_bytes).map_err(|err| {
+            PlatformError::temporary(
+                "attestation-nonce",
+                format!("failed to decode nonce response from {endpoint}: {err}"),
+            )
+        })?;
 
     let nonce = response.nonce.trim().to_owned();
     if nonce.is_empty() {
@@ -1432,7 +1674,10 @@ fn post_json_with_curl(endpoint: &str, request_body: &[u8]) -> Result<Vec<u8>, P
     let mut stdin = child.stdin.take().ok_or_else(|| {
         PlatformError::temporary(
             "attestation-nonce",
-            format!("failed to open stdin for {} when posting to {endpoint}", curl_binary()),
+            format!(
+                "failed to open stdin for {} when posting to {endpoint}",
+                curl_binary()
+            ),
         )
     })?;
     stdin.write_all(request_body).map_err(|err| {
@@ -1539,7 +1784,10 @@ fn normalize_device_id(value: &str) -> String {
 }
 
 fn unix_timestamp(value: SystemTime) -> u64 {
-    value.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    value
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[cfg(windows)]
@@ -1690,5 +1938,20 @@ mod tests {
         let err = same_key_handle_for_renewal(&context).expect_err("missing key reference");
         assert_eq!(err.kind, PlatformErrorKind::Permanent);
         assert!(err.message.contains("same-key renewal"));
+    }
+
+    #[test]
+    fn machine_store_probe_script_uses_managed_cert_and_simple_name_fallback() {
+        let script = build_windows_machine_store_probe_script(
+            "client-001",
+            Path::new(r"C:\ProgramData\MyTunnelApp\managed\client-001-device-001\cert.pem"),
+            Duration::from_secs(3600),
+        );
+
+        assert!(script.contains("$managedCertPath = 'C:\\ProgramData\\MyTunnelApp\\managed\\client-001-device-001\\cert.pem'"));
+        assert!(script.contains("$_.Thumbprint -eq $managedCert.Thumbprint"));
+        assert!(script.contains("X509NameType]::SimpleName"));
+        assert!(script.contains("-eq 'client-001'"));
+        assert!(!script.contains("$_.Subject -eq 'CN=client-001'"));
     }
 }

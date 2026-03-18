@@ -73,18 +73,19 @@ fn service_main() -> Result<(), String> {
     #[cfg(windows)]
     {
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
-        let status_handle = service_control_handler::register(
-            SERVICE_NAME,
-            move |control_event| match control_event {
-                ServiceControl::Stop => {
-                    let _ = shutdown_tx.send(());
-                    ServiceControlHandlerResult::NoError
-                }
-                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-                _ => ServiceControlHandlerResult::NotImplemented,
-            },
-        )
-        .map_err(|err| format!("failed to register service control handler: {err}"))?;
+        let status_handle =
+            service_control_handler::register(
+                SERVICE_NAME,
+                move |control_event| match control_event {
+                    ServiceControl::Stop => {
+                        let _ = shutdown_tx.send(());
+                        ServiceControlHandlerResult::NoError
+                    }
+                    ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+                    _ => ServiceControlHandlerResult::NotImplemented,
+                },
+            )
+            .map_err(|err| format!("failed to register service control handler: {err}"))?;
 
         status_handle
             .set_service_status(ServiceStatus {

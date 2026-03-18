@@ -476,7 +476,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ## Current Implementation Status
 
-最終更新日: 2026-03-16
+最終更新日: 2026-03-17
 
 この節は、現在の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。
 
@@ -520,19 +520,21 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 現在の到達点:
 
 - 初回発行の TPM/CNG 経路は source には入っている
-- same-key renewal submit は未実装
-- renewal certificate replacement も未完了
+- same-key renewal submit は source 上で helper 経由に接続済み
+- renewal certificate replacement も source 上では接続済みだが、GCP 上の end-to-end 実測証跡は未取得
 
 #### MSI / Packaging / Terraform Docs
 
 - Terraform provider は ADC 限定へ移行済み
 - Linux 側の MSI build / copy 手順を README に追記済み
 - `installer/main.wxs` には GUI / silent install 方針と `LocalService` 前提を反映済み
-- `installer/main.wixl.wxs` は `LocalService` 前提で `scepclient.exe` を含む silent-install 向け source として更新済み
+- `installer/main.wixl.wxs` は `scepclient.exe` を含む silent-install 向け source として更新済み
+- `build_windows_msi.sh` の既定 stage dir は `build/windows-msi` へ移行済みで、generated wixl 入力を source tree の installer 定義と分離済み
+- `installer/main.wxs` は `scepclient.exe` を同梱し、GUI MSI でも service helper を欠かさない状態へ修正済み
+- `wixl` の表現力制約で registry ACL 付与を silent MSI に同等実装できないため、`installer/main.wixl.wxs` の service account は GCP 検証用に一時的に `LocalSystem` を採用している
 
 注意:
 
-- `installer/windows-msi/installer/main.wixl.wxs` には古い `pkcs12helper` / `LocalSystem` 設定が残っており、source of truth として扱わないこと
 - Windows startup script は placeholder bootstrap のままであり、MSI / service 本体の最終実装ではない
 
 ### Verified On GCP
@@ -576,6 +578,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - GCP Windows VM で、TPM-backed key を使った初回発行成功の実測証跡がまだ取れていない
 - Windows startup script が placeholder のままで、Terraform だけで MSI / service 実装が再現される状態ではない
 - GUI MSI と wixl-based silent MSI の実体が二重化しており、検証時にどちらを source of truth とするかを明示維持する必要がある
+- silent MSI は `LocalSystem`、GUI MSI は `LocalService + ACL` という一時差分が残っている
 
 #### Phase 2 Gaps
 
@@ -585,8 +588,8 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 #### Phase 3 Gaps
 
-- same-key renewal submission は未実装
-- renewal 後の certificate replacement 完了経路は未完成
+- same-key renewal の source 実装は接続済みだが、certificate-based renewal authorization を含む end-to-end 成功証跡は未取得
+- renewal 後の certificate replacement も remote 実測での成功確認が未完了
 - 実 certificate ベースの renewal authorization 完了証跡が未取得
 
 ### Recommended Next Actions
@@ -606,7 +609,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - まず source code と deployed VM runtime を分けて考えること
 - `scep-server-vm` は local server ではなく GCP 上の remote server を前提に検証すること
 - Windows 側の最新実測では file-based key path が残っていたため、次セッションの最優先は「実装した persisted-key path が本当に配備されているか」の確認である
-- `installer/windows-msi/installer/main.wixl.wxs` の古い staged copy を見て誤判断しないこと
+- generated wixl staging は `build/windows-msi` を見ること。`installer/` 配下の source と混同しないこと
 - MySQL を要求する server test はローカル環境依存で失敗しうるため、GCP 検証とは分けて扱うこと
 
 ## Definition of Done

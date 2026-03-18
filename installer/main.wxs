@@ -419,8 +419,10 @@
       <Directory Id="INSTALLFOLDER" Name="MyTunnelApp">
         <Component Id="ServiceComponent" Guid="*" Bitness="always64">
           <File Id="ServiceExe"
-                Source="..\rust-client\service\target\release\service.exe"
+                Source="..\rust-client\target\release\service.exe"
                 KeyPath="yes" />
+          <File Id="ScepClientExe"
+                Source="..\cmd\scepclient\scepclient.exe" />
           <RegistryKey Root="HKLM" Key="SOFTWARE\MyTunnelApp">
             <Permission Domain="NT AUTHORITY"
                         User="LocalService"
@@ -469,7 +471,7 @@
                           Description="Obtains and renews client certificates."
                           Start="auto"
                           ErrorControl="normal"
-                          Account="LocalService" />
+                          Account="NT AUTHORITY\LocalService" />
           <ServiceControl Id="ServiceController"
                           Name="MyTunnelService"
                           Start="install"

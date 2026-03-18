@@ -18,7 +18,7 @@
                       Name="ConfigURL"
                       Type="raw" />
     </Property>
-    <Property Id="SERVER_URL" Value="https://example.invalid/scep" Secure="yes">
+    <Property Id="SERVER_URL" Value="[SERVICE_URL]" Secure="yes">
       <RegistrySearch Id="SearchServerUrl"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
@@ -46,10 +46,27 @@
                       Name="DeviceId"
                       Type="raw" />
     </Property>
-    <Property Id="POLL_INTERVAL" Value="1h" Secure="yes" />
-    <Property Id="RENEW_BEFORE" Value="14d" Secure="yes" />
-    <Property Id="LOG_LEVEL" Value="info" Secure="yes" />
-
+    <Property Id="POLL_INTERVAL" Value="1h" Secure="yes">
+      <RegistrySearch Id="SearchPollInterval"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="PollInterval"
+                      Type="raw" />
+    </Property>
+    <Property Id="RENEW_BEFORE" Value="14d" Secure="yes">
+      <RegistrySearch Id="SearchRenewBefore"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="RenewBefore"
+                      Type="raw" />
+    </Property>
+    <Property Id="LOG_LEVEL" Value="info" Secure="yes">
+      <RegistrySearch Id="SearchLogLevel"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="LogLevel"
+                      Type="raw" />
+    </Property>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="MyTunnelApp">
@@ -59,51 +76,35 @@
                   KeyPath="yes" />
             <File Id="ScepClientExe"
               Source="../cmd/scepclient/scepclient.exe" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="ConfigURL"
-                           Type="string"
-                           Value="[SERVER_URL]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="ServerUrl"
-                           Type="string"
-                           Value="[SERVER_URL]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="ClientUid"
-                           Type="string"
-                           Value="[CLIENT_UID]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="EnrollmentSecret"
-                           Type="string"
-                           Value="[ENROLLMENT_SECRET]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="DeviceId"
-                           Type="string"
-                           Value="[DEVICE_ID_OVERRIDE]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="DeviceIdOverride"
-                           Type="string"
-                           Value="[DEVICE_ID_OVERRIDE]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="PollInterval"
-                           Type="string"
-                           Value="[POLL_INTERVAL]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="RenewBefore"
-                           Type="string"
-                           Value="[RENEW_BEFORE]" />
-            <RegistryValue Root="HKLM"
-                           Key="SOFTWARE\MyTunnelApp"
-                           Name="LogLevel"
-                           Type="string"
-                           Value="[LOG_LEVEL]" />
+            <RegistryKey Root="HKLM" Key="SOFTWARE\MyTunnelApp">
+              <RegistryValue Name="ConfigURL"
+                             Type="string"
+                             Value="[SERVER_URL]" />
+              <RegistryValue Name="ServerUrl"
+                             Type="string"
+                             Value="[SERVER_URL]" />
+              <RegistryValue Name="ClientUid"
+                             Type="string"
+                             Value="[CLIENT_UID]" />
+              <RegistryValue Name="EnrollmentSecret"
+                             Type="string"
+                             Value="[ENROLLMENT_SECRET]" />
+              <RegistryValue Name="DeviceId"
+                             Type="string"
+                             Value="[DEVICE_ID_OVERRIDE]" />
+              <RegistryValue Name="DeviceIdOverride"
+                             Type="string"
+                             Value="[DEVICE_ID_OVERRIDE]" />
+              <RegistryValue Name="PollInterval"
+                             Type="string"
+                             Value="[POLL_INTERVAL]" />
+              <RegistryValue Name="RenewBefore"
+                             Type="string"
+                             Value="[RENEW_BEFORE]" />
+              <RegistryValue Name="LogLevel"
+                             Type="string"
+                             Value="[LOG_LEVEL]" />
+            </RegistryKey>
             <ServiceInstall Id="ServiceInstaller"
                             Type="ownProcess"
                             Name="MyTunnelService"
@@ -111,7 +112,7 @@
                             Description="Obtains and renews client certificates."
                             Start="auto"
                             ErrorControl="normal"
-                            Account="NT AUTHORITY\LocalService" />
+                            Account="LocalSystem" />
             <ServiceControl Id="ServiceController"
                             Name="MyTunnelService"
                             Start="install"

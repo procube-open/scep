@@ -391,7 +391,9 @@ fn retry_delay_for(kind: PlatformErrorKind, attempt: u32, poll_interval: Duratio
             let seconds = 30u64.saturating_mul(1u64 << shift).min(15 * 60);
             Duration::from_secs(seconds)
         }
-        PlatformErrorKind::NotImplemented => Duration::from_secs(poll_interval.as_secs().max(10 * 60)),
+        PlatformErrorKind::NotImplemented => {
+            Duration::from_secs(poll_interval.as_secs().max(10 * 60))
+        }
         PlatformErrorKind::Permanent => Duration::from_secs(poll_interval.as_secs().max(15 * 60)),
     }
 }
@@ -415,14 +417,19 @@ fn issued_certificate_matches_config(
     certificate
         .key_name_hint
         .as_deref()
-        .map(|key_name_hint| key_name_hint == format!("{}-{}", renewal.client_uid, renewal.device_id))
+        .map(|key_name_hint| {
+            key_name_hint == format!("{}-{}", renewal.client_uid, renewal.device_id)
+        })
         .unwrap_or(false)
 }
 
 fn format_system_time(value: SystemTime) -> String {
     format!(
         "unix:{}",
-        value.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+        value
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     )
 }
 
@@ -431,8 +438,8 @@ mod tests {
     use super::*;
     use crate::config::RenewalSettings;
     use crate::platform::{
-        AttestationNonce, AttestationPayload, IssuedCertificateArtifact,
-        MachineCertificateStore, PlatformClock, RenewalProcessor, SecretLifecycle,
+        AttestationNonce, AttestationPayload, IssuedCertificateArtifact, MachineCertificateStore,
+        PlatformClock, RenewalProcessor, SecretLifecycle,
     };
     use std::sync::{Arc, Mutex};
 

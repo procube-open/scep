@@ -30,8 +30,7 @@ pub fn init_logging(default_level: &str) -> Result<WorkerGuard, io::Error> {
 
 fn build_env_filter(default_level: &str) -> EnvFilter {
     if std::env::var_os("RUST_LOG").is_some() {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(FALLBACK_LOG_FILTER))
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(FALLBACK_LOG_FILTER))
     } else {
         let directive = format!("{default_level},service={default_level}");
         EnvFilter::try_new(directive).unwrap_or_else(|_| EnvFilter::new(FALLBACK_LOG_FILTER))

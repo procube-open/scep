@@ -23,7 +23,7 @@ Options:
   --repo-root <PATH>                Repository root containing installer/ and rust-client/service
                                     (default: auto-detected from script location)
   --stage-dir <PATH>                Local staging directory for WiX inputs
-                                    (default: <repo-root>/installer/windows-msi)
+                                    (default: <repo-root>/build/windows-msi)
   --output-path <PATH>              Output MSI path
                                     (default: <stage-dir>/installer/dist/MyTunnelApp.msi)
   --skip-rustup-target              Skip rustup target add x86_64-pc-windows-gnu
@@ -110,7 +110,7 @@ if [[ -z "$TERRAFORM_DIR" ]]; then
   TERRAFORM_DIR="${REPO_ROOT}/infra/terraform"
 fi
 if [[ -z "$STAGE_DIR" ]]; then
-  STAGE_DIR="${REPO_ROOT}/installer/windows-msi"
+  STAGE_DIR="${REPO_ROOT}/build/windows-msi"
 fi
 if [[ -z "$OUTPUT_PATH" ]]; then
   OUTPUT_PATH="${STAGE_DIR}/installer/dist/MyTunnelApp.msi"
