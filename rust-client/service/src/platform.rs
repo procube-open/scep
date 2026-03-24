@@ -22,6 +22,7 @@ use windows_sys::Win32::Security::Cryptography::{
 const MACHINE_STORE_PATH: &str = r"LocalMachine\My";
 const TPM_KEY_PROVIDER: &str = "Microsoft Platform Crypto Provider";
 const DEFAULT_KEY_ALGORITHM: &str = "rsa-2048";
+const CANONICAL_ATTESTATION_FORMAT: &str = "tpm2-windows-v1";
 const PLACEHOLDER_ATTESTATION_FORMAT_INITIAL: &str = "tpm2-windows-v1-placeholder-initial";
 const PLACEHOLDER_ATTESTATION_FORMAT_RENEWAL: &str = "tpm2-windows-v1-placeholder-renewal";
 
@@ -750,12 +751,23 @@ fn default_build_initial_attestation(
     pending: &PendingEnrollment,
     nonce: &AttestationNonce,
 ) -> Result<AttestationPayload, PlatformError> {
-    build_placeholder_attestation(
+    let key = key_with_public_spki(&pending.key)?;
+    let attestation = build_placeholder_attestation(
         PLACEHOLDER_ATTESTATION_FORMAT_INITIAL,
         &pending.plan.device_id,
-        &pending.key,
+        &key,
         nonce,
-    )
+    )?;
+
+    #[cfg(windows)]
+    {
+        return finalize_windows_attestation_via_helper(&pending.plan.device_id, attestation, &key);
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(attestation)
+    }
 }
 
 fn default_build_renewal_attestation(
@@ -764,12 +776,22 @@ fn default_build_renewal_attestation(
     nonce: &AttestationNonce,
 ) -> Result<AttestationPayload, PlatformError> {
     let key = key_with_public_spki(key)?;
-    build_placeholder_attestation(
+    let attestation = build_placeholder_attestation(
         PLACEHOLDER_ATTESTATION_FORMAT_RENEWAL,
         &context.plan.device_id,
         &key,
         nonce,
-    )
+    )?;
+
+    #[cfg(windows)]
+    {
+        return finalize_windows_attestation_via_helper(&context.plan.device_id, attestation, &key);
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(attestation)
+    }
 }
 
 fn default_submit_initial_scep(
@@ -1593,6 +1615,108 @@ fn key_with_public_spki(key: &TpmKeyHandle) -> Result<TpmKeyHandle, PlatformErro
     }
 }
 
+#[cfg(windows)]
+fn finalize_windows_attestation_via_helper(
+    expected_device_id: &str,
+    attestation: AttestationPayload,
+    key: &TpmKeyHandle,
+) -> Result<AttestationPayload, PlatformError> {
+    let public_key_spki_b64 = key.public_key_spki_b64.as_deref().ok_or_else(|| {
+        PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "TPM key {} is missing SubjectPublicKeyInfo required for attestation assembly",
+                key.key_name_hint
+            ),
+        )
+    })?;
+
+    let helper = bundled_helper_path("scepclient.exe")?;
+    let output = run_windows_command(
+        "attestation-assembly",
+        Command::new(helper)
+            .arg("-emit-attestation")
+            .arg("-attestation")
+            .arg(&attestation.encoded)
+            .arg("-key-provider")
+            .arg(key.provider)
+            .arg("-key-name")
+            .arg(&key.key_name_hint)
+            .arg("-public-key-spki-b64")
+            .arg(public_key_spki_b64),
+    )?;
+
+    let encoded = String::from_utf8(output).map_err(|err| {
+        PlatformError::temporary(
+            "attestation-assembly",
+            format!("helper returned non-UTF-8 attestation payload: {err}"),
+        )
+    })?;
+    let encoded = encoded.trim().to_owned();
+    if encoded.is_empty() {
+        return Err(PlatformError::temporary(
+            "attestation-assembly",
+            "helper returned an empty attestation payload".to_owned(),
+        ));
+    }
+
+    let claims = decode_attestation_payload(&encoded)?;
+    if claims.attestation.format != CANONICAL_ATTESTATION_FORMAT {
+        return Err(PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "expected helper to emit {CANONICAL_ATTESTATION_FORMAT}, got {}",
+                claims.attestation.format
+            ),
+        ));
+    }
+    if claims.attestation.nonce != attestation.nonce {
+        return Err(PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "helper attestation nonce mismatch for key {}",
+                key.key_name_hint
+            ),
+        ));
+    }
+    if claims.device_id != normalize_device_id(expected_device_id) {
+        return Err(PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "helper attestation device_id mismatch for key {}",
+                key.key_name_hint
+            ),
+        ));
+    }
+    if claims.key.public_key_spki_b64.as_deref() != Some(public_key_spki_b64) {
+        return Err(PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "helper attestation public key mismatch for key {}",
+                key.key_name_hint
+            ),
+        ));
+    }
+    if claims.attestation.aik_public_b64.is_none()
+        || claims.attestation.quote_b64.is_none()
+        || claims.attestation.quote_signature_b64.is_none()
+    {
+        return Err(PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "helper attestation for key {} was missing canonical quote material",
+                key.key_name_hint
+            ),
+        ));
+    }
+
+    Ok(AttestationPayload {
+        format: claims.attestation.format,
+        encoded,
+        nonce: claims.attestation.nonce,
+    })
+}
+
 fn fetch_attestation_nonce(
     server_url: &str,
     client_uid: &str,
@@ -1746,6 +1870,9 @@ fn build_placeholder_attestation(
         attestation: AttestationBundle {
             format: format.to_owned(),
             nonce: nonce.value.clone(),
+            aik_public_b64: None,
+            quote_b64: None,
+            quote_signature_b64: None,
         },
         meta: AttestationMeta {
             hostname: current_hostname(),
@@ -1831,7 +1958,7 @@ fn curl_binary() -> &'static str {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct AttestationClaims {
     device_id: String,
     key: AttestationKey,
@@ -1839,7 +1966,7 @@ struct AttestationClaims {
     meta: AttestationMeta,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct AttestationKey {
     algorithm: String,
     provider: String,
@@ -1847,17 +1974,75 @@ struct AttestationKey {
     public_key_spki_b64: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct AttestationBundle {
     format: String,
     nonce: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aik_public_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quote_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quote_signature_b64: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct AttestationMeta {
     hostname: String,
     os_version: String,
     generated_at: String,
+}
+
+fn decode_attestation_payload(encoded: &str) -> Result<AttestationClaims, PlatformError> {
+    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded.trim().as_bytes())
+        .map_err(|err| {
+            PlatformError::permanent(
+                "attestation-assembly",
+                format!("failed to decode attestation payload: {err}"),
+            )
+        })?;
+    let mut claims: AttestationClaims = serde_json::from_slice(&raw).map_err(|err| {
+        PlatformError::permanent(
+            "attestation-assembly",
+            format!("failed to decode attestation JSON: {err}"),
+        )
+    })?;
+
+    claims.device_id = normalize_device_id(&claims.device_id);
+    claims.key.algorithm = claims.key.algorithm.trim().to_owned();
+    claims.key.provider = claims.key.provider.trim().to_owned();
+    claims.key.public_key_spki_b64 = claims
+        .key
+        .public_key_spki_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.format = claims.attestation.format.trim().to_owned();
+    claims.attestation.nonce = claims.attestation.nonce.trim().to_owned();
+    claims.attestation.aik_public_b64 = claims
+        .attestation
+        .aik_public_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.quote_b64 = claims
+        .attestation
+        .quote_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.quote_signature_b64 = claims
+        .attestation
+        .quote_signature_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.meta.hostname = claims.meta.hostname.trim().to_owned();
+    claims.meta.os_version = claims.meta.os_version.trim().to_owned();
+    claims.meta.generated_at = claims.meta.generated_at.trim().to_owned();
+
+    Ok(claims)
 }
 
 #[derive(Serialize)]
@@ -1927,6 +2112,50 @@ mod tests {
         assert_eq!(value["attestation"]["nonce"], "nonce-123");
         assert_eq!(value["key"]["provider"], TPM_KEY_PROVIDER);
         assert_eq!(payload.nonce, "nonce-123");
+    }
+
+    #[test]
+    fn decode_attestation_payload_normalizes_and_reads_canonical_fields() {
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::json!({
+                "device_id": " Device-001 ",
+                "key": {
+                    "algorithm": " rsa-2048 ",
+                    "provider": " Microsoft Platform Crypto Provider ",
+                    "public_key_spki_b64": " abc "
+                },
+                "attestation": {
+                    "format": " tpm2-windows-v1 ",
+                    "nonce": " nonce-123 ",
+                    "aik_public_b64": " aik ",
+                    "quote_b64": " quote ",
+                    "quote_signature_b64": " sig "
+                },
+                "meta": {
+                    "hostname": " host ",
+                    "os_version": " windows ",
+                    "generated_at": " unix:1 "
+                }
+            })
+            .to_string(),
+        );
+
+        let claims = decode_attestation_payload(&encoded).expect("decode");
+        assert_eq!(claims.device_id, "device-001");
+        assert_eq!(claims.key.algorithm, "rsa-2048");
+        assert_eq!(claims.key.provider, TPM_KEY_PROVIDER);
+        assert_eq!(claims.key.public_key_spki_b64.as_deref(), Some("abc"));
+        assert_eq!(claims.attestation.format, CANONICAL_ATTESTATION_FORMAT);
+        assert_eq!(claims.attestation.nonce, "nonce-123");
+        assert_eq!(claims.attestation.aik_public_b64.as_deref(), Some("aik"));
+        assert_eq!(claims.attestation.quote_b64.as_deref(), Some("quote"));
+        assert_eq!(
+            claims.attestation.quote_signature_b64.as_deref(),
+            Some("sig")
+        );
+        assert_eq!(claims.meta.hostname, "host");
+        assert_eq!(claims.meta.os_version, "windows");
+        assert_eq!(claims.meta.generated_at, "unix:1");
     }
 
     #[test]

@@ -316,9 +316,10 @@ Get-WinEvent -LogName Application -MaxEvents 200 |
 - [`scripts/test/preregister_client.sh`](scripts/test/preregister_client.sh)
 - [`scripts/linux/preregister_client_via_startup.sh`](scripts/linux/preregister_client_via_startup.sh)
 - [`scripts/test/attestation_e2e.sh`](scripts/test/attestation_e2e.sh)
+- [`scripts/test/attestation_e2e_canonical.sh`](scripts/test/attestation_e2e_canonical.sh)
 - [`scripts/test/generate_device_id.sh`](scripts/test/generate_device_id.sh)
 
-実行例:
+legacy helper (`test-nonce-key-binding-v1`) の実行例:
 
 ```bash
 cd infra/terraform/scripts/test
@@ -333,6 +334,21 @@ SECRET='<strong-secret>'
   --prereg-output prereg.out
 ```
 
+canonical helper (`tpm2-windows-v1`) の実行例:
+
+```bash
+cd infra/terraform/scripts/test
+SERVER_BASE_URL="http://${SERVER_IP}:3000"
+
+TEST_UID="device-user-02"
+SECRET='<strong-secret>'
+./preregister_client.sh --server-base-url "$SERVER_BASE_URL" --uid "$TEST_UID" --secret "$SECRET" > prereg-canonical.out
+
+./attestation_e2e_canonical.sh \
+  --server-base-url "$SERVER_BASE_URL" \
+  --prereg-output prereg-canonical.out
+```
+
 オペレーター端末から `:3000` へ届かない場合は、server VM 側で localhost 実行する helper を使えます。
 
 ```bash
@@ -344,13 +360,47 @@ cd <this-repo>
 ```
 
 期待結果:
-- 成功ケース: `success_matching_device_id`
-- 失敗ケース: `failure_mismatched_device_id`, `failure_invalid_attestation`
+- legacy helper:
+  - 成功ケース: `success_matching_device_id`
+  - 失敗ケース: `failure_mismatched_device_id`, `failure_invalid_attestation`
+- canonical helper:
+  - 成功ケース: `success_matching_device_id`
+  - 失敗ケース: `failure_mismatched_device_id`, `failure_invalid_quote_signature`
 - 生成物: `scripts/test/artifacts/...`
 
 確認ポイント:
 - `summary.txt` に `success_case=success_matching_device_id` が記録されること
 - `success_matching_device_id/cert.pem` が生成され、`failure_*` ケースでは `exit_code.txt` が非 0 になること
+- `attestation_e2e_canonical.sh` は current server verifier semantics を検証するため、OpenSSL-generated RSA AIK と synthetic quote/signature を使って canonical `tpm2-windows-v1` payload を組み立てる。Windows TPM hardware 由来の real attestation ではないため、Windows client rollout 検証とは別に扱うこと
+
+### Real Windows canonical renewal validation
+
+live GCP 上の Windows VM で real canonical attestation renewal まで確認したい場合は、committed harness `windows_canonical_renewal_e2e.sh` を使います。
+
+```bash
+cd <this-repo>/infra/terraform/scripts/test
+
+WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
+./windows_canonical_renewal_e2e.sh \
+  --windows-user "$WINDOWS_USER" \
+  --client-uid "msi-stable-20260318051422" \
+  --enrollment-secret "renewal-placeholder" \
+  --device-id-override "device-20260318051422"
+```
+
+補足:
+
+- `--server-url` を省略した場合、この harness は Terraform 出力の `server_internal_ip` から `http://<server_internal_ip>:3000/scep` を自動選択する。GCP 検証では Windows VM と server VM が同一 VPC にいるため、internal URL を既定とする
+- harness は `build_windows_msi.sh` / `install_windows_msi.sh` を再利用し、silent reinstall 後に managed `cert.pem` と `LocalMachine\My` の thumbprint 変化を確認する
+- renewal harness は引き続き `--apply-registry-overrides` を使う。これは「reconfiguration を通す」ためではなく、「same-version reinstall のまま current-run renewal を強制観測する」ための validation wiring である
+- 成功時は JSON で `before_thumbprint`, `after_thumbprint`, `service_state`, `present_in_machine_store` を出力する
+
+同じ MSI version への reinstall で advanced property を変えたい場合の補足:
+
+- live GCP では raw `REINSTALL=ALL REINSTALLMODE=vomus` 付きの same-version reinstall でも requested config が旧 registry 値に負けることを再現した
+- `install_windows_msi.sh` / `install-mytunnelapp.ps1` はこの stale-config 状態を検出すると、自動で uninstall → install の fresh-install path へ fallback する
+- latest live verification run `copilot-install-20260324T081949Z-29988` では initial reinstall registry が `19s` / `7000h` / `info` のまま残ったことを検出し、その後 fallback path により final registry を `23s` / `6000h` / `error` へ更新できた。`service_state=Running`, `present_in_machine_store=true`, `reconfigure_fallback_used=true` を確認した
+- issued certificate と TPM-backed key は uninstall 時にも残す方針なので、same-version reconfiguration の正式な operational path はこの fresh-install fallback である
 
 ## クリーンアップ（`terraform destroy`）とコスト注意
 

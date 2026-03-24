@@ -20,6 +20,9 @@ Options:
   --msi-path <WINDOWS_PATH>           MSI path on the Windows VM (default: C:\Users\Public\MyTunnelApp.msi)
   --wait-seconds <SECONDS>            Wait budget for serial markers (default: 300)
   --force-fresh-install               Uninstall existing MSI-managed config before reinstalling
+                                      (the helper also auto-falls back to this path if same-version reinstall leaves stale config)
+  --apply-registry-overrides          Rewrite HKLM config after msiexec and restart the service
+  --require-thumbprint-change         Wait until managed cert thumbprint changes before succeeding
   --project <PROJECT_ID>              GCP project ID (optional; auto-detected from Terraform)
   --zone <ZONE>                       GCP zone (optional; auto-detected from Terraform)
   --instance <INSTANCE_NAME>          Windows instance name (optional; auto-detected from Terraform)
@@ -45,6 +48,9 @@ LOG_LEVEL="info"
 MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
 WAIT_SECONDS=300
 FORCE_FRESH_INSTALL=0
+APPLY_REGISTRY_OVERRIDES=0
+REQUIRE_THUMBPRINT_CHANGE=0
+SERIAL_WAIT_GRACE_SECONDS=180
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -86,6 +92,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force-fresh-install)
       FORCE_FRESH_INSTALL=1
+      shift
+      ;;
+    --apply-registry-overrides)
+      APPLY_REGISTRY_OVERRIDES=1
+      shift
+      ;;
+    --require-thumbprint-change)
+      REQUIRE_THUMBPRINT_CHANGE=1
       shift
       ;;
     --project)
@@ -160,7 +174,7 @@ restore_windows_startup_script() {
 wait_for_install_result() {
   local install_id="$1"
   local deadline serial_output
-  deadline=$(( $(date +%s) + WAIT_SECONDS ))
+  deadline=$(( $(date +%s) + WAIT_SECONDS + SERIAL_WAIT_GRACE_SECONDS ))
 
   echo "Waiting for Windows MSI install markers"
   while (( $(date +%s) <= deadline )); do
@@ -239,8 +253,9 @@ cat >> "$temp_script" <<EOF
 \$copilotInstallId = '$(escape_ps_single_quoted "$install_id")'
 try {
   Write-Output "MYTUNNEL_MSI_INSTALL_START id=\$copilotInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") device_id=$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")"
-  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)-WaitSeconds $WAIT_SECONDS
-  \$copilotInstallJson = \$copilotInstallSummary | ConvertTo-Json -Depth 6 -Compress
+  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
+  \$copilotInstallMarkerSummary = ConvertTo-MyTunnelMarkerSummary -Summary \$copilotInstallSummary
+  \$copilotInstallJson = \$copilotInstallMarkerSummary | ConvertTo-Json -Depth 6 -Compress
   Write-Output ("MYTUNNEL_MSI_INSTALL_DONE id=\$copilotInstallId summary={0}" -f \$copilotInstallJson)
 } catch {
   \$copilotInstallMessage = \$_.Exception.Message -replace '[\\r\\n]+', ' '

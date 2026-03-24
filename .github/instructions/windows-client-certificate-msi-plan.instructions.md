@@ -476,37 +476,43 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ## Current Implementation Status
 
-最終更新日: 2026-03-18
+最終更新日: 2026-03-24
 
-この節は、現在の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。
-
-この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。現時点では Terraform 管理下の検証環境は live のままで、`scep-server-vm` と `scep-client-vm` は稼働中である。
+この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。現時点では Terraform 管理下の検証環境は live のままで、`scep-server-vm` と `scep-client-vm` は稼働中である。今回の更新では、local source の Phase 2 server slice と、Terraform state を再同期した live GCP 上の server / Windows client の実測結果を統合している。
 
 ### Overall Verdict
 
-- GCP 上の Linux / Windows 実ランタイムは、Phase 1 の persisted TPM/CNG 経路について source と概ね一致する状態まで追随した
-- Linux 側の `scep-server-vm` は live 応答しており、SCEP endpoint と nonce endpoint は動作している
-- Windows 側の deployed service は `Microsoft Platform Crypto Provider` と `LocalMachine\\My` install を使う persisted-key path で初回発行できることを実測済みである
-- server 側の certificate-based renewal authorization を実装し、same-key renewal も GCP 上で end-to-end 成功を確認済みである
-- 極端に大きい `renew_before` を与えると renewal が即時再実行され続けるため、validation 後は通常設定へ戻してある
-- TPM attestation は nonce と CSR 公開鍵 binding までは実装済みだが、AIK / quote / quote signature の暗号学的検証は未完了
+- local source には、Phase 2 の canonical server verifier に加えて、Windows 向け `cmd/scepclient` の real canonical attestation emission を追加済みである。helper は `go-attestation` を使う temporary `AK` と `go-tpm` 互換 wire format で `AIK public`, `quote`, `quote_signature` を生成する
+- server verifier は canonical `tpm2-windows-v1` の quote / signature verify に加え、quote `extraData` として raw `sha256(attestedPublicKeySPKI) + nonce` と compact `sha256(sha256(attestedPublicKeySPKI) + nonce)` の両方を accept する。compact path は GCP Windows VM の vTPM で raw binding が `structure is the wrong size` になるケースへの compatibility fallback である
+- live `scep-server-vm` には current local `scepserver-opt` を再配備済みで、legacy `attestation_e2e.sh` と canonical `attestation_e2e_canonical.sh` の両方に加え、`scep-client-vm` からの real canonical `PKIOperation` も journal 上で複数回 `error=null` を確認した
+- live `scep-client-vm` では初回 helper-rollout validation run `copilot-tpm-20260324T045007Z-2607` の前後で active managed `cert.pem` の thumbprint が `F091FC0B501ED5F1D411CE3D7CB614FEDE3EA013` から `95704812F1CA69AD8C82058A750D023B4622EF89` に変化し、その後 committed harness `windows_canonical_renewal_e2e.sh` の run `copilot-install-20260324T072948Z-20956` では `0E477BA2EB3446B3DDA4EC5FFA7AD5000B653913` から `61A35E36ED0C8CF639DBA50C4EFE3A7CBE76C4FE` への same-key renewal rotation を再確認した
+- `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` を追加し、`build_windows_msi.sh` / `install_windows_msi.sh` を束ねて managed `cert.pem` と `LocalMachine\\My` の current-run thumbprint を比較できる committed validation path を用意した。GCP 検証では server internal IP を既定にし、renewal harness では current-run renewal を観測するため `--apply-registry-overrides` を使う。一方で lower-level install helper 自体には stale-config detection 後の auto fresh-install fallback を追加済みである
+- Rust service は Windows attestation build phase で helper `-emit-attestation` を呼び出し、返却 payload の nonce / `device_id` / public key / quote fields を検証するところまで source に寄せた。actual TPM quote generation backend 自体は引き続き Go helper に依存するが、server 側では optional client attribute として `attestation_aik_spki_sha256` / `attestation_ek_cert_sha256` を受け取り、登録済み pin がある場合に `AIK` / `EK certificate` SHA-256 を照合する hardening slice を local source に追加した
 
 ### Implemented In Source
 
 #### Server
 
 - `device_id` の正規化と登録時バリデーションを追加済み
+- admin API の client attributes で optional `attestation_aik_spki_sha256` / `attestation_ek_cert_sha256` を受け付け、SHA-256 fingerprint として正規化・バリデーションする処理を追加済み
 - attestation nonce 専用 REST API を追加済み
 - attestation JSON の decode と `device_id` 照合を追加済み
 - attestation 側の公開鍵と CSR 公開鍵の一致確認を追加済み
 - nonce の払い出しと one-time consume を追加済み
-- transport / unit test を追加済み
+- `server/attestation_quote.go` を追加し、canonical `tpm2-windows-v1` 向けに TPM quote / TPM signature parse と署名検証を実装済み
+- canonical format では quote `extraData` として raw `sha256(attestedPublicKeySPKI) + nonce` と compact `sha256(sha256(attestedPublicKeySPKI) + nonce)` の両方を受理し、blank / unknown format を reject するように harden 済み
+- registered client attribute に `attestation_aik_spki_sha256` / `attestation_ek_cert_sha256` が存在する場合、attestation payload の `aik_public_b64` / `ek_cert_b64` から算出した SHA-256 fingerprint と一致しない要求を reject する verifier slice を追加済み
+- rollout compatibility のため、placeholder format (`tpm2-windows-v1-placeholder-*`) と current Terraform helper format (`test-nonce-key-binding-v1`) は引き続き許可している
+- `infra/terraform/scripts/test/attestation_e2e_canonical.sh` を追加し、canonical `tpm2-windows-v1` payload を GCP 上で positive / negative validate できるようにした
+- transport / unit test を追加済み。focused local validation として `go test ./server -run 'Test(MySQLDeviceIDAttestationVerifier|VerifyTPMQuoteAttestation|DecodeAttestation|LookupDeviceID|LookupSHA256Fingerprint|VerifyAttestedPublicKey)'`, `go test ./server/handler -run 'TestNormalizeClientAttributes'`, `go test ./utils/... ./challenge/... ./cryptoutil/... ./cryptoutil/x509util/... ./scep/... ./depot/bolt/...` を通過済み
 
 現在の到達点:
 
 - Phase 1 から Phase 2 への途中段階
-- `missing_device_id`, `device_id_mismatch`, `invalid_attestation_format`, `nonce_mismatch`, `public_key_mismatch` 相当の判定は実装済み
-- `invalid_quote_signature` は未実装
+- `missing_device_id`, `device_id_mismatch`, `invalid_attestation_format`, `nonce_mismatch`, `public_key_mismatch`, `invalid_quote_signature`, `aik_public_mismatch`, `ek_cert_mismatch` 相当の判定は local source で実装済み
+- `server/attestation_quote_test.go` で canonical success、compact extraData success、blank / unknown format rejection、missing quote fields、nonce mismatch、public key mismatch、invalid quote signature を focused にカバー済み
+- 現在の verifier は registered pin がない client ではなお payload-supplied `aik_public_b64` / `ek_cert_b64` に依存する。optional per-client pinning は入ったが、EK / AIK trust chain、credential activation、PCR policy evaluation は未実装である
+- canonical verifier slice は current local binary として live `scep-server-vm` に再配備済みで、legacy / canonical の両 helper で GCP 実測を取り直した
 
 #### Rust Windows Service
 
@@ -516,7 +522,8 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - server nonce API を使う initial / renewal 用 nonce fetch を実装済み
 - Windows CNG / NCrypt を使う persisted key path を source に実装済み
 - `LocalMachine\\My` への証明書 install と既存証明書 probe を source に実装済み
-- Go helper `cmd/scepclient` は generic key path に対応済みで、Windows persisted key provider / name / public SPKI を受け取れる
+- Go helper `cmd/scepclient` は generic key path に対応済みで、Windows persisted key provider / name / public SPKI を受け取り、placeholder / canonical attestation を real `tpm2-windows-v1` payload へ upgrade できる
+- Rust service は Windows attestation build phase で helper `-emit-attestation` を呼び出し、返却された canonical payload の nonce / normalized `device_id` / public key SPKI / required quote fields を検証するよう更新済み
 
 現在の到達点:
 
@@ -524,6 +531,9 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - same-key renewal submit は server 側の certificate-based authorization を含めて GCP 上で end-to-end 確認済み
 - renewal certificate replacement は同一 key name を維持したまま `LocalMachine\\My` に繰り返し install できることを GCP で確認済み
 - Windows Machine Store probe script は managed `cert.pem` の parse 失敗を握りつぶさず simple-name fallback へ進むよう harden 済み
+- `cmd/scepclient/attestation_windows.go` では `go-attestation` の temporary Windows `AK` を使って `AIK public`, `quote`, `quote_signature` を生成し、raw binding が失敗した場合は compact binding へ fallback する
+- live GCP validation では prior `TPM2_Quote ... structure is the wrong size` blocker を compact fallback で通過し、current server binary に canonical `PKIOperation` を送れる状態まで到達した
+- Rust service は attestation assembly の entry point を service 側へ寄せたが、Windows TPM quote backend 自体は引き続き helper-side implementation に依存する
 
 #### MSI / Packaging / Terraform Docs
 
@@ -534,46 +544,70 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - `build_windows_msi.sh` の既定 stage dir は `build/windows-msi` へ移行済みで、generated wixl 入力を source tree の installer 定義と分離済み
 - `installer/main.wxs` は `scepclient.exe` を同梱し、GUI MSI でも service helper を欠かさない状態へ修正済み
 - `wixl` の表現力制約で registry ACL 付与を silent MSI に同等実装できないため、`installer/main.wixl.wxs` の service account は GCP 検証用に一時的に `LocalSystem` を採用している
+- `infra/terraform/scripts/windows/install-mytunnelapp.ps1` は compact summary marker、thumbprint-change wait、post-install registry override、service restart wait に加え、same-version reinstall 後の stale config を検出して fresh-install へ retry する reconfiguration fallback を備えた validation / operational helper として更新済み
+- `infra/terraform/scripts/linux/install_windows_msi.sh` は serial wait grace、`--require-thumbprint-change`、`--apply-registry-overrides` を備え、reconfiguration 用には stale-config detection 後の auto fresh-install fallback を利用できる
+- `installer/main.wxs` / `installer/main.wixl.wxs` では registry-searched existing values と public input properties を分離し、default / existing / explicit input の precedence を custom action で表現する slice を追加した
 
 注意:
 
-- Windows startup script は placeholder bootstrap のままであり、MSI / service 本体の最終実装ではない
+- Windows startup script は placeholder bootstrap のままであり、Terraform だけで MSI / service 本体を再現する最終実装にはまだなっていない
+- 今回の Windows serial probe では metadata の `windows-startup-script-ps1` を一時的に差し替えたが、検証後に `infra/terraform/scripts/windows/windows-client-startup.ps1` に戻してある
 
 ### Verified On GCP
 
 #### Terraform / VM State
 
+- local `infra/terraform` には当初 `terraform.tfstate` が存在しなかったため、network / subnet / firewall / VM を import して state を再構築し、`terraform apply -refresh-only` で output を復元した
 - Terraform は `scep-server-vm` と `scep-client-vm` を作成する構成である
 - Windows VM は `enable_vtpm = true`, `enable_secure_boot = true`, `enable_integrity_monitoring = true`
-- live environment でも両 VM は `RUNNING` を確認済み
+- live GCP 側では両 VM が一度 `TERMINATED` になっていたため、起動後に `RUNNING` を確認済み
+- imported firewall rules は古い operator IP を向いていたため、current source IP に合わせて Terraform の targeted apply で `scep` / `ssh` / `rdp` rule を同期した
 - 現時点では検証環境は破棄しておらず、そのまま追加検証を継続できる
 
 #### Server VM Runtime
 
 - `http://<server_external_ip>:3000/admin/api/ping` は `pong` を返す
 - `GetCACaps` は `Renewal`, `SHA-1`, `SHA-256`, `AES`, `DES3`, `SCEPStandard`, `POSTPKIOperation` を返す
-- `POST /api/attestation/nonce` は live 環境で 200 を返し、nonce を払い出す
+- `POST /api/attestation/nonce` は live 環境で動作している。unknown client に対しては `404 client not found`、preregister 済み client に対しては nonce 払い出しまで確認した
+- SSH / `systemctl` / `ss` で `mariadb.service` active、`scep-server.service` active、`scepserver-opt` が `*:3000` listen を確認した
+- `infra/terraform/scripts/linux/build_and_scp_scepserver.sh` で current local `scepserver-opt` を live `scep-server-vm` に再配備し、service restart 後も `admin/api/ping` が `pong` を返すことを確認した
+- `infra/terraform/scripts/test/preregister_client.sh` と legacy `attestation_e2e.sh` を live server に対して実行し、`success_matching_device_id`, `failure_mismatched_device_id`, `failure_invalid_attestation` を確認した
+- `infra/terraform/scripts/test/attestation_e2e_canonical.sh` を live server に対して実行し、`success_matching_device_id`, `failure_mismatched_device_id`, `failure_invalid_quote_signature` を確認した
 
 判断:
 
-- Linux 側の remote SCEP server VM は少なくとも HTTP endpoint と nonce API の観点では稼働している
-- journal / systemd の直接確認は SSH user 解決や認証状態の影響を受けるため、セッションによっては外形確認だけで代替している
+- Linux 側の remote SCEP server VM は HTTP endpoint、nonce API、service process、legacy attestation verify path、canonical quote verifier path の観点で正常動作している
+- `attestation_e2e_canonical.sh` 自体は引き続き synthetic quote/signature で server semantics を検証する helper だが、本 session では別途 updated Windows helper を `scep-client-vm` に配備して real Windows TPM-backed canonical path も実測した
 
 #### Windows VM Runtime
 
-直近の serial / probe ベース検証では以下を観測した。
+今回の serial / startup-script probe ベース検証では以下を観測した。
 
-- fresh install 後の managed directory で `cert.pem` は存在し、`key.pem` は存在しない
-- service log は `Microsoft Platform Crypto Provider` を示し、managed-file fallback は出ていない
-- 初回発行では `SubmittingCSR -> Issued` まで遷移し、証明書は `LocalMachine\\My` に install される
-- forced renewal validation (`poll_interval=10s`, `renew_before=9000h`) では `Issued -> RenewalDue -> Issued` を繰り返し、同じ persisted key name のまま新しい thumbprint の証明書が連続発行された
-- 上記 forced validation 後に通常設定 (`poll_interval=1h`, `renew_before=14d`) で再インストールし、reboot 後も `NotConfigured -> Issued` へ復帰して `ErrorBackoff` に落ちないことを確認した
+- `HKLM:\\SOFTWARE\\MyTunnelApp` は存在し、active client は `client_uid=msi-stable-20260318051422`, `device_id=device-20260318051422` を保持している
+- `MyTunnelService` は存在し、`Running` を返した
+- `C:\\ProgramData\\MyTunnelApp\\managed` 配下には 5 個の managed directory があり、active path は `C:\\ProgramData\\MyTunnelApp\\managed\\msi-stable-20260318051422-device-20260318051422` である
+- active managed directory には `cert.pem` が存在し、`key.pem` は存在しない
+- validation run `copilot-tpm-20260324T045007Z-2607` では local build の `scepclient.exe` を配備し、`before_thumb=F091FC0B501ED5F1D411CE3D7CB614FEDE3EA013` を記録したうえで forced same-key renewal を起動した
+- live `scep-server-vm` journal は `2026-03-24T04:51:51Z` に canonical `tpm2-windows-v1` attestation を含む `PKIOperation` `error=null` を記録した
+- follow-up probe `copilot-probe-20260324T050656Z-16262` は `key_name=msi-stable-20260318051422-device-20260318051422`, managed `cert.pem` thumbprint=`95704812F1CA69AD8C82058A750D023B4622EF89`, `service_state=Running` を返し、active managed certificate の rotation を確認した
+- lower-level install helper run `copilot-install-20260324T072248Z-22747` では internal URL (`http://10.42.0.4:3000/scep`) と post-install registry override を使い、managed `cert.pem` thumbprint が `51C7CC4A759F203C93EC2596ED6574C45AB3F5D3` から `634DBE96F474803063FB5B99FF9777C9B4FA888A` へ変化し、`LocalMachine\\My` でも同 thumbprint を確認した
+- committed harness run `copilot-install-20260324T072948Z-20956` では `windows_canonical_renewal_e2e.sh` 経由で managed `cert.pem` thumbprint が `0E477BA2EB3446B3DDA4EC5FFA7AD5000B653913` から `61A35E36ED0C8CF639DBA50C4EFE3A7CBE76C4FE` へ変化し、`present_in_machine_store=true` と `service_state=Running` を返した
+- 同 run の service log excerpt は `poll_interval_secs=10`, `renew_before_secs=32400000`, `log_level=debug` を反映し、`RenewalDue -> Issued` 遷移を current-run marker つきで返した
+- live `scep-server-vm` journal は `2026-03-24T07:23:17Z`, `07:23:23Z`, `07:23:26Z`, `07:23:40Z`, `07:23:52Z` に加え、committed harness rerun でも `07:31:04Z`, `07:31:16Z`, `07:31:28Z` に host `10.42.0.2` から canonical `tpm2-windows-v1` attestation 付き `PKIOperation error=null` を記録した
+- external server URL (`http://34.70.71.128:3000/scep`) を registry override した run では nonce fetch が `curl: (28) Could not connect to server` で失敗し、GCP 検証では internal URL を既定にする必要を確認した
+- same-version reinstall test `copilot-install-20260324T074001Z-7067` では `REINSTALL=ALL REINSTALLMODE=vomus` つきで `POLL_INTERVAL=17s`, `RENEW_BEFORE=8000h`, `LOG_LEVEL=info` を渡しても、post-install registry は `10s` / `9000h` / `debug` のまま残った。renewal 自体は走ったが、advanced property override は current live path では未反映である
+- fresh-install test `copilot-install-20260324T074424Z-20040` では `--force-fresh-install` を使うことで registry 値が `19s` / `7000h` / `info` に更新され、`present_in_machine_store=true` と `service_state=Running` を維持した。same-key renewal の rotation までは起きなかったが、post-install registry override を使わずに新しい config を反映できることを確認した
+- latest reconfiguration validation run `copilot-install-20260324T081949Z-29988` では lower-level install helper が initial reinstall registry (`19s` / `7000h` / `info`) と requested config (`23s` / `6000h` / `error`) の不一致を検出し、auto fresh-install fallback を実施した。final summary では `reconfigure_fallback_used=true`, `fresh_install_requested=true`, `service_state=Running`, `present_in_machine_store=true`, registry=`23s` / `6000h` / `error`, `fresh_install_removed_products=[{product_code={BF6BF605-195A-4F39-89EB-1FCA4DA91AAE}, exit_code=0}]` を確認した
+- probe / validation output に含まれる `badRequest (2)` は pre-rollout attempts 由来の historical service log tail であり、current validation id が prefix されるだけなので current-run failure とみなさない
+- current reboot-time grep では `Microsoft Platform Crypto Provider` 文字列も managed-file fallback 文字列も latest log からは再検出できなかった
+- probe 中に GCE CorePlugin の MDS bootstrap が `TPM is in DA lockout mode` warning を出した
 
 判断:
 
-- GCP Windows VM 上の deployed runtime は、source にある TPM/CNG persisted-key 実装へ切り替わっている
-- same-key renewal の certificate-based authorization と renewal install path は remote 実測で確認済みである
-- 極端な renewal 設定に対する運用 guardrail は未実装のため、validation 用設定を常用しないこと
+- live Windows VM は updated helper を使って real canonical attestation を current live server へ submit でき、managed certificate を回転させながら `MyTunnelService` の `Running` を維持したと判断できる
+- active client の `key.pem` 不在は引き続き TPM / CNG persisted-key path と整合的である
+- committed validation harness で post-renewal の managed / Machine Store thumbprint を current-run marker 付きで同一 run から採取できる状態になった
+- repeated reboot / probe による TPM DA lockout warning があるため、Windows 側の追加実験では reset を短時間に繰り返しすぎないこと
 
 ### Remaining Gaps Against This Plan
 
@@ -585,9 +619,9 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 #### Phase 2 Gaps
 
-- AIK / quote / quote signature の実検証が未実装
-- PCR policy 評価は未実装
-- server 側の attestation verifier は現状、nonce と CSR 公開鍵 binding を主に見ている
+- Rust service は attestation assembly の entry point を service 側へ寄せ済みだが、Windows TPM quote generation backend 自体はなお Go helper 実装に依存している。helper backend をこのまま正式化するか、TPM quote generation まで Rust 側へ移すかの整理が残る
+- committed GCP validation artifact は `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` として追加済みであり、reconfiguration 用の lower-level helper には stale-config detection + auto fresh-install fallback を追加済みである。raw same-version `msiexec` semantics 自体はなお旧 registry 値に負けるが、supported helper path では requested config を最終的に反映できる
+- current local verifier には optional per-client AIK / EK fingerprint pinning を追加済みだが、pin 未登録 client では payload-supplied material に依存する。EK / AIK trust chain、credential activation、PCR policy 評価は未実装
 
 #### Phase 3 Gaps
 
@@ -598,17 +632,31 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 次セッションは以下の順で進めること。
 
-1. server 側に AIK / quote / quote signature 検証を追加し、Phase 2 の必須ラインを満たす
-2. client 側の real TPM quote / AIK material 生成を実装し、`invalid_quote_signature` を拒否できるようにする
-3. renewal 設定の運用 guardrail (`renew_before` と certificate validity / `poll_interval` の組み合わせ) を整理し、必要なら validation を追加する
-4. Terraform / README だけで再現できるよう、Windows startup script と MSI 配布手順の役割分担を整理する
-5. `installer/main.wxs` と `installer/main.wixl.wxs` の parity 差分を詰め、silent MSI の `LocalSystem` 例外を縮小または文書化する
+1. real canonical attestation の ownership 境界を整理する。helper 側実装を Rust service 側へ移すか、helper upgrade を正式アーキテクチャとして文書化して MSI / runtime wiring に反映する
+2. server verifier の trust model を次段 harden し、optional fingerprint pinning の先として EK / AIK trust chain または同等の credential activation path を設計・実装する
+3. renewal 設定の運用 guardrail (`renew_before` と certificate validity / `poll_interval` の組み合わせ) を整理し、必要なら validation と cleanup policy を追加する
+4. Terraform / README と MSI 実装の責務を整理し、startup script の placeholder 依存と `LocalSystem` 例外の扱いを詰める
+5. raw same-version `msiexec` semantics そのものも one-pass で直したい場合のみ、MSI authoring をさらに掘る。ただし current supported reconfiguration path は stale-config detection 後の auto fresh-install fallback である
 
 ### Session Handoff Notes
 
+- `infra/terraform` の local state は import により再構築済みで、`terraform output` は live GCP 状況と再同期済みである
+- `terraform.tfvars` には placeholder source range が残っているため、接続不能時は current operator IP に合わせた firewall 更新が必要になる
 - 現時点の Terraform state は live で、`scep-server-vm` / `scep-client-vm` は残っている
 - `scep-server-vm` は local server ではなく GCP 上の remote server を前提に検証すること
-- Windows VM は最後に stable config (`poll_interval=1h`, `renew_before=14d`) へ戻してあり、reboot 後も `Issued` に復帰することを確認済み
+- `infra/terraform/scripts/linux/build_and_scp_scepserver.sh` で current local `scepserver-opt` を live `scep-server-vm` に再配備済みである
+- `attestation_e2e.sh` は legacy `test-nonce-key-binding-v1` helper、`attestation_e2e_canonical.sh` は canonical `tpm2-windows-v1` helper であり、後者は synthetic OpenSSL-generated quote/signature を使って server semantics を検証する
+- validation run `copilot-tpm-20260324T045007Z-2607` では local `scepclient.exe` を配備し、forced renewal の直前 thumbprint として `F091FC0B501ED5F1D411CE3D7CB614FEDE3EA013` を記録した
+- follow-up probe `copilot-probe-20260324T050656Z-16262` では active managed `cert.pem` thumbprint=`95704812F1CA69AD8C82058A750D023B4622EF89`, `service_state=Running`, `key_name=msi-stable-20260318051422-device-20260318051422` を取得した
+- `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` は current committed Windows renewal harness であり、default では Terraform 出力の `server_internal_ip` を `SERVER_URL` に使い、`--apply-registry-overrides` と `--require-thumbprint-change` を通じて current-run thumbprint rotation を検証する
+- successful committed-harness run `copilot-install-20260324T072948Z-20956` では managed thumbprint が `0E477BA2EB3446B3DDA4EC5FFA7AD5000B653913` から `61A35E36ED0C8CF639DBA50C4EFE3A7CBE76C4FE` へ回転し、`present_in_machine_store=true` を返した
+- same-version reinstall run `copilot-install-20260324T074001Z-7067` は renewal 自体は成功したが、requested `17s` / `8000h` / `info` の代わりに registry が `10s` / `9000h` / `debug` のまま残った
+- `install_windows_msi.sh --force-fresh-install` の run `copilot-install-20260324T074424Z-20040` では registry が `19s` / `7000h` / `info` に更新されたため、advanced property reconfiguration の切り分けには fresh install path が有効である
+- latest helper reconfiguration run `copilot-install-20260324T081949Z-29988` では stale-config detection 後の auto fresh-install fallback により final registry を `23s` / `6000h` / `error` へ更新できた。current live client config はこの値に更新済みで、service は `Running`、managed `cert.pem` と `LocalMachine\\My` の双方で thumbprint `5282F95B9414E9981327742EC19BFD048BC5E1DE` を保持していた
+- external URL override run では nonce fetch が `curl: (28) Failed to connect to 34.70.71.128 port 3000` で失敗したため、GCP validation では internal URL を使うこと
+- Windows VM は今回の reboot probe 後も stable config に戻っており、`client_uid=msi-stable-20260318051422`, `device_id=device-20260318051422`, managed `cert.pem` あり / `key.pem` なし、service は `Running` であった
+- temporary metadata probe は検証後に `infra/terraform/scripts/windows/windows-client-startup.ps1` へ戻してある
+- repeated reboot / probe で GCE guest agent 側の MDS bootstrap が TPM DA lockout warning を出すため、次の Windows 側検証では reset の間隔に余裕を持たせること
 - forced renewal validation で使った `msi-renew-*` 系の CN には複数の旧証明書が残っているため、運用 cleanup を試す場合はその CN を対象にすること
 - generated wixl staging は `build/windows-msi` を見ること。`installer/` 配下の source と混同しないこと
 - MySQL を要求する server test はローカル環境依存で失敗しうるため、GCP 検証とは分けて扱うこと

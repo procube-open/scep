@@ -3,6 +3,7 @@ package scepserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -260,6 +261,12 @@ func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *Attestat
 		if err := verifyAttestedPublicKey(ctx, claims, true); err != nil {
 			return err
 		}
+		if err := verifyTPMQuoteAttestation(claims); err != nil {
+			return err
+		}
+		if err := verifyRegisteredAttestationTrust(client.Attributes, claims); err != nil {
+			return err
+		}
 		if nonces != nil {
 			if claims.Attestation.Nonce == "" {
 				return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
@@ -340,7 +347,7 @@ func lookupDeviceID(attributes map[string]interface{}) (string, bool) {
 		return "", false
 	}
 
-	deviceID, ok := attributes["device_id"].(string)
+	deviceID, ok := attributes[utils.ClientAttributeDeviceID].(string)
 	if !ok {
 		return "", false
 	}
@@ -350,6 +357,71 @@ func lookupDeviceID(attributes map[string]interface{}) (string, bool) {
 	}
 
 	return deviceID, true
+}
+
+func lookupSHA256Fingerprint(attributes map[string]interface{}, key string) (string, bool) {
+	if attributes == nil {
+		return "", false
+	}
+
+	value, ok := attributes[key].(string)
+	if !ok {
+		return "", false
+	}
+	value = utils.NormalizeSHA256Fingerprint(value)
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
+func verifyRegisteredAttestationTrust(attributes map[string]interface{}, claims *attestationClaims) error {
+	if claims == nil {
+		return nil
+	}
+	if expectedAIK, ok := lookupSHA256Fingerprint(attributes, utils.ClientAttributeAttestationAIKSPKISHA256); ok {
+		actualAIK, err := sha256FingerprintOfBase64URLPKIXPublicKey(claims.Attestation.AIKPublicB64)
+		if err != nil {
+			return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+		}
+		if actualAIK != expectedAIK {
+			return fmt.Errorf("%w: aik_public_mismatch", ErrInvalidAttestation)
+		}
+	}
+	if expectedEKCert, ok := lookupSHA256Fingerprint(attributes, utils.ClientAttributeAttestationEKCertSHA256); ok {
+		actualEKCert, err := sha256FingerprintOfBase64URLCertificate(claims.Attestation.EKCertB64)
+		if err != nil {
+			return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+		}
+		if actualEKCert != expectedEKCert {
+			return fmt.Errorf("%w: ek_cert_mismatch", ErrInvalidAttestation)
+		}
+	}
+	return nil
+}
+
+func sha256FingerprintOfBase64URLPKIXPublicKey(value string) (string, error) {
+	decoded, err := decodeBase64URL(strings.TrimSpace(value))
+	if err != nil || len(decoded) == 0 {
+		return "", fmt.Errorf("decode public key")
+	}
+	if _, err := x509.ParsePKIXPublicKey(decoded); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(decoded)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+func sha256FingerprintOfBase64URLCertificate(value string) (string, error) {
+	decoded, err := decodeBase64URL(strings.TrimSpace(value))
+	if err != nil || len(decoded) == 0 {
+		return "", fmt.Errorf("decode certificate")
+	}
+	if _, err := x509.ParseCertificate(decoded); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(decoded)
+	return fmt.Sprintf("%x", sum[:]), nil
 }
 
 func verifyAttestedPublicKey(ctx context.Context, claims *attestationClaims, required bool) error {

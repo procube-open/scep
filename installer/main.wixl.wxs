@@ -10,79 +10,109 @@
     <MediaTemplate EmbedCab="yes" />
       <MajorUpgrade AllowSameVersionUpgrades="yes"
           DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
-
-    <Property Id="SERVICE_URL" Value="https://example.invalid/scep" Secure="yes">
+    <Property Id="EXISTING_LEGACY_CONFIG_URL" Secure="yes">
       <RegistrySearch Id="SearchLegacyConfigUrl"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="ConfigURL"
                       Type="raw" />
     </Property>
-    <Property Id="SERVER_URL" Value="[SERVICE_URL]" Secure="yes">
+    <Property Id="EXISTING_SERVER_URL" Secure="yes">
       <RegistrySearch Id="SearchServerUrl"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="ServerUrl"
                       Type="raw" />
     </Property>
-    <Property Id="CLIENT_UID" Secure="yes">
+    <Property Id="SERVER_URL" Secure="yes" />
+    <Property Id="EXISTING_CLIENT_UID" Secure="yes">
       <RegistrySearch Id="SearchClientUid"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="ClientUid"
                       Type="raw" />
     </Property>
-    <Property Id="ENROLLMENT_SECRET" Secure="yes">
+    <Property Id="CLIENT_UID" Secure="yes" />
+    <Property Id="EXISTING_ENROLLMENT_SECRET" Secure="yes">
       <RegistrySearch Id="SearchEnrollmentSecret"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="EnrollmentSecret"
                       Type="raw" />
     </Property>
-    <Property Id="DEVICE_ID_OVERRIDE" Secure="yes">
+    <Property Id="ENROLLMENT_SECRET" Secure="yes" />
+    <Property Id="EXISTING_DEVICE_ID_OVERRIDE" Secure="yes">
       <RegistrySearch Id="SearchDeviceIdOverride"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="DeviceId"
                       Type="raw" />
     </Property>
-    <Property Id="POLL_INTERVAL" Value="1h" Secure="yes">
+    <Property Id="DEVICE_ID_OVERRIDE" Secure="yes" />
+    <Property Id="EXISTING_POLL_INTERVAL" Secure="yes">
       <RegistrySearch Id="SearchPollInterval"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="PollInterval"
                       Type="raw" />
     </Property>
-    <Property Id="RENEW_BEFORE" Value="14d" Secure="yes">
+    <Property Id="POLL_INTERVAL" Secure="yes" />
+    <Property Id="EXISTING_RENEW_BEFORE" Secure="yes">
       <RegistrySearch Id="SearchRenewBefore"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="RenewBefore"
                       Type="raw" />
     </Property>
-    <Property Id="LOG_LEVEL" Value="info" Secure="yes">
+    <Property Id="RENEW_BEFORE" Secure="yes" />
+    <Property Id="EXISTING_LOG_LEVEL" Secure="yes">
       <RegistrySearch Id="SearchLogLevel"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="LogLevel"
                       Type="raw" />
     </Property>
+    <Property Id="LOG_LEVEL" Secure="yes" />
+
+    <CustomAction Id="SetServerUrlFromExisting" Property="SERVER_URL" Value="[EXISTING_SERVER_URL]" Execute="firstSequence" />
+    <CustomAction Id="SetServerUrlFromLegacy" Property="SERVER_URL" Value="[EXISTING_LEGACY_CONFIG_URL]" Execute="firstSequence" />
+    <CustomAction Id="SetServerUrlDefault" Property="SERVER_URL" Value="https://example.invalid/scep" Execute="firstSequence" />
+    <CustomAction Id="SetClientUidFromExisting" Property="CLIENT_UID" Value="[EXISTING_CLIENT_UID]" Execute="firstSequence" />
+    <CustomAction Id="SetEnrollmentSecretFromExisting" Property="ENROLLMENT_SECRET" Value="[EXISTING_ENROLLMENT_SECRET]" Execute="firstSequence" />
+    <CustomAction Id="SetDeviceIdFromExisting" Property="DEVICE_ID_OVERRIDE" Value="[EXISTING_DEVICE_ID_OVERRIDE]" Execute="firstSequence" />
+    <CustomAction Id="SetPollIntervalFromExisting" Property="POLL_INTERVAL" Value="[EXISTING_POLL_INTERVAL]" Execute="firstSequence" />
+    <CustomAction Id="SetPollIntervalDefault" Property="POLL_INTERVAL" Value="1h" Execute="firstSequence" />
+    <CustomAction Id="SetRenewBeforeFromExisting" Property="RENEW_BEFORE" Value="[EXISTING_RENEW_BEFORE]" Execute="firstSequence" />
+    <CustomAction Id="SetRenewBeforeDefault" Property="RENEW_BEFORE" Value="14d" Execute="firstSequence" />
+    <CustomAction Id="SetLogLevelFromExisting" Property="LOG_LEVEL" Value="[EXISTING_LOG_LEVEL]" Execute="firstSequence" />
+    <CustomAction Id="SetLogLevelDefault" Property="LOG_LEVEL" Value="info" Execute="firstSequence" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetServerUrlFromExisting" After="AppSearch">NOT SERVER_URL AND EXISTING_SERVER_URL</Custom>
+      <Custom Action="SetServerUrlFromLegacy" After="SetServerUrlFromExisting">NOT SERVER_URL AND EXISTING_LEGACY_CONFIG_URL</Custom>
+      <Custom Action="SetServerUrlDefault" After="SetServerUrlFromLegacy">NOT SERVER_URL</Custom>
+      <Custom Action="SetClientUidFromExisting" After="SetServerUrlDefault">NOT CLIENT_UID AND EXISTING_CLIENT_UID</Custom>
+      <Custom Action="SetEnrollmentSecretFromExisting" After="SetClientUidFromExisting">NOT ENROLLMENT_SECRET AND EXISTING_ENROLLMENT_SECRET</Custom>
+      <Custom Action="SetDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT DEVICE_ID_OVERRIDE AND EXISTING_DEVICE_ID_OVERRIDE</Custom>
+      <Custom Action="SetPollIntervalFromExisting" After="SetDeviceIdFromExisting">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
+      <Custom Action="SetPollIntervalDefault" After="SetPollIntervalFromExisting">NOT POLL_INTERVAL</Custom>
+      <Custom Action="SetRenewBeforeFromExisting" After="SetPollIntervalDefault">NOT RENEW_BEFORE AND EXISTING_RENEW_BEFORE</Custom>
+      <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting">NOT RENEW_BEFORE</Custom>
+      <Custom Action="SetLogLevelFromExisting" After="SetRenewBeforeDefault">NOT LOG_LEVEL AND EXISTING_LOG_LEVEL</Custom>
+      <Custom Action="SetLogLevelDefault" After="SetLogLevelFromExisting">NOT LOG_LEVEL</Custom>
+    </InstallExecuteSequence>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="MyTunnelApp">
-          <Component Id="ServiceComponent" Guid="*" Win64="yes">
-            <File Id="ServiceExe"
-                  Source="../rust-client/service/target/release/service.exe"
-                  KeyPath="yes" />
-            <File Id="ScepClientExe"
-              Source="../cmd/scepclient/scepclient.exe" />
+          <Component Id="ConfigComponent" Guid="*" Win64="yes">
             <RegistryKey Root="HKLM" Key="SOFTWARE\MyTunnelApp">
               <RegistryValue Name="ConfigURL"
                              Type="string"
                              Value="[SERVER_URL]" />
               <RegistryValue Name="ServerUrl"
                              Type="string"
-                             Value="[SERVER_URL]" />
+                             Value="[SERVER_URL]"
+                             KeyPath="yes" />
               <RegistryValue Name="ClientUid"
                              Type="string"
                              Value="[CLIENT_UID]" />
@@ -105,6 +135,13 @@
                              Type="string"
                              Value="[LOG_LEVEL]" />
             </RegistryKey>
+          </Component>
+          <Component Id="ServiceComponent" Guid="*" Win64="yes">
+            <File Id="ServiceExe"
+                  Source="../rust-client/service/target/release/service.exe"
+                  KeyPath="yes" />
+            <File Id="ScepClientExe"
+              Source="../cmd/scepclient/scepclient.exe" />
             <ServiceInstall Id="ServiceInstaller"
                             Type="ownProcess"
                             Name="MyTunnelService"
@@ -125,6 +162,7 @@
     </Directory>
 
     <Feature Id="MainFeature" Title="MyTunnelApp" Level="1">
+      <ComponentRef Id="ConfigComponent" />
       <ComponentRef Id="ServiceComponent" />
     </Feature>
   </Product>

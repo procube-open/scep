@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -95,7 +96,7 @@ func AddClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		if c.Attributes == nil {
 			c.Attributes = make(map[string]interface{})
 		}
-		if err := normalizeDeviceIDAttribute(c.Attributes); err != nil {
+		if err := normalizeClientAttributes(c.Attributes); err != nil {
 			res := ErrResp{Message: err.Error()}
 			w.WriteHeader(http.StatusBadRequest)
 			b, _ := json.Marshal(res)
@@ -134,7 +135,7 @@ func UpdateClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		if c.Attributes == nil {
 			c.Attributes = make(map[string]interface{})
 		}
-		if err := normalizeDeviceIDAttribute(c.Attributes); err != nil {
+		if err := normalizeClientAttributes(c.Attributes); err != nil {
 			res := ErrResp{Message: err.Error()}
 			w.WriteHeader(http.StatusBadRequest)
 			b, _ := json.Marshal(res)
@@ -149,12 +150,25 @@ func UpdateClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 	}
 }
 
+func normalizeClientAttributes(attributes map[string]interface{}) error {
+	if err := normalizeDeviceIDAttribute(attributes); err != nil {
+		return err
+	}
+	if err := normalizeSHA256FingerprintAttribute(attributes, utils.ClientAttributeAttestationAIKSPKISHA256); err != nil {
+		return err
+	}
+	if err := normalizeSHA256FingerprintAttribute(attributes, utils.ClientAttributeAttestationEKCertSHA256); err != nil {
+		return err
+	}
+	return nil
+}
+
 func normalizeDeviceIDAttribute(attributes map[string]interface{}) error {
 	if attributes == nil {
 		return nil
 	}
 
-	value, ok := attributes["device_id"]
+	value, ok := attributes[utils.ClientAttributeDeviceID]
 	if !ok {
 		return nil
 	}
@@ -169,7 +183,31 @@ func normalizeDeviceIDAttribute(attributes map[string]interface{}) error {
 		return errors.New("device_id must not be empty")
 	}
 
-	attributes["device_id"] = deviceID
+	attributes[utils.ClientAttributeDeviceID] = deviceID
+	return nil
+}
+
+func normalizeSHA256FingerprintAttribute(attributes map[string]interface{}, key string) error {
+	if attributes == nil {
+		return nil
+	}
+
+	value, ok := attributes[key]
+	if !ok {
+		return nil
+	}
+
+	fingerprint, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("%s must be a string", key)
+	}
+
+	fingerprint = utils.NormalizeSHA256Fingerprint(fingerprint)
+	if fingerprint == "" {
+		return fmt.Errorf("%s must be a 64-character SHA-256 fingerprint", key)
+	}
+
+	attributes[key] = fingerprint
 	return nil
 }
 

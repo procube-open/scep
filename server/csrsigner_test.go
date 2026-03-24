@@ -14,6 +14,7 @@ import (
 
 	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
+	"github.com/procube-open/scep/utils"
 )
 
 type stubChallengeStore struct {
@@ -236,6 +237,52 @@ func TestLookupDeviceID(t *testing.T) {
 	}
 }
 
+func TestLookupSHA256Fingerprint(t *testing.T) {
+	tests := []struct {
+		name       string
+		attributes map[string]interface{}
+		key        string
+		want       string
+		wantOK     bool
+	}{
+		{
+			name:       "missing fingerprint",
+			attributes: map[string]interface{}{},
+			key:        utils.ClientAttributeAttestationAIKSPKISHA256,
+			wantOK:     false,
+		},
+		{
+			name: "invalid fingerprint",
+			attributes: map[string]interface{}{
+				utils.ClientAttributeAttestationAIKSPKISHA256: "xyz",
+			},
+			key:    utils.ClientAttributeAttestationAIKSPKISHA256,
+			wantOK: false,
+		},
+		{
+			name: "valid fingerprint with separators",
+			attributes: map[string]interface{}{
+				utils.ClientAttributeAttestationAIKSPKISHA256: "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+			},
+			key:    utils.ClientAttributeAttestationAIKSPKISHA256,
+			want:   "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+			wantOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := lookupSHA256Fingerprint(tt.attributes, tt.key)
+			if ok != tt.wantOK {
+				t.Fatalf("want ok %v, got %v", tt.wantOK, ok)
+			}
+			if got != tt.want {
+				t.Fatalf("want %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestAttestationMiddlewareProvidesCSRPublicKey(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -382,7 +429,7 @@ func TestMySQLDeviceIDAttestationVerifierAllowsRenewalSignerIdentity(t *testing.
 	}
 
 	attestation := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
-		`{"device_id":"device-001","key":{"public_key_spki_b64":"%s"},"attestation":{"nonce":"%s"}}`,
+		`{"device_id":"device-001","key":{"public_key_spki_b64":"%s"},"attestation":{"format":"tpm2-windows-v1-placeholder-renewal","nonce":"%s"}}`,
 		base64.RawURLEncoding.EncodeToString(publicKey),
 		nonce,
 	)))

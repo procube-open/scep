@@ -18,6 +18,7 @@ var (
 	ncryptDLL                     = windows.NewLazySystemDLL("ncrypt.dll")
 	procNCryptOpenStorageProvider = ncryptDLL.NewProc("NCryptOpenStorageProvider")
 	procNCryptOpenKey             = ncryptDLL.NewProc("NCryptOpenKey")
+	procNCryptDeleteKey           = ncryptDLL.NewProc("NCryptDeleteKey")
 	procNCryptSignHash            = ncryptDLL.NewProc("NCryptSignHash")
 	procNCryptDecrypt             = ncryptDLL.NewProc("NCryptDecrypt")
 	procNCryptFreeObject          = ncryptDLL.NewProc("NCryptFreeObject")

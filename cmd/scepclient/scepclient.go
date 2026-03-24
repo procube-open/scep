@@ -207,6 +207,18 @@ func run(cfg runCfg) error {
 		return errors.Wrap(err, "creating csr pkiMessage")
 	}
 
+	if cfg.attestation != "" {
+		cfg.attestation, err = maybeUpgradeAttestation(
+			cfg.attestation,
+			cfg.keyProvider,
+			cfg.keyName,
+			cfg.publicKeySPKI,
+		)
+		if err != nil {
+			return errors.Wrap(err, "prepare attestation")
+		}
+	}
+
 	var respMsg *scep.PKIMessage
 
 	for {
@@ -339,6 +351,7 @@ func main() {
 		flWorkDir         = flag.String("out", ".", "create certificates under this directory")
 		flServerURLFlag   = flag.String("server-url", flServerURL, "SCEP server URL")
 		flAttestationFlag = flag.String("attestation", flAttestation, "base64url-encoded attestation payload")
+		flEmitAttestation = flag.Bool("emit-attestation", false, "upgrade and print the final attestation payload, then exit")
 		flKeyProvider     = flag.String("key-provider", "", "Windows key storage provider name")
 		flKeyName         = flag.String("key-name", "", "Windows persisted key name")
 		flPublicKeySPKI   = flag.String("public-key-spki-b64", "", "base64url-encoded SubjectPublicKeyInfo for a Windows persisted key")
@@ -348,6 +361,29 @@ func main() {
 	// print version information
 	if flVersion {
 		fmt.Println(version)
+		os.Exit(0)
+	}
+
+	if *flEmitAttestation {
+		if *flAttestationFlag == "" {
+			fmt.Fprintln(os.Stderr, "please set -attestation when using -emit-attestation")
+			os.Exit(1)
+		}
+		if *flKeyProvider == "" || *flKeyName == "" || *flPublicKeySPKI == "" {
+			fmt.Fprintln(os.Stderr, "please set -key-provider, -key-name, and -public-key-spki-b64 together when using -emit-attestation")
+			os.Exit(1)
+		}
+		attestation, err := maybeUpgradeAttestation(
+			*flAttestationFlag,
+			*flKeyProvider,
+			*flKeyName,
+			*flPublicKeySPKI,
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(attestation)
 		os.Exit(0)
 	}
 
