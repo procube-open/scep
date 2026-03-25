@@ -213,6 +213,8 @@ func run(cfg runCfg) error {
 			cfg.keyProvider,
 			cfg.keyName,
 			cfg.publicKeySPKI,
+			cfg.serverURL,
+			cfg.cn,
 		)
 		if err != nil {
 			return errors.Wrap(err, "prepare attestation")
@@ -354,7 +356,7 @@ func main() {
 		flEmitAttestation = flag.Bool("emit-attestation", false, "upgrade and print the final attestation payload, then exit")
 		flKeyProvider     = flag.String("key-provider", "", "Windows key storage provider name")
 		flKeyName         = flag.String("key-name", "", "Windows persisted key name")
-		flPublicKeySPKI   = flag.String("public-key-spki-b64", "", "base64url-encoded SubjectPublicKeyInfo for a Windows persisted key")
+		flPublicKeySPKI   = flag.String("public-key-spki-b64", "", "optional base64url-encoded SubjectPublicKeyInfo for a Windows persisted key")
 	)
 	flag.Parse()
 
@@ -369,8 +371,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "please set -attestation when using -emit-attestation")
 			os.Exit(1)
 		}
-		if *flKeyProvider == "" || *flKeyName == "" || *flPublicKeySPKI == "" {
-			fmt.Fprintln(os.Stderr, "please set -key-provider, -key-name, and -public-key-spki-b64 together when using -emit-attestation")
+		if *flKeyProvider == "" || *flKeyName == "" {
+			fmt.Fprintln(os.Stderr, "please set -key-provider and -key-name when using -emit-attestation")
 			os.Exit(1)
 		}
 		attestation, err := maybeUpgradeAttestation(
@@ -378,6 +380,8 @@ func main() {
 			*flKeyProvider,
 			*flKeyName,
 			*flPublicKeySPKI,
+			*flServerURLFlag,
+			*flUid,
 		)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -410,8 +414,8 @@ func main() {
 		os.Exit(1)
 	}
 	if *flKeyProvider != "" || *flKeyName != "" || *flPublicKeySPKI != "" {
-		if *flKeyProvider == "" || *flKeyName == "" || *flPublicKeySPKI == "" {
-			fmt.Println("please set -key-provider, -key-name, and -public-key-spki-b64 together")
+		if *flKeyProvider == "" || *flKeyName == "" {
+			fmt.Println("please set -key-provider and -key-name together")
 			os.Exit(1)
 		}
 	} else if err := validateFileKeyFlags(keyPath); err != nil {

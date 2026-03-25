@@ -227,7 +227,7 @@ func Base64URLJSONAttestationVerifier() AttestationVerifierFunc {
 	}
 }
 
-func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *AttestationNonceService) AttestationVerifierFunc {
+func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *AttestationNonceService, activations *AttestationActivationService) AttestationVerifierFunc {
 	return func(ctx context.Context, attestation string) error {
 		if depot == nil {
 			return errors.New("attestation depot is nil")
@@ -267,6 +267,9 @@ func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *Attestat
 		if err := verifyRegisteredAttestationTrust(client.Attributes, claims); err != nil {
 			return err
 		}
+		if err := verifyAttestationActivation(client.Uid, client.Attributes, claims, activations); err != nil {
+			return err
+		}
 		if nonces != nil {
 			if claims.Attestation.Nonce == "" {
 				return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
@@ -287,13 +290,18 @@ type attestationKey struct {
 }
 
 type attestationBundle struct {
-	Format            string            `json:"format"`
-	Nonce             string            `json:"nonce"`
-	AIKPublicB64      string            `json:"aik_public_b64"`
-	QuoteB64          string            `json:"quote_b64"`
-	QuoteSignatureB64 string            `json:"quote_signature_b64"`
-	PCRs              []json.RawMessage `json:"pcrs"`
-	EKCertB64         string            `json:"ek_cert_b64"`
+	Format             string            `json:"format"`
+	Nonce              string            `json:"nonce"`
+	AIKPublicB64       string            `json:"aik_public_b64"`
+	AIKTPMPublicB64    string            `json:"aik_tpm_public_b64"`
+	ActivationID       string            `json:"activation_id"`
+	ActivationProofB64 string            `json:"activation_proof_b64"`
+	QuoteB64           string            `json:"quote_b64"`
+	QuoteSignatureB64  string            `json:"quote_signature_b64"`
+	EKPublicB64        string            `json:"ek_public_b64"`
+	PCRs               []json.RawMessage `json:"pcrs"`
+	EKCertB64          string            `json:"ek_cert_b64"`
+	EKCertificateURL   string            `json:"ek_certificate_url"`
 }
 
 type attestationMeta struct {
@@ -333,9 +341,14 @@ func decodeAttestation(attestation string) (*attestationClaims, error) {
 	claims.Attestation.Format = strings.TrimSpace(claims.Attestation.Format)
 	claims.Attestation.Nonce = strings.TrimSpace(claims.Attestation.Nonce)
 	claims.Attestation.AIKPublicB64 = strings.TrimSpace(claims.Attestation.AIKPublicB64)
+	claims.Attestation.AIKTPMPublicB64 = strings.TrimSpace(claims.Attestation.AIKTPMPublicB64)
+	claims.Attestation.ActivationID = strings.TrimSpace(claims.Attestation.ActivationID)
+	claims.Attestation.ActivationProofB64 = strings.TrimSpace(claims.Attestation.ActivationProofB64)
 	claims.Attestation.QuoteB64 = strings.TrimSpace(claims.Attestation.QuoteB64)
 	claims.Attestation.QuoteSignatureB64 = strings.TrimSpace(claims.Attestation.QuoteSignatureB64)
+	claims.Attestation.EKPublicB64 = strings.TrimSpace(claims.Attestation.EKPublicB64)
 	claims.Attestation.EKCertB64 = strings.TrimSpace(claims.Attestation.EKCertB64)
+	claims.Attestation.EKCertificateURL = strings.TrimSpace(claims.Attestation.EKCertificateURL)
 	claims.Meta.Hostname = strings.TrimSpace(claims.Meta.Hostname)
 	claims.Meta.OSVersion = strings.TrimSpace(claims.Meta.OSVersion)
 	claims.Meta.GeneratedAt = strings.TrimSpace(claims.Meta.GeneratedAt)
@@ -375,6 +388,22 @@ func lookupSHA256Fingerprint(attributes map[string]interface{}, key string) (str
 	return value, true
 }
 
+func lookupManagedClientType(attributes map[string]interface{}) (string, bool) {
+	if attributes == nil {
+		return "", false
+	}
+
+	value, ok := attributes[utils.ClientAttributeManagedClientType].(string)
+	if !ok {
+		return "", false
+	}
+	value = utils.NormalizeManagedClientType(value)
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
 func verifyRegisteredAttestationTrust(attributes map[string]interface{}, claims *attestationClaims) error {
 	if claims == nil {
 		return nil
@@ -396,6 +425,42 @@ func verifyRegisteredAttestationTrust(attributes map[string]interface{}, claims 
 		if actualEKCert != expectedEKCert {
 			return fmt.Errorf("%w: ek_cert_mismatch", ErrInvalidAttestation)
 		}
+	}
+	return nil
+}
+
+func verifyAttestationActivation(clientUID string, attributes map[string]interface{}, claims *attestationClaims, activations *AttestationActivationService) error {
+	if claims == nil {
+		return nil
+	}
+
+	managedClientType, _ := lookupManagedClientType(attributes)
+	activationRequired := managedClientType == utils.ManagedClientTypeWindowsMSI
+	hasActivationID := claims.Attestation.ActivationID != ""
+	hasActivationProof := claims.Attestation.ActivationProofB64 != ""
+
+	if !hasActivationID && !hasActivationProof {
+		if activationRequired {
+			return fmt.Errorf("%w: missing_activation_proof", ErrInvalidAttestation)
+		}
+		return nil
+	}
+	if !hasActivationID || !hasActivationProof {
+		return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+	}
+	if activations == nil {
+		return errors.New("attestation activation service is unavailable")
+	}
+	if claims.Attestation.Nonce == "" {
+		return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
+	}
+
+	proof, err := decodeBase64URL(claims.Attestation.ActivationProofB64)
+	if err != nil || len(proof) == 0 {
+		return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+	}
+	if !activations.VerifyAndConsume(clientUID, claims.DeviceID, claims.Attestation.Nonce, claims.Attestation.ActivationID, proof) {
+		return fmt.Errorf("%w: invalid_activation_proof", ErrInvalidAttestation)
 	}
 	return nil
 }

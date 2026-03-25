@@ -1,15 +1,21 @@
 use crate::config::{EnrollmentSettings, RenewalSettings};
+#[cfg(windows)]
 use crate::windows_paths;
 use base64::Engine;
+#[cfg(windows)]
 use rsa::pkcs8::EncodePublicKey;
+#[cfg(windows)]
 use rsa::{BigUint, RsaPublicKey};
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(windows)]
+use std::path::PathBuf;
 
 #[cfg(windows)]
 use std::ptr::null_mut;
@@ -52,7 +58,9 @@ type EnsureMachineKeyFn = dyn Fn(&EnrollmentSettings, &StagedEnrollmentSecret) -
     + Send
     + Sync;
 type ProbeCurrentCertificateFn =
-    dyn Fn(&RenewalSettings, Duration) -> Result<CertificateInventory, PlatformError> + Send + Sync;
+    dyn Fn(&RenewalSettings, Duration, Duration) -> Result<CertificateInventory, PlatformError>
+        + Send
+        + Sync;
 type InstallIssuedCertificateFn =
     dyn Fn(&PendingEnrollment, &[u8]) -> Result<InstalledCertificate, PlatformError> + Send + Sync;
 type InstallRenewedCertificateFn =
@@ -175,6 +183,38 @@ pub struct InstalledCertificate {
     pub store_path: &'static str,
     pub thumbprint: Option<String>,
     pub key_name_hint: Option<String>,
+    pub not_before: Option<SystemTime>,
+    pub not_after: Option<SystemTime>,
+}
+
+impl InstalledCertificate {
+    pub fn effective_renew_before(
+        &self,
+        renew_before: Duration,
+        poll_interval: Duration,
+    ) -> Duration {
+        let Some(not_before) = self.not_before else {
+            return renew_before;
+        };
+        let Some(not_after) = self.not_after else {
+            return renew_before;
+        };
+        let Ok(lifetime) = not_after.duration_since(not_before) else {
+            return renew_before;
+        };
+        let latest_safe = lifetime.checked_sub(poll_interval).unwrap_or_default();
+        renew_before.min(latest_safe)
+    }
+
+    pub fn renewal_due_at(
+        &self,
+        renew_before: Duration,
+        poll_interval: Duration,
+    ) -> Option<SystemTime> {
+        let not_after = self.not_after?;
+        let effective_renew_before = self.effective_renew_before(renew_before, poll_interval);
+        Some(not_after.checked_sub(effective_renew_before).unwrap_or(not_after))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -357,12 +397,13 @@ impl MachineCertificateStore {
         &self,
         plan: &RenewalSettings,
         renew_before: Duration,
+        poll_interval: Duration,
     ) -> Result<CertificateInventory, PlatformError> {
         if let Some(probe) = &self.probe_override {
-            return probe(plan, renew_before);
+            return probe(plan, renew_before, poll_interval);
         }
 
-        default_probe_current_certificate(plan, renew_before)
+        default_probe_current_certificate(plan, renew_before, poll_interval)
     }
 
     pub fn install_issued_certificate(
@@ -391,7 +432,7 @@ impl MachineCertificateStore {
 
     pub fn with_probe_current_certificate<F>(mut self, probe: F) -> Self
     where
-        F: Fn(&RenewalSettings, Duration) -> Result<CertificateInventory, PlatformError>
+        F: Fn(&RenewalSettings, Duration, Duration) -> Result<CertificateInventory, PlatformError>
             + Send
             + Sync
             + 'static,
@@ -654,14 +695,16 @@ fn default_ensure_machine_key(
 fn default_probe_current_certificate(
     plan: &RenewalSettings,
     renew_before: Duration,
+    poll_interval: Duration,
 ) -> Result<CertificateInventory, PlatformError> {
     #[cfg(windows)]
     {
-        return probe_windows_machine_store(plan, renew_before);
+        return probe_windows_machine_store(plan, renew_before, poll_interval);
     }
 
     #[cfg(not(windows))]
     {
+        let _ = (plan, renew_before, poll_interval);
         Err(PlatformError::not_implemented(
             "machine-store",
             format!(
@@ -682,6 +725,7 @@ fn default_install_issued_certificate(
 
     #[cfg(not(windows))]
     {
+        let _ = certificate_der;
         Err(PlatformError::not_implemented(
             "machine-store",
             format!(
@@ -717,6 +761,7 @@ fn default_install_renewed_certificate(
 
     #[cfg(not(windows))]
     {
+        let _ = certificate_der;
         Err(PlatformError::not_implemented(
             "machine-store",
             format!(
@@ -761,7 +806,13 @@ fn default_build_initial_attestation(
 
     #[cfg(windows)]
     {
-        return finalize_windows_attestation_via_helper(&pending.plan.device_id, attestation, &key);
+        return finalize_windows_attestation_via_helper(
+            &pending.plan.server_url,
+            &pending.plan.client_uid,
+            &pending.plan.device_id,
+            attestation,
+            &key,
+        );
     }
 
     #[cfg(not(windows))]
@@ -785,7 +836,13 @@ fn default_build_renewal_attestation(
 
     #[cfg(windows)]
     {
-        return finalize_windows_attestation_via_helper(&context.plan.device_id, attestation, &key);
+        return finalize_windows_attestation_via_helper(
+            &context.plan.server_url,
+            &context.plan.client_uid,
+            &context.plan.device_id,
+            attestation,
+            &key,
+        );
     }
 
     #[cfg(not(windows))]
@@ -1063,6 +1120,7 @@ fn managed_dir_for_key_name(key_name_hint: &str) -> PathBuf {
 fn probe_windows_machine_store(
     plan: &RenewalSettings,
     renew_before: Duration,
+    poll_interval: Duration,
 ) -> Result<CertificateInventory, PlatformError> {
     let managed_cert_path = windows_paths::cert_path(&windows_paths::managed_dir(
         &plan.client_uid,
@@ -1071,7 +1129,6 @@ fn probe_windows_machine_store(
     let script = build_windows_machine_store_probe_script(
         &plan.client_uid,
         &managed_cert_path,
-        renew_before,
     );
     let output = run_windows_command(
         "machine-store",
@@ -1087,37 +1144,37 @@ fn probe_windows_machine_store(
             format!("failed to decode PowerShell store probe output: {err}"),
         )
     })?;
-    match value
+    if value
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("missing")
+        == "missing"
     {
-        "active" => Ok(CertificateInventory::Active(InstalledCertificate {
-            store_path: MACHINE_STORE_PATH,
-            thumbprint: value
-                .get("Thumbprint")
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_owned()),
-            key_name_hint: Some(windows_paths::key_dir_name(
-                &plan.client_uid,
-                &plan.device_id,
-            )),
-        })),
-        "renewal_due" => Ok(CertificateInventory::RenewalDue(RenewalContext {
-            plan: plan.clone(),
-            certificate: InstalledCertificate {
-                store_path: MACHINE_STORE_PATH,
-                thumbprint: value
-                    .get("Thumbprint")
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.to_owned()),
-                key_name_hint: Some(windows_paths::key_dir_name(
-                    &plan.client_uid,
-                    &plan.device_id,
-                )),
-            },
-        })),
-        _ => Ok(CertificateInventory::Missing),
+        return Ok(CertificateInventory::Missing);
+    }
+
+    let certificate = InstalledCertificate {
+        store_path: MACHINE_STORE_PATH,
+        thumbprint: value
+            .get("Thumbprint")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_owned()),
+        key_name_hint: Some(windows_paths::key_dir_name(
+            &plan.client_uid,
+            &plan.device_id,
+        )),
+        not_before: parse_optional_unix_seconds(value.get("NotBeforeUnix")),
+        not_after: parse_optional_unix_seconds(value.get("NotAfterUnix")),
+    };
+    let now = SystemTime::now();
+    match certificate.renewal_due_at(renew_before, poll_interval) {
+        Some(renewal_due_at) if renewal_due_at <= now => {
+            Ok(CertificateInventory::RenewalDue(RenewalContext {
+                plan: plan.clone(),
+                certificate,
+            }))
+        }
+        _ => Ok(CertificateInventory::Active(certificate)),
     }
 }
 
@@ -1125,12 +1182,10 @@ fn probe_windows_machine_store(
 fn build_windows_machine_store_probe_script(
     client_uid: &str,
     managed_cert_path: &Path,
-    renew_before: Duration,
 ) -> String {
     format!(
         r#"
 $ErrorActionPreference = 'Stop'
-$renewThreshold = (Get-Date).ToUniversalTime().AddSeconds({renew_before_secs})
 $managedCertPath = '{managed_cert_path}'
 $cert = $null
 if (Test-Path $managedCertPath) {{
@@ -1145,7 +1200,7 @@ if (Test-Path $managedCertPath) {{
         $cert = Get-ChildItem Cert:\LocalMachine\My |
           Where-Object {{ $_.Thumbprint -eq $managedCert.Thumbprint }} |
           Sort-Object NotAfter -Descending |
-          Select-Object -First 1 Thumbprint,Subject,NotAfter
+          Select-Object -First 1 Thumbprint,Subject,NotBefore,NotAfter
       }}
     }}
   }} catch {{
@@ -1156,16 +1211,14 @@ if ($null -eq $cert) {{
   $cert = Get-ChildItem Cert:\LocalMachine\My |
     Where-Object {{ $_.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -eq '{client_uid}' }} |
     Sort-Object NotAfter -Descending |
-    Select-Object -First 1 Thumbprint,Subject,NotAfter
+    Select-Object -First 1 Thumbprint,Subject,NotBefore,NotAfter
 }}
 if ($null -eq $cert) {{
   [Console]::Out.Write('{{"status":"missing"}}')
   exit 0
 }}
-$status = if ($cert.NotAfter.ToUniversalTime() -le $renewThreshold) {{ 'renewal_due' }} else {{ 'active' }}
-[Console]::Out.Write(($cert | Select-Object @{{n='status';e={{$status}}}},Thumbprint,Subject,NotAfter | ConvertTo-Json -Compress))
+[Console]::Out.Write(($cert | Select-Object @{{n='status';e={{'present'}}}},Thumbprint,Subject,@{{n='NotBeforeUnix';e={{([DateTimeOffset]$_.NotBefore.ToUniversalTime()).ToUnixTimeSeconds()}}}},@{{n='NotAfterUnix';e={{([DateTimeOffset]$_.NotAfter.ToUniversalTime()).ToUnixTimeSeconds()}}}} | ConvertTo-Json -Compress))
 "#,
-        renew_before_secs = renew_before.as_secs(),
         managed_cert_path = escape_ps_single_quoted(&managed_cert_path.display().to_string()),
         client_uid = escape_ps_single_quoted(client_uid),
     )
@@ -1274,7 +1327,7 @@ $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My'
 $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
 $store.Add($bound)
 $store.Close()
-[Console]::Out.Write(($bound | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress))
+[Console]::Out.Write(($bound | Select-Object Thumbprint,Subject,@{{n='NotBeforeUnix';e={{([DateTimeOffset]$_.NotBefore.ToUniversalTime()).ToUnixTimeSeconds()}}}},@{{n='NotAfterUnix';e={{([DateTimeOffset]$_.NotAfter.ToUniversalTime()).ToUnixTimeSeconds()}}}} | ConvertTo-Json -Compress))
 "#,
         cert_path = escape_ps_single_quoted(&cert_path.display().to_string()),
         provider = escape_ps_single_quoted(provider),
@@ -1301,7 +1354,19 @@ $store.Close()
             .and_then(|v| v.as_str())
             .map(|v| v.to_owned()),
         key_name_hint: Some(key_name_hint.to_owned()),
+        not_before: parse_optional_unix_seconds(value.get("NotBeforeUnix")),
+        not_after: parse_optional_unix_seconds(value.get("NotAfterUnix")),
     })
+}
+
+#[cfg(windows)]
+fn parse_optional_unix_seconds(value: Option<&serde_json::Value>) -> Option<SystemTime> {
+    let seconds = value.and_then(|raw| match raw {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(text) => text.parse::<u64>().ok(),
+        _ => None,
+    })?;
+    Some(UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
 #[cfg(windows)]
@@ -1617,6 +1682,8 @@ fn key_with_public_spki(key: &TpmKeyHandle) -> Result<TpmKeyHandle, PlatformErro
 
 #[cfg(windows)]
 fn finalize_windows_attestation_via_helper(
+    server_url: &str,
+    client_uid: &str,
     expected_device_id: &str,
     attestation: AttestationPayload,
     key: &TpmKeyHandle,
@@ -1635,6 +1702,10 @@ fn finalize_windows_attestation_via_helper(
     let output = run_windows_command(
         "attestation-assembly",
         Command::new(helper)
+            .arg("-uid")
+            .arg(client_uid)
+            .arg("-server-url")
+            .arg(server_url)
             .arg("-emit-attestation")
             .arg("-attestation")
             .arg(&attestation.encoded)
@@ -1705,6 +1776,19 @@ fn finalize_windows_attestation_via_helper(
             "attestation-assembly",
             format!(
                 "helper attestation for key {} was missing canonical quote material",
+                key.key_name_hint
+            ),
+        ));
+    }
+    if !server_url.trim().is_empty()
+        && !client_uid.trim().is_empty()
+        && (claims.attestation.activation_id.is_none()
+            || claims.attestation.activation_proof_b64.is_none())
+    {
+        return Err(PlatformError::permanent(
+            "attestation-assembly",
+            format!(
+                "helper attestation for key {} was missing credential-activation proof",
                 key.key_name_hint
             ),
         ));
@@ -1871,8 +1955,14 @@ fn build_placeholder_attestation(
             format: format.to_owned(),
             nonce: nonce.value.clone(),
             aik_public_b64: None,
+            aik_tpm_public_b64: None,
             quote_b64: None,
             quote_signature_b64: None,
+            ek_public_b64: None,
+            ek_cert_b64: None,
+            ek_certificate_url: None,
+            activation_id: None,
+            activation_proof_b64: None,
         },
         meta: AttestationMeta {
             hostname: current_hostname(),
@@ -1981,9 +2071,21 @@ struct AttestationBundle {
     #[serde(skip_serializing_if = "Option::is_none")]
     aik_public_b64: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    aik_tpm_public_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_proof_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     quote_b64: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     quote_signature_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ek_public_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ek_cert_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ek_certificate_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2026,6 +2128,24 @@ fn decode_attestation_payload(encoded: &str) -> Result<AttestationClaims, Platfo
         .take()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
+    claims.attestation.aik_tpm_public_b64 = claims
+        .attestation
+        .aik_tpm_public_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.activation_id = claims
+        .attestation
+        .activation_id
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.activation_proof_b64 = claims
+        .attestation
+        .activation_proof_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
     claims.attestation.quote_b64 = claims
         .attestation
         .quote_b64
@@ -2035,6 +2155,24 @@ fn decode_attestation_payload(encoded: &str) -> Result<AttestationClaims, Platfo
     claims.attestation.quote_signature_b64 = claims
         .attestation
         .quote_signature_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.ek_cert_b64 = claims
+        .attestation
+        .ek_cert_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.ek_public_b64 = claims
+        .attestation
+        .ek_public_b64
+        .take()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    claims.attestation.ek_certificate_url = claims
+        .attestation
+        .ek_certificate_url
         .take()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
@@ -2128,8 +2266,14 @@ mod tests {
                     "format": " tpm2-windows-v1 ",
                     "nonce": " nonce-123 ",
                     "aik_public_b64": " aik ",
+                    "aik_tpm_public_b64": " aik-tpm ",
+                    "activation_id": " activation-001 ",
+                    "activation_proof_b64": " proof ",
                     "quote_b64": " quote ",
-                    "quote_signature_b64": " sig "
+                    "quote_signature_b64": " sig ",
+                    "ek_public_b64": " ek-public ",
+                    "ek_cert_b64": " ek ",
+                    "ek_certificate_url": " https://example.invalid/ek "
                 },
                 "meta": {
                     "hostname": " host ",
@@ -2148,10 +2292,31 @@ mod tests {
         assert_eq!(claims.attestation.format, CANONICAL_ATTESTATION_FORMAT);
         assert_eq!(claims.attestation.nonce, "nonce-123");
         assert_eq!(claims.attestation.aik_public_b64.as_deref(), Some("aik"));
+        assert_eq!(
+            claims.attestation.aik_tpm_public_b64.as_deref(),
+            Some("aik-tpm")
+        );
+        assert_eq!(
+            claims.attestation.activation_id.as_deref(),
+            Some("activation-001")
+        );
+        assert_eq!(
+            claims.attestation.activation_proof_b64.as_deref(),
+            Some("proof")
+        );
         assert_eq!(claims.attestation.quote_b64.as_deref(), Some("quote"));
         assert_eq!(
             claims.attestation.quote_signature_b64.as_deref(),
             Some("sig")
+        );
+        assert_eq!(
+            claims.attestation.ek_public_b64.as_deref(),
+            Some("ek-public")
+        );
+        assert_eq!(claims.attestation.ek_cert_b64.as_deref(), Some("ek"));
+        assert_eq!(
+            claims.attestation.ek_certificate_url.as_deref(),
+            Some("https://example.invalid/ek")
         );
         assert_eq!(claims.meta.hostname, "host");
         assert_eq!(claims.meta.os_version, "windows");
@@ -2170,6 +2335,8 @@ mod tests {
                 store_path: MACHINE_STORE_PATH,
                 thumbprint: Some("thumbprint".to_owned()),
                 key_name_hint: None,
+                not_before: None,
+                not_after: None,
             },
         };
 
@@ -2183,7 +2350,6 @@ mod tests {
         let script = build_windows_machine_store_probe_script(
             "client-001",
             Path::new(r"C:\ProgramData\MyTunnelApp\managed\client-001-device-001\cert.pem"),
-            Duration::from_secs(3600),
         );
 
         assert!(script.contains("$managedCertPath = 'C:\\ProgramData\\MyTunnelApp\\managed\\client-001-device-001\\cert.pem'"));
@@ -2192,6 +2358,29 @@ mod tests {
         assert!(script.contains("catch {"));
         assert!(script.contains("X509NameType]::SimpleName"));
         assert!(script.contains("-eq 'client-001'"));
+        assert!(script.contains("NotBeforeUnix"));
+        assert!(script.contains("NotAfterUnix"));
         assert!(!script.contains("$_.Subject -eq 'CN=client-001'"));
+    }
+
+    #[test]
+    fn renewal_due_is_clamped_to_after_one_poll_interval() {
+        let issued_at = UNIX_EPOCH + Duration::from_secs(10_000);
+        let certificate = InstalledCertificate {
+            store_path: MACHINE_STORE_PATH,
+            thumbprint: Some("thumbprint".to_owned()),
+            key_name_hint: Some("client-001-device-001".to_owned()),
+            not_before: Some(issued_at),
+            not_after: Some(issued_at + Duration::from_secs(3_600)),
+        };
+
+        assert_eq!(
+            certificate.effective_renew_before(Duration::from_secs(7_200), Duration::from_secs(300)),
+            Duration::from_secs(3_300)
+        );
+        assert_eq!(
+            certificate.renewal_due_at(Duration::from_secs(7_200), Duration::from_secs(300)),
+            Some(issued_at + Duration::from_secs(300))
+        );
     }
 }

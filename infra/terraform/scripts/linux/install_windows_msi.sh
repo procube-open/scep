@@ -10,7 +10,7 @@ temporarily replacing the instance startup script, rebooting the VM, and
 waiting for serial-port markers from the install/verification script.
 
 Options:
-  --server-url <URL>                  Full SCEP URL. Defaults to http://<server_external_ip>:3000/scep
+  --server-url <URL>                  Full SCEP URL. Defaults to http://<server_internal_ip>:3000/scep when available, otherwise external IP
   --client-uid <UID>                  Required client UID
   --enrollment-secret <SECRET>        Required one-time enrollment secret
   --device-id-override <DEVICE_ID>    Required device_id override for the current phase
@@ -22,7 +22,11 @@ Options:
   --force-fresh-install               Uninstall existing MSI-managed config before reinstalling
                                       (the helper also auto-falls back to this path if same-version reinstall leaves stale config)
   --apply-registry-overrides          Rewrite HKLM config after msiexec and restart the service
+  --converge-to-local-service         Grant HKLM config access to LocalService and reconfigure
+                                      MyTunnelService to run as NT AUTHORITY\LocalService
   --require-thumbprint-change         Wait until managed cert thumbprint changes before succeeding
+  --tamper-activation-proof-renewal   After install observation, submit a renewal with tampered
+                                      activation_proof_b64 and require thumbprint stability
   --project <PROJECT_ID>              GCP project ID (optional; auto-detected from Terraform)
   --zone <ZONE>                       GCP zone (optional; auto-detected from Terraform)
   --instance <INSTANCE_NAME>          Windows instance name (optional; auto-detected from Terraform)
@@ -49,7 +53,9 @@ MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
 WAIT_SECONDS=300
 FORCE_FRESH_INSTALL=0
 APPLY_REGISTRY_OVERRIDES=0
+CONVERGE_TO_LOCAL_SERVICE=0
 REQUIRE_THUMBPRINT_CHANGE=0
+TAMPER_ACTIVATION_PROOF_RENEWAL=0
 SERIAL_WAIT_GRACE_SECONDS=180
 
 while [[ $# -gt 0 ]]; do
@@ -98,8 +104,16 @@ while [[ $# -gt 0 ]]; do
       APPLY_REGISTRY_OVERRIDES=1
       shift
       ;;
+    --converge-to-local-service)
+      CONVERGE_TO_LOCAL_SERVICE=1
+      shift
+      ;;
     --require-thumbprint-change)
       REQUIRE_THUMBPRINT_CHANGE=1
+      shift
+      ;;
+    --tamper-activation-proof-renewal)
+      TAMPER_ACTIVATION_PROOF_RENEWAL=1
       shift
       ;;
     --project)
@@ -219,9 +233,12 @@ if [[ -z "$ZONE" ]]; then
   ZONE="$(terraform_output_raw deployment_zone)"
 fi
 if [[ -z "$SERVER_URL" ]]; then
-  server_ip="$(terraform_output_raw server_external_ip)"
+  server_ip="$(terraform_output_raw server_internal_ip)"
   if [[ -z "$server_ip" ]]; then
-    echo "Unable to resolve server_external_ip from Terraform output; provide --server-url." >&2
+    server_ip="$(terraform_output_raw server_external_ip)"
+  fi
+  if [[ -z "$server_ip" ]]; then
+    echo "Unable to resolve server_internal_ip or server_external_ip from Terraform output; provide --server-url." >&2
     exit 1
   fi
   SERVER_URL="http://${server_ip}:3000/scep"
@@ -253,7 +270,12 @@ cat >> "$temp_script" <<EOF
 \$copilotInstallId = '$(escape_ps_single_quoted "$install_id")'
 try {
   Write-Output "MYTUNNEL_MSI_INSTALL_START id=\$copilotInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") device_id=$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")"
-  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
+  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
+$(if [[ "$TAMPER_ACTIVATION_PROOF_RENEWAL" -eq 1 ]]; then cat <<PS
+  \$copilotActivationNegative = Invoke-MyTunnelTamperedActivationRenewal -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")'
+  \$copilotInstallSummary['activation_negative'] = \$copilotActivationNegative
+PS
+fi)
   \$copilotInstallMarkerSummary = ConvertTo-MyTunnelMarkerSummary -Summary \$copilotInstallSummary
   \$copilotInstallJson = \$copilotInstallMarkerSummary | ConvertTo-Json -Depth 6 -Compress
   Write-Output ("MYTUNNEL_MSI_INSTALL_DONE id=\$copilotInstallId summary={0}" -f \$copilotInstallJson)

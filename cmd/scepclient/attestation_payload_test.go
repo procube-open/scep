@@ -16,8 +16,10 @@ func TestDecodeAttestationPayloadNormalizesFields(t *testing.T) {
 			"public_key_spki_b64": "YWJj",
 		},
 		"attestation": map[string]any{
-			"format": "tpm2-windows-v1-placeholder-initial",
-			"nonce":  " bm9uY2U ",
+			"format":               "tpm2-windows-v1-placeholder-initial",
+			"nonce":                " bm9uY2U ",
+			"activation_id":        " activation-id ",
+			"activation_proof_b64": " activation-proof ",
 		},
 		"meta": map[string]any{
 			"hostname":     " host ",
@@ -44,6 +46,12 @@ func TestDecodeAttestationPayloadNormalizesFields(t *testing.T) {
 	if claims.Attestation.Nonce != "bm9uY2U" {
 		t.Fatalf("unexpected nonce: %q", claims.Attestation.Nonce)
 	}
+	if claims.Attestation.ActivationID != "activation-id" {
+		t.Fatalf("unexpected activation_id: %q", claims.Attestation.ActivationID)
+	}
+	if claims.Attestation.ActivationProofB64 != "activation-proof" {
+		t.Fatalf("unexpected activation_proof_b64: %q", claims.Attestation.ActivationProofB64)
+	}
 }
 
 func TestEncodeCanonicalAttestationPayloadIncludesQuoteFields(t *testing.T) {
@@ -56,8 +64,14 @@ func TestEncodeCanonicalAttestationPayloadIncludesQuoteFields(t *testing.T) {
 		},
 		"bm9uY2U",
 		"YWlr",
+		"YWlrLXRwbQ",
+		"activation-id",
+		"proof",
 		"cXVvdGU",
 		"c2ln",
+		"ZWstcHVibGlj",
+		"ZWstY2VydA",
+		"https://example.invalid/ek",
 	))
 	if err != nil {
 		t.Fatalf("encodeAttestationPayload returned error: %v", err)
@@ -87,11 +101,29 @@ func TestEncodeCanonicalAttestationPayloadIncludesQuoteFields(t *testing.T) {
 	if attestation["aik_public_b64"] != "YWlr" {
 		t.Fatalf("unexpected aik_public_b64: %#v", attestation["aik_public_b64"])
 	}
+	if attestation["aik_tpm_public_b64"] != "YWlrLXRwbQ" {
+		t.Fatalf("unexpected aik_tpm_public_b64: %#v", attestation["aik_tpm_public_b64"])
+	}
+	if attestation["activation_id"] != "activation-id" {
+		t.Fatalf("unexpected activation_id: %#v", attestation["activation_id"])
+	}
+	if attestation["activation_proof_b64"] != "proof" {
+		t.Fatalf("unexpected activation_proof_b64: %#v", attestation["activation_proof_b64"])
+	}
 	if attestation["quote_b64"] != "cXVvdGU" {
 		t.Fatalf("unexpected quote_b64: %#v", attestation["quote_b64"])
 	}
 	if attestation["quote_signature_b64"] != "c2ln" {
 		t.Fatalf("unexpected quote_signature_b64: %#v", attestation["quote_signature_b64"])
+	}
+	if attestation["ek_cert_b64"] != "ZWstY2VydA" {
+		t.Fatalf("unexpected ek_cert_b64: %#v", attestation["ek_cert_b64"])
+	}
+	if attestation["ek_public_b64"] != "ZWstcHVibGlj" {
+		t.Fatalf("unexpected ek_public_b64: %#v", attestation["ek_public_b64"])
+	}
+	if attestation["ek_certificate_url"] != "https://example.invalid/ek" {
+		t.Fatalf("unexpected ek_certificate_url: %#v", attestation["ek_certificate_url"])
 	}
 
 	meta, ok := value["meta"].(map[string]any)

@@ -9,8 +9,12 @@ import (
 
 const (
 	ClientAttributeDeviceID                 = "device_id"
+	ClientAttributeManagedClientType        = "managed_client_type"
 	ClientAttributeAttestationAIKSPKISHA256 = "attestation_aik_spki_sha256"
 	ClientAttributeAttestationEKCertSHA256  = "attestation_ek_cert_sha256"
+	ClientAttributeAttestationActivationReq = "attestation_activation_required"
+
+	ManagedClientTypeWindowsMSI = "windows-msi"
 )
 
 func EnvString(key, def string) string {
@@ -37,6 +41,15 @@ func EnvBool(key string) bool {
 
 func NormalizeDeviceID(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func NormalizeManagedClientType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case ManagedClientTypeWindowsMSI:
+		return ManagedClientTypeWindowsMSI
+	default:
+		return ""
+	}
 }
 
 func NormalizeSHA256Fingerprint(raw string) string {

@@ -212,7 +212,7 @@ func TestMySQLDeviceIDAttestationVerifierRejectsInvalidQuoteSignature(t *testing
 	ctx := ContextWithChallengePassword(context.Background(), "client-001\\secret")
 	ctx = ContextWithCSRPublicKey(ctx, enrollmentPublicKey)
 
-	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces)
+	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces, nil)
 	err = verifier(ctx, attestationJSON)
 	if !errors.Is(err, ErrInvalidAttestation) {
 		t.Fatalf("expected invalid attestation, got %v", err)
@@ -270,7 +270,7 @@ func TestMySQLDeviceIDAttestationVerifierAcceptsPinnedAIKAndEKCert(t *testing.T)
 	ctx := ContextWithChallengePassword(context.Background(), "client-001\\secret")
 	ctx = ContextWithCSRPublicKey(ctx, enrollmentPublicKey)
 
-	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces)
+	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces, nil)
 	if err := verifier(ctx, mustMarshalAttestationClaims(t, claims)); err != nil {
 		t.Fatalf("expected pinned AIK/EK verification to succeed, got %v", err)
 	}
@@ -322,7 +322,7 @@ func TestMySQLDeviceIDAttestationVerifierRejectsPinnedAIKMismatch(t *testing.T) 
 	ctx := ContextWithChallengePassword(context.Background(), "client-001\\secret")
 	ctx = ContextWithCSRPublicKey(ctx, enrollmentPublicKey)
 
-	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces)
+	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces, nil)
 	err = verifier(ctx, mustMarshalAttestationClaims(t, claims))
 	if !errors.Is(err, ErrInvalidAttestation) {
 		t.Fatalf("expected invalid attestation, got %v", err)
@@ -371,7 +371,7 @@ func TestMySQLDeviceIDAttestationVerifierRejectsPinnedEKCertMismatch(t *testing.
 	ctx := ContextWithChallengePassword(context.Background(), "client-001\\secret")
 	ctx = ContextWithCSRPublicKey(ctx, enrollmentPublicKey)
 
-	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces)
+	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces, nil)
 	err = verifier(ctx, mustMarshalAttestationClaims(t, claims))
 	if !errors.Is(err, ErrInvalidAttestation) {
 		t.Fatalf("expected invalid attestation, got %v", err)

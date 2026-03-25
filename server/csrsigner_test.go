@@ -118,11 +118,16 @@ func TestAttestationMiddlewareInvokesVerifierForGET(t *testing.T) {
 
 func TestDecodeAttestation(t *testing.T) {
 	tests := []struct {
-		name        string
-		attestation string
-		wantDevice  string
-		wantNonce   string
-		wantErr     error
+		name                string
+		attestation         string
+		wantDevice          string
+		wantNonce           string
+		wantAIKTPMPublic    string
+		wantActivationID    string
+		wantActivationProof string
+		wantEKPublic        string
+		wantEKURL           string
+		wantErr             error
 	}{
 		{
 			name:        "missing attestation",
@@ -150,10 +155,15 @@ func TestDecodeAttestation(t *testing.T) {
 			wantDevice:  "test-device",
 		},
 		{
-			name:        "valid structured payload",
-			attestation: base64.RawURLEncoding.EncodeToString([]byte(`{"device_id":" TEST-DEVICE ","key":{"public_key_spki_b64":"YWJj"},"attestation":{"nonce":"nonce-123"}}`)),
-			wantDevice:  "test-device",
-			wantNonce:   "nonce-123",
+			name:                "valid structured payload",
+			attestation:         base64.RawURLEncoding.EncodeToString([]byte(`{"device_id":" TEST-DEVICE ","key":{"public_key_spki_b64":"YWJj"},"attestation":{"nonce":"nonce-123","aik_tpm_public_b64":"dHBtLXB1YmxpYw","activation_id":" activation-001 ","activation_proof_b64":" cHJvb2Y ","ek_public_b64":"ZWstcHVibGlj","ek_certificate_url":" https://example.invalid/ek "}}`)),
+			wantDevice:          "test-device",
+			wantNonce:           "nonce-123",
+			wantAIKTPMPublic:    "dHBtLXB1YmxpYw",
+			wantActivationID:    "activation-001",
+			wantActivationProof: "cHJvb2Y",
+			wantEKPublic:        "ZWstcHVibGlj",
+			wantEKURL:           "https://example.invalid/ek",
 		},
 		{
 			name:        "valid padded base64url",
@@ -180,6 +190,21 @@ func TestDecodeAttestation(t *testing.T) {
 			}
 			if claims.Attestation.Nonce != tt.wantNonce {
 				t.Fatalf("want nonce %q, got %q", tt.wantNonce, claims.Attestation.Nonce)
+			}
+			if claims.Attestation.AIKTPMPublicB64 != tt.wantAIKTPMPublic {
+				t.Fatalf("want aik_tpm_public_b64 %q, got %q", tt.wantAIKTPMPublic, claims.Attestation.AIKTPMPublicB64)
+			}
+			if claims.Attestation.ActivationID != tt.wantActivationID {
+				t.Fatalf("want activation_id %q, got %q", tt.wantActivationID, claims.Attestation.ActivationID)
+			}
+			if claims.Attestation.ActivationProofB64 != tt.wantActivationProof {
+				t.Fatalf("want activation_proof_b64 %q, got %q", tt.wantActivationProof, claims.Attestation.ActivationProofB64)
+			}
+			if claims.Attestation.EKPublicB64 != tt.wantEKPublic {
+				t.Fatalf("want ek_public_b64 %q, got %q", tt.wantEKPublic, claims.Attestation.EKPublicB64)
+			}
+			if claims.Attestation.EKCertificateURL != tt.wantEKURL {
+				t.Fatalf("want ek_certificate_url %q, got %q", tt.wantEKURL, claims.Attestation.EKCertificateURL)
 			}
 		})
 	}
@@ -440,7 +465,7 @@ func TestMySQLDeviceIDAttestationVerifierAllowsRenewalSignerIdentity(t *testing.
 	})
 	ctx = ContextWithCSRPublicKey(ctx, publicKey)
 
-	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces)
+	verifier := MySQLDeviceIDAttestationVerifier(depot, nonces, nil)
 	if err := verifier(ctx, attestation); err != nil {
 		t.Fatalf("expected renewal attestation to pass, got %v", err)
 	}

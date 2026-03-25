@@ -3,26 +3,22 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: windows_canonical_renewal_e2e.sh [options]
+Usage: windows_activation_negative_renewal_e2e.sh [options]
 
 Build and transfer the current Windows MSI, install it on the live Windows VM,
-and verify that canonical TPM-backed issuance/renewal leaves a managed
-certificate present in both the managed directory and LocalMachine\My.
-
-This helper is intended to replace the ad hoc startup-script probes used during
-the Phase 2 rollout. It reuses the existing MSI build/install scripts and then
-compares the pre/post managed thumbprints emitted by install-mytunnelapp.ps1.
+then submit a same-key renewal with tampered activation_proof_b64 and verify
+that the server rejects it without rotating the managed certificate.
 
 Required:
   --windows-user <USER>               Windows username for MSI transfer
   --client-uid <UID>                  Registered client UID
   --enrollment-secret <SECRET>        One-time enrollment secret
-  --device-id-override <DEVICE_ID>    Registered device_id override currently used on the VM
+  --device-id-override <DEVICE_ID>    Registered device_id override for the VM
 
 Optional:
-  --server-url <URL>                  Full SCEP URL (default: Terraform-derived)
-  --poll-interval <DURATION>          Poll interval for installed service (default: 10s)
-  --renew-before <DURATION>           Renew-before for validation (default: 9000h)
+  --server-url <URL>                  Full SCEP URL (default: Terraform-derived internal URL)
+  --poll-interval <DURATION>          Poll interval for installed service (default: 1h)
+  --renew-before <DURATION>           Renew-before for installed service (default: 14d)
   --log-level <LEVEL>                 Service log level (default: debug)
   --wait-seconds <SECONDS>            Wait budget per install run (default: 420)
   --artifact-dir <DIR>                Directory for captured logs/summary
@@ -48,8 +44,8 @@ SERVER_URL=""
 PROJECT_ID=""
 ZONE=""
 INSTANCE=""
-POLL_INTERVAL="10s"
-RENEW_BEFORE="9000h"
+POLL_INTERVAL="1h"
+RENEW_BEFORE="14d"
 LOG_LEVEL="debug"
 WAIT_SECONDS=420
 FORCE_FRESH_INSTALL=0
@@ -148,7 +144,7 @@ if [[ -z "$TERRAFORM_DIR" ]]; then
 fi
 
 if [[ -z "$ARTIFACT_DIR" ]]; then
-  ARTIFACT_DIR="${REPO_ROOT}/build/windows-canonical-renewal"
+  ARTIFACT_DIR="${REPO_ROOT}/build/windows-activation-negative-renewal"
 fi
 mkdir -p "$ARTIFACT_DIR"
 
@@ -220,7 +216,8 @@ install_args=(
   --log-level "$LOG_LEVEL"
   --wait-seconds "$WAIT_SECONDS"
   --converge-to-local-service
-  --apply-registry-overrides
+  --require-thumbprint-change
+  --tamper-activation-proof-renewal
 )
 if [[ -n "$SERVER_URL" ]]; then
   install_args+=(--server-url "$SERVER_URL")
@@ -236,11 +233,9 @@ if [[ -n "$INSTANCE" ]]; then
 fi
 if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then
   install_args+=(--force-fresh-install)
-else
-  install_args+=(--require-thumbprint-change)
 fi
 
-echo "Installing MSI and waiting for observation markers"
+echo "Installing MSI and executing tampered activation renewal"
 if ! install_output="$("$INSTALL_SCRIPT" "${install_args[@]}" 2>&1)"; then
   printf '%s\n' "$install_output" | tee "$install_log" >&2
   exit 1
@@ -264,11 +259,9 @@ import sys
 summary = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 managed = summary.get("managed", {})
 service = summary.get("service", {})
-registry = summary.get("registry", {})
 logs = summary.get("logs", {})
-before = summary.get("managed_thumbprint_before")
+negative = summary.get("activation_negative") or {}
 after = summary.get("managed_thumbprint_after")
-force_fresh = bool(summary.get("fresh_install_requested"))
 
 errors = []
 if not managed.get("cert_exists"):
@@ -281,29 +274,43 @@ if service.get("state") != "Running":
     errors.append(f"MyTunnelService state was {service.get('state')!r}, expected 'Running'")
 if not after:
     errors.append("post-install managed thumbprint was empty")
-if before and not force_fresh and before == after:
-    errors.append("managed thumbprint did not change across the validation run")
+if not negative:
+    errors.append("activation_negative summary was missing")
+
+negative_before = negative.get("managed_thumbprint_before")
+negative_after = negative.get("managed_thumbprint_after")
+renewal_exit_code = negative.get("renewal_exit_code")
+
+if renewal_exit_code in (None, 0):
+    errors.append(f"tampered renewal exit code was {renewal_exit_code!r}, expected non-zero")
+if negative.get("renewal_rejected") is not True:
+    errors.append("tampered renewal was not marked as rejected")
+if negative.get("managed_thumbprint_changed") is not False:
+    errors.append("tampered renewal reported an unexpected thumbprint change")
+if not negative_before or not negative_after:
+    errors.append("tampered renewal thumbprints were incomplete")
+if negative_before and negative_after and negative_before != negative_after:
+    errors.append("tampered renewal rotated the managed certificate thumbprint")
+if after and negative_after and after != negative_after:
+    errors.append("marker summary thumbprint disagreed with activation_negative thumbprint")
 
 if errors:
-    print("windows_canonical_renewal_e2e: validation failed", file=sys.stderr)
+    print("windows_activation_negative_renewal_e2e: validation failed", file=sys.stderr)
     for error in errors:
         print(f" - {error}", file=sys.stderr)
-    print(
-        f"poll_interval={registry.get('poll_interval')!r} renew_before={registry.get('renew_before')!r} "
-        f"log_level={registry.get('log_level')!r}",
-        file=sys.stderr,
-    )
+    print(f"renewal_stdout={negative.get('renewal_stdout_excerpt')!r}", file=sys.stderr)
+    print(f"renewal_stderr={negative.get('renewal_stderr_excerpt')!r}", file=sys.stderr)
     print(f"latest_log_path={logs.get('latest_log_path')!r}", file=sys.stderr)
     print(f"log_excerpt={logs.get('latest_log_excerpt')!r}", file=sys.stderr)
     sys.exit(1)
 
 result = {
-    "result": "success_thumbprint_rotated" if before and before != after else "success_certificate_present",
-    "before_thumbprint": before,
-    "after_thumbprint": after,
+    "result": "success_tampered_activation_rejected",
+    "managed_thumbprint": after,
+    "renewal_exit_code": renewal_exit_code,
     "service_state": service.get("state"),
-    "managed_cert_path": managed.get("cert_path"),
-    "present_in_machine_store": managed.get("present_in_machine_store"),
+    "renewal_stdout_excerpt": negative.get("renewal_stdout_excerpt"),
+    "renewal_stderr_excerpt": negative.get("renewal_stderr_excerpt"),
 }
 print(json.dumps(result, indent=2))
 PY

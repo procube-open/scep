@@ -169,7 +169,7 @@ func newServer(t *testing.T, opts ...scepserver.ServiceOption) (*httptest.Server
 	}
 	logger := kitlog.NewNopLogger()
 	e := scepserver.MakeServerEndpoints(svc, "")
-	handler := scepserver.MakeHTTPHandler(depot, e, svc, logger, scepserver.NewAttestationNonceService(time.Minute))
+	handler := scepserver.MakeHTTPHandler(depot, e, svc, logger, scepserver.NewAttestationNonceService(time.Minute), scepserver.NewAttestationActivationService(time.Minute))
 	server := httptest.NewServer(handler)
 	teardown := func() {
 		server.Close()

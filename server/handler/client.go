@@ -151,6 +151,12 @@ func UpdateClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 }
 
 func normalizeClientAttributes(attributes map[string]interface{}) error {
+	if err := rejectDeprecatedClientAttributes(attributes); err != nil {
+		return err
+	}
+	if err := normalizeManagedClientTypeAttribute(attributes); err != nil {
+		return err
+	}
 	if err := normalizeDeviceIDAttribute(attributes); err != nil {
 		return err
 	}
@@ -160,6 +166,43 @@ func normalizeClientAttributes(attributes map[string]interface{}) error {
 	if err := normalizeSHA256FingerprintAttribute(attributes, utils.ClientAttributeAttestationEKCertSHA256); err != nil {
 		return err
 	}
+	if err := validateManagedClientAttributes(attributes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func rejectDeprecatedClientAttributes(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+	if _, ok := attributes[utils.ClientAttributeAttestationActivationReq]; ok {
+		return fmt.Errorf("%s has been replaced by %s", utils.ClientAttributeAttestationActivationReq, utils.ClientAttributeManagedClientType)
+	}
+	return nil
+}
+
+func normalizeManagedClientTypeAttribute(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+
+	value, ok := attributes[utils.ClientAttributeManagedClientType]
+	if !ok {
+		return nil
+	}
+
+	managedClientType, ok := value.(string)
+	if !ok {
+		return errors.New("managed_client_type must be a string")
+	}
+
+	managedClientType = utils.NormalizeManagedClientType(managedClientType)
+	if managedClientType == "" {
+		return fmt.Errorf("managed_client_type must be %q", utils.ManagedClientTypeWindowsMSI)
+	}
+
+	attributes[utils.ClientAttributeManagedClientType] = managedClientType
 	return nil
 }
 
@@ -185,6 +228,43 @@ func normalizeDeviceIDAttribute(attributes map[string]interface{}) error {
 
 	attributes[utils.ClientAttributeDeviceID] = deviceID
 	return nil
+}
+
+func validateManagedClientAttributes(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+
+	managedClientType, ok := attributes[utils.ClientAttributeManagedClientType].(string)
+	if !ok || managedClientType == "" {
+		return nil
+	}
+
+	if managedClientType == utils.ManagedClientTypeWindowsMSI {
+		if _, ok := lookupNormalizedDeviceIDAttribute(attributes); !ok {
+			return fmt.Errorf("device_id is required when managed_client_type=%s", utils.ManagedClientTypeWindowsMSI)
+		}
+	}
+
+	return nil
+}
+
+func lookupNormalizedDeviceIDAttribute(attributes map[string]interface{}) (string, bool) {
+	if attributes == nil {
+		return "", false
+	}
+
+	deviceID, ok := attributes[utils.ClientAttributeDeviceID].(string)
+	if !ok {
+		return "", false
+	}
+
+	deviceID = utils.NormalizeDeviceID(deviceID)
+	if deviceID == "" {
+		return "", false
+	}
+
+	return deviceID, true
 }
 
 func normalizeSHA256FingerprintAttribute(attributes map[string]interface{}, key string) error {

@@ -8,6 +8,7 @@ set -euo pipefail
 # Optional env vars / flags:
 #   SERVER_BASE_URL  / --server-base-url  (default: http://localhost:3000)
 #   DEVICE_ID        / --device-id        (default: generate_device_id.sh output)
+#   MANAGED_CLIENT_TYPE / --managed-client-type windows-msi
 #   AVAILABLE_PERIOD / --available-period (default: 30m)
 #   PENDING_PERIOD   / --pending-period   (default: 0s)
 #
@@ -25,6 +26,7 @@ Options:
   --server-base-url URL
   --uid TEST_UID
   --device-id DEVICE_ID
+  --managed-client-type windows-msi
   --secret SECRET
   --available-period DURATION
   --pending-period DURATION
@@ -82,9 +84,30 @@ PY
 SERVER_BASE_URL="${SERVER_BASE_URL:-http://localhost:3000}"
 TEST_UID="${TEST_UID:-}"
 DEVICE_ID="${DEVICE_ID:-}"
+MANAGED_CLIENT_TYPE="${MANAGED_CLIENT_TYPE:-}"
+MANAGED_CLIENT_TYPE_SET=0
 SECRET="${SECRET:-}"
 AVAILABLE_PERIOD="${AVAILABLE_PERIOD:-30m}"
 PENDING_PERIOD="${PENDING_PERIOD:-0s}"
+
+normalize_managed_client_type() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$value" in
+    windows-msi)
+      printf '%s' "$value"
+      ;;
+    *)
+      echo "managed client type must be windows-msi" >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ -n "$MANAGED_CLIENT_TYPE" ]]; then
+  MANAGED_CLIENT_TYPE="$(normalize_managed_client_type "$MANAGED_CLIENT_TYPE")"
+  MANAGED_CLIENT_TYPE_SET=1
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -98,6 +121,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device-id)
       DEVICE_ID="${2:?missing value for --device-id}"
+      shift 2
+      ;;
+    --managed-client-type)
+      MANAGED_CLIENT_TYPE="$(normalize_managed_client_type "${2:?missing value for --managed-client-type}")"
+      MANAGED_CLIENT_TYPE_SET=1
       shift 2
       ;;
     --secret)
@@ -145,27 +173,40 @@ encoded_uid="$(urlencode "$TEST_UID")"
 client_json="$(api_request "GET" "/api/client/${encoded_uid}" "" "200")"
 
 if [[ "$client_json" == "null" ]]; then
-  add_payload="$(python3 - "$TEST_UID" "$DEVICE_ID" <<'PY'
+  add_payload="$(python3 - "$TEST_UID" "$DEVICE_ID" "$MANAGED_CLIENT_TYPE_SET" "$MANAGED_CLIENT_TYPE" <<'PY'
 import json
 import sys
+attributes = {"device_id": sys.argv[2]}
+if sys.argv[3] == "1":
+    attributes["managed_client_type"] = sys.argv[4]
 print(json.dumps({
     "uid": sys.argv[1],
-    "attributes": {"device_id": sys.argv[2]},
+    "attributes": attributes,
 }, separators=(",", ":")))
 PY
 )"
   api_request "POST" "/admin/api/client/add" "$add_payload" "200" >/dev/null
 else
-  readarray -t update_data < <(printf '%s' "$client_json" | python3 - "$TEST_UID" "$DEVICE_ID" <<'PY'
+  readarray -t update_data < <(printf '%s' "$client_json" | python3 - "$TEST_UID" "$DEVICE_ID" "$MANAGED_CLIENT_TYPE_SET" "$MANAGED_CLIENT_TYPE" <<'PY'
 import json
 import sys
 uid = sys.argv[1]
 device_id = sys.argv[2]
+set_managed_client_type = sys.argv[3] == "1"
+managed_client_type = sys.argv[4]
 client = json.load(sys.stdin)
 attributes = client.get("attributes") or {}
 current = attributes.get("device_id")
 needs_update = str(current) != device_id
 attributes["device_id"] = device_id
+if "attestation_activation_required" in attributes:
+    needs_update = True
+    attributes.pop("attestation_activation_required", None)
+if set_managed_client_type:
+    current_managed_client_type = attributes.get("managed_client_type")
+    if current_managed_client_type != managed_client_type:
+        needs_update = True
+    attributes["managed_client_type"] = managed_client_type
 print("1" if needs_update else "0")
 print(json.dumps({
     "uid": uid,
@@ -194,6 +235,12 @@ api_request "POST" "/admin/api/secret/create" "$secret_payload" "201" >/dev/null
 printf 'uid=%s\n' "$TEST_UID"
 printf 'secret=%s\n' "$SECRET"
 printf 'device_id=%s\n' "$DEVICE_ID"
+if [[ "$MANAGED_CLIENT_TYPE_SET" == "1" ]]; then
+  printf 'managed_client_type=%s\n' "$MANAGED_CLIENT_TYPE"
+fi
 printf 'export SCEP_TEST_UID=%q\n' "$TEST_UID"
 printf 'export SCEP_SECRET=%q\n' "$SECRET"
 printf 'export SCEP_DEVICE_ID=%q\n' "$DEVICE_ID"
+if [[ "$MANAGED_CLIENT_TYPE_SET" == "1" ]]; then
+  printf 'export SCEP_MANAGED_CLIENT_TYPE=%q\n' "$MANAGED_CLIENT_TYPE"
+fi

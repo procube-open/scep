@@ -106,6 +106,27 @@ func (s *AttestationNonceService) Consume(clientUID, deviceID, nonce string) boo
 	return true
 }
 
+func (s *AttestationNonceService) Has(clientUID, deviceID, nonce string) bool {
+	if s == nil {
+		return false
+	}
+
+	clientUID = strings.TrimSpace(clientUID)
+	deviceID = utils.NormalizeDeviceID(deviceID)
+	nonce = strings.TrimSpace(nonce)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pruneExpiredLocked()
+
+	record, ok := s.records[nonce]
+	if !ok {
+		return false
+	}
+	return record.ClientUID == clientUID && record.DeviceID == deviceID
+}
+
 func (s *AttestationNonceService) pruneExpiredLocked() {
 	now := s.now()
 	for nonce, record := range s.records {

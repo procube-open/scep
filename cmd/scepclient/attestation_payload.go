@@ -31,11 +31,17 @@ type attestationKey struct {
 }
 
 type attestationBundle struct {
-	Format            string `json:"format"`
-	Nonce             string `json:"nonce"`
-	AIKPublicB64      string `json:"aik_public_b64,omitempty"`
-	QuoteB64          string `json:"quote_b64,omitempty"`
-	QuoteSignatureB64 string `json:"quote_signature_b64,omitempty"`
+	Format             string `json:"format"`
+	Nonce              string `json:"nonce"`
+	AIKPublicB64       string `json:"aik_public_b64,omitempty"`
+	AIKTPMPublicB64    string `json:"aik_tpm_public_b64,omitempty"`
+	ActivationID       string `json:"activation_id,omitempty"`
+	ActivationProofB64 string `json:"activation_proof_b64,omitempty"`
+	QuoteB64           string `json:"quote_b64,omitempty"`
+	QuoteSignatureB64  string `json:"quote_signature_b64,omitempty"`
+	EKPublicB64        string `json:"ek_public_b64,omitempty"`
+	EKCertB64          string `json:"ek_cert_b64,omitempty"`
+	EKCertificateURL   string `json:"ek_certificate_url,omitempty"`
 }
 
 type attestationMeta struct {
@@ -62,8 +68,14 @@ func decodeAttestationPayload(encoded string) (*attestationClaims, error) {
 	claims.Attestation.Format = strings.TrimSpace(claims.Attestation.Format)
 	claims.Attestation.Nonce = strings.TrimSpace(claims.Attestation.Nonce)
 	claims.Attestation.AIKPublicB64 = strings.TrimSpace(claims.Attestation.AIKPublicB64)
+	claims.Attestation.AIKTPMPublicB64 = strings.TrimSpace(claims.Attestation.AIKTPMPublicB64)
+	claims.Attestation.ActivationID = strings.TrimSpace(claims.Attestation.ActivationID)
+	claims.Attestation.ActivationProofB64 = strings.TrimSpace(claims.Attestation.ActivationProofB64)
 	claims.Attestation.QuoteB64 = strings.TrimSpace(claims.Attestation.QuoteB64)
 	claims.Attestation.QuoteSignatureB64 = strings.TrimSpace(claims.Attestation.QuoteSignatureB64)
+	claims.Attestation.EKPublicB64 = strings.TrimSpace(claims.Attestation.EKPublicB64)
+	claims.Attestation.EKCertB64 = strings.TrimSpace(claims.Attestation.EKCertB64)
+	claims.Attestation.EKCertificateURL = strings.TrimSpace(claims.Attestation.EKCertificateURL)
 	claims.Meta.Hostname = strings.TrimSpace(claims.Meta.Hostname)
 	claims.Meta.OSVersion = strings.TrimSpace(claims.Meta.OSVersion)
 	claims.Meta.GeneratedAt = strings.TrimSpace(claims.Meta.GeneratedAt)
@@ -84,6 +96,13 @@ func encodeAttestationPayload(claims *attestationClaims) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+func decodeBase64URL(payload string) ([]byte, error) {
+	if decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(payload)); err == nil {
+		return decoded, nil
+	}
+	return base64.URLEncoding.DecodeString(strings.TrimSpace(payload))
+}
+
 func validatePublicKeySPKI(publicKeySPKI string) error {
 	der, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(publicKeySPKI))
 	if err != nil {
@@ -100,18 +119,30 @@ func buildCanonicalAttestationClaims(
 	key attestationKey,
 	nonce string,
 	aikPublicB64 string,
+	aikTPMPublicB64 string,
+	activationID string,
+	activationProofB64 string,
 	quoteB64 string,
 	quoteSignatureB64 string,
+	ekPublicB64 string,
+	ekCertB64 string,
+	ekCertificateURL string,
 ) *attestationClaims {
 	return &attestationClaims{
 		DeviceID: normalizeDeviceID(deviceID),
 		Key:      key,
 		Attestation: attestationBundle{
-			Format:            canonicalWindowsTPMAttestationFormat,
-			Nonce:             strings.TrimSpace(nonce),
-			AIKPublicB64:      strings.TrimSpace(aikPublicB64),
-			QuoteB64:          strings.TrimSpace(quoteB64),
-			QuoteSignatureB64: strings.TrimSpace(quoteSignatureB64),
+			Format:             canonicalWindowsTPMAttestationFormat,
+			Nonce:              strings.TrimSpace(nonce),
+			AIKPublicB64:       strings.TrimSpace(aikPublicB64),
+			AIKTPMPublicB64:    strings.TrimSpace(aikTPMPublicB64),
+			ActivationID:       strings.TrimSpace(activationID),
+			ActivationProofB64: strings.TrimSpace(activationProofB64),
+			QuoteB64:           strings.TrimSpace(quoteB64),
+			QuoteSignatureB64:  strings.TrimSpace(quoteSignatureB64),
+			EKPublicB64:        strings.TrimSpace(ekPublicB64),
+			EKCertB64:          strings.TrimSpace(ekCertB64),
+			EKCertificateURL:   strings.TrimSpace(ekCertificateURL),
 		},
 		Meta: attestationMeta{
 			Hostname:    currentHostname(),

@@ -185,6 +185,20 @@ impl ServiceEngine {
                     remaining.min(default_delay)
                 }
             }
+            ServiceState::Issued { certificate } => {
+                let now = self.platform.clock.now();
+                let Some(renewal_due_at) =
+                    certificate.renewal_due_at(config.renew_before, default_delay)
+                else {
+                    return default_delay;
+                };
+                let remaining = renewal_due_at.duration_since(now).unwrap_or_default();
+                if remaining.is_zero() {
+                    default_delay
+                } else {
+                    remaining.min(default_delay)
+                }
+            }
             _ => default_delay,
         }
     }
@@ -292,7 +306,7 @@ impl ServiceEngine {
         match self
             .platform
             .machine_store
-            .probe_current_certificate(&renewal, config.renew_before)
+            .probe_current_certificate(&renewal, config.renew_before, config.effective_poll_interval())
         {
             Ok(CertificateInventory::Active(certificate)) => ServiceState::Issued { certificate },
             Ok(CertificateInventory::RenewalDue(context)) => ServiceState::RenewalDue { context },
@@ -576,6 +590,32 @@ mod tests {
     }
 
     #[test]
+    fn issued_state_shortens_next_tick_to_renewal_due_time() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let mut engine = ServiceEngine::new(ServicePlatform {
+            clock: PlatformClock::default().with_now(move || now),
+            ..ServicePlatform::default()
+        });
+        engine.state = ServiceState::Issued {
+            certificate: InstalledCertificate {
+                store_path: r"LocalMachine\My",
+                thumbprint: Some("thumbprint-001".to_owned()),
+                key_name_hint: Some("client-001-device-001".to_owned()),
+                not_before: Some(now - Duration::from_secs(3_000)),
+                not_after: Some(now + Duration::from_secs(900)),
+            },
+        };
+
+        let config = ServiceConfig {
+            poll_interval: Duration::from_secs(3_600),
+            renew_before: Duration::from_secs(600),
+            ..ready_config()
+        };
+
+        assert_eq!(engine.next_tick_delay(&config), Duration::from_secs(600));
+    }
+
+    #[test]
     fn successful_initial_enrollment_installs_certificate_and_clears_secret() {
         let clear_calls = Arc::new(Mutex::new(0usize));
         let submitted_keys = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -594,6 +634,8 @@ mod tests {
                         store_path: r"LocalMachine\My",
                         thumbprint: Some("thumbprint-001".to_owned()),
                         key_name_hint: Some(pending.key.key_name_hint.clone()),
+                        not_before: None,
+                        not_after: None,
                     })
                 },
             ),
@@ -656,6 +698,8 @@ mod tests {
                 store_path: r"LocalMachine\My",
                 thumbprint: Some("thumbprint-001".to_owned()),
                 key_name_hint: Some("client-001-device-001".to_owned()),
+                not_before: None,
+                not_after: None,
             },
         };
         let observed_keys = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -663,7 +707,7 @@ mod tests {
             machine_store: MachineCertificateStore::default()
                 .with_probe_current_certificate({
                     let renewal_context = renewal_context.clone();
-                    move |_, _| Ok(CertificateInventory::RenewalDue(renewal_context.clone()))
+                    move |_, _, _| Ok(CertificateInventory::RenewalDue(renewal_context.clone()))
                 })
                 .with_install_renewed_certificate(|context, certificate_der| {
                     assert_eq!(certificate_der, &[0x30, 0x82, 0x02]);

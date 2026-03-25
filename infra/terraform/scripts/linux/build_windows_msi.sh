@@ -5,8 +5,12 @@ usage() {
   cat <<'EOF'
 Usage: build_windows_msi.sh [options]
 
-Cross-builds service.exe for Windows, stages wixl inputs locally, builds a local
-silent-install MSI on Linux, and optionally copies the MSI to the Windows client VM.
+Cross-builds service.exe for Windows, stages installer inputs locally, builds a
+Windows MSI on Linux, and optionally copies the MSI to the Windows client VM.
+
+When WiX v4 (`wix`) is available, the script prefers `installer/main.wxs` as the
+source of truth and builds the converged MSI from that WiX definition. Otherwise
+it falls back to the existing `wixl`-based silent-install package.
 
 When --windows-user is provided, the script first tries gcloud compute scp to
 <user>:\~/MyTunnelApp.msi. If the Windows VM does not accept SSH on port 22,
@@ -23,9 +27,11 @@ Options:
   --repo-root <PATH>                Repository root containing installer/ and rust-client/service
                                     (default: auto-detected from script location)
   --stage-dir <PATH>                Local staging directory for WiX inputs
-                                    (default: <repo-root>/build/windows-msi)
+                                     (default: <repo-root>/build/windows-msi)
   --output-path <PATH>              Output MSI path
-                                    (default: <stage-dir>/installer/dist/MyTunnelApp.msi)
+                                     (default: <stage-dir>/installer/dist/MyTunnelApp.msi)
+  --msi-builder <auto|wix|wixl>     Packaging backend to use
+                                    (default: auto; prefer WiX v4 when available)
   --skip-rustup-target              Skip rustup target add x86_64-pc-windows-gnu
   -h, --help                        Show this help text
 EOF
@@ -44,10 +50,12 @@ SKIP_RUSTUP_TARGET=0
 WINDOWS_TARGET="x86_64-pc-windows-gnu"
 WINDOWS_BINARY_RELATIVE="rust-client/target/${WINDOWS_TARGET}/release/service.exe"
 SCEPCLIENT_BINARY_RELATIVE="cmd/scepclient/scepclient.exe"
+WIX_SOURCE_RELATIVE="installer/main.wxs"
 WIXL_SOURCE_RELATIVE="installer/main.wixl.wxs"
 WINDOWS_STARTUP_SCRIPT_RELATIVE="infra/terraform/scripts/windows/windows-client-startup.ps1"
 WINDOWS_PUBLIC_MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
 SSH_COPY_TIMEOUT_SECONDS=45
+MSI_BUILDER="auto"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -89,6 +97,11 @@ while [[ $# -gt 0 ]]; do
     --output-path)
       [[ $# -ge 2 ]] || { echo "Missing value for --output-path" >&2; usage; exit 1; }
       OUTPUT_PATH="$2"
+      shift 2
+      ;;
+    --msi-builder)
+      [[ $# -ge 2 ]] || { echo "Missing value for --msi-builder" >&2; usage; exit 1; }
+      MSI_BUILDER="$2"
       shift 2
       ;;
     --skip-rustup-target)
@@ -138,6 +151,31 @@ ensure_command() {
   local command_name="$1"
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command not found: $command_name" >&2
+    exit 1
+  fi
+}
+
+resolve_msi_builder() {
+  case "$MSI_BUILDER" in
+    auto)
+      if command -v wix >/dev/null 2>&1; then
+        MSI_BUILDER="wix"
+      else
+        MSI_BUILDER="wixl"
+      fi
+      ;;
+    wix|wixl)
+      ;;
+    *)
+      echo "Unsupported --msi-builder value: ${MSI_BUILDER}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+ensure_wix_ui_extension() {
+  if ! wix extension add WixToolset.UI.wixext >/dev/null 2>&1; then
+    echo "Failed to add WixToolset.UI.wixext. Install or pre-cache the WiX UI extension before using --msi-builder wix." >&2
     exit 1
   fi
 }
@@ -251,8 +289,13 @@ fi
 ensure_command cargo
 ensure_command rustup
 ensure_command x86_64-w64-mingw32-gcc
-ensure_command wixl
 ensure_command sha256sum
+resolve_msi_builder
+if [[ "$MSI_BUILDER" == "wix" ]]; then
+  ensure_command wix
+else
+  ensure_command wixl
+fi
 
 if [[ -n "$WINDOWS_USER" ]]; then
   ensure_command gcloud
@@ -280,16 +323,31 @@ echo "Building Windows helper binaries"
 
 echo "Staging WiX inputs: ${STAGE_DIR}"
 rm -rf "$STAGE_DIR"
-mkdir -p "${STAGE_DIR}/installer" "${STAGE_DIR}/rust-client/service/target/release" "${STAGE_DIR}/cmd/scepclient" "$(dirname "$OUTPUT_PATH")"
+mkdir -p \
+  "${STAGE_DIR}/installer" \
+  "${STAGE_DIR}/rust-client/service/target/release" \
+  "${STAGE_DIR}/rust-client/target/release" \
+  "${STAGE_DIR}/cmd/scepclient" \
+  "$(dirname "$OUTPUT_PATH")"
+cp "${REPO_ROOT}/${WIX_SOURCE_RELATIVE}" "${STAGE_DIR}/installer/main.wxs"
 cp "${REPO_ROOT}/${WIXL_SOURCE_RELATIVE}" "${STAGE_DIR}/installer/main.wixl.wxs"
 cp "${REPO_ROOT}/${WINDOWS_BINARY_RELATIVE}" "${STAGE_DIR}/rust-client/service/target/release/service.exe"
+cp "${REPO_ROOT}/${WINDOWS_BINARY_RELATIVE}" "${STAGE_DIR}/rust-client/target/release/service.exe"
 cp "${REPO_ROOT}/${SCEPCLIENT_BINARY_RELATIVE}" "${STAGE_DIR}/cmd/scepclient/scepclient.exe"
 
-echo "Building MSI locally: ${OUTPUT_PATH}"
-(
-  cd "$STAGE_DIR"
-  wixl -a x64 -o "$OUTPUT_PATH" installer/main.wixl.wxs
-)
+echo "Building MSI locally with ${MSI_BUILDER}: ${OUTPUT_PATH}"
+if [[ "$MSI_BUILDER" == "wix" ]]; then
+  (
+    cd "$STAGE_DIR"
+    ensure_wix_ui_extension
+    wix build -arch x64 -ext WixToolset.UI.wixext -o "$OUTPUT_PATH" installer/main.wxs
+  )
+else
+  (
+    cd "$STAGE_DIR"
+    wixl -a x64 -o "$OUTPUT_PATH" installer/main.wixl.wxs
+  )
+fi
 
 if [[ -n "$WINDOWS_USER" ]]; then
   echo "Copying MSI to ${WINDOWS_USER}@${INSTANCE}:~/MyTunnelApp.msi"

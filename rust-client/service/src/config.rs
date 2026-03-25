@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use base64::Engine;
 use serde::Deserialize;
 use std::fmt;
@@ -426,6 +427,8 @@ fn build_service_config(
         warnings.push(warning);
     }
 
+    warnings.extend(validate_duration_relationships(poll_interval, renew_before));
+
     ServiceConfig {
         server_url: optional_value(raw.server_url),
         client_uid: optional_value(raw.client_uid),
@@ -437,6 +440,21 @@ fn build_service_config(
         sources,
         warnings,
     }
+}
+
+fn validate_duration_relationships(
+    poll_interval: Duration,
+    renew_before: Duration,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !renew_before.is_zero() && poll_interval > renew_before {
+        warnings.push(format!(
+            "poll_interval {}s exceeds renew_before {}s; the service may not revisit LocalMachine\\My until the renewal window is already open",
+            poll_interval.as_secs(),
+            renew_before.as_secs()
+        ));
+    }
+    warnings
 }
 
 fn push_missing<T>(missing: &mut Vec<RequiredField>, value: Option<&T>, field: RequiredField) {
@@ -919,6 +937,24 @@ mod tests {
         assert_eq!(config.renew_before, DEFAULT_RENEW_BEFORE);
         assert_eq!(config.log_level, DEFAULT_LOG_LEVEL);
         assert_eq!(config.warnings.len(), 3);
+    }
+
+    #[test]
+    fn warns_when_poll_interval_exceeds_renew_before() {
+        let config = build_service_config(
+            RawServiceConfig {
+                poll_interval: Some("2h".to_owned()),
+                renew_before: Some("30m".to_owned()),
+                ..RawServiceConfig::default()
+            },
+            vec![ConfigSource::Registry],
+            Vec::new(),
+        );
+
+        assert_eq!(config.poll_interval, Duration::from_secs(2 * 60 * 60));
+        assert_eq!(config.renew_before, Duration::from_secs(30 * 60));
+        assert_eq!(config.warnings.len(), 1);
+        assert!(config.warnings[0].contains("poll_interval 7200s exceeds renew_before 1800s"));
     }
 
     #[test]
