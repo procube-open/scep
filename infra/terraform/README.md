@@ -211,24 +211,35 @@ gcloud compute scp "$MSI_PATH" "${WINDOWS_USER}@${CLIENT_INSTANCE}:~/MyTunnelApp
 
 1. `MyTunnelApp.msi` をダブルクリックします。
 2. 通常のインストーラー画面を進めると、SCEP 設定入力ダイアログが表示されます。
-3. 最初の画面で次を入力します。
-   - `SERVER_URL`: **SCEP サーバーの URL**。証明書発行要求を送る宛先です。
-   - `CLIENT_UID`: **サーバー側に事前登録済みのクライアント識別子**です。
-   - `ENROLLMENT_SECRET`: **初回発行だけに使うワンタイム秘密値**です。
-4. **Advanced...** を開き、次を入力または確認します。
-   - `DEVICE_ID_OVERRIDE`: **端末識別子の手動上書き値**です。現在のフェーズでは自動導出が未実装のため、まだ必須です。
+3. **Step 1** で MSI 自身が Windows TPM endorsement key から canonical `CURRENT_DEVICE_ID` を probe します。表示された値を管理者がサーバーへ preregister します。
+4. **Step 2** で次を入力し、**Check** または **Next** で prereg-check を実行します。
+   - `SERVER_URL`: **SCEP サーバーの URL**。証明書発行要求と prereg-check を送る宛先です。
+   - `CLIENT_UID`: **サーバー側に事前登録済みの opaque client identifier** です。
+5. prereg-check が `ready` になったら **Step 3** で `ENROLLMENT_SECRET` を入力します。これは **初回発行だけに使うワンタイム秘密値**です。
+6. 必要なら **Advanced...** を開き、次を確認または入力します。
+   - `EXPECTED_DEVICE_ID`: **Step 1 で probe された canonical TPM identity** です。release build では MSI が自動設定し、手入力 override は受け付けません。
    - `POLL_INTERVAL`: **更新確認の間隔**です。省略時は既定値を使えます。
    - `RENEW_BEFORE`: **証明書期限のどれくらい前から更新を試みるか**を表す値です。省略時は既定値を使えます。
    - `LOG_LEVEL`: **ログの詳細度**です。通常は既定値のままで構いません。
-5. **Install** を押してインストールを完了します。
+7. **Install** を押してインストールを完了します。
 
 補足:
 
-- 現フェーズでは `DEVICE_ID_OVERRIDE` が必要なため、**「GUI だけで完結する」方針は source 上では守られている**ものの、**入力は基本画面の 3 項目だけでは完了せず、Advanced 画面も使う必要があります**。
+- GUI MSI は page 1 で canonical TPM identity を自動 probe し、page 2 で `/api/attestation/prereg-check` を叩いて `ready | client_not_found | device_id_mismatch | not_issuable_yet` を確認します。
 - GCP 検証環境で Windows VM から server VM へ到達させる場合、`SERVER_URL` は通常 `http://<server_internal_ip>:3000/scep` を使います。**`server_internal_ip`** は、Terraform が出力する **同一 VPC 内の内部 IP アドレス**です。
 - GUI 付き MSI の live 検証は、silent/fallback path ほどはまだ進んでいません。現時点で最も強く実証されているのは後述の silent install / helper path です。
 
 ### A.4-2. サイレントインストール
+
+まず canonical TPM identity を確認します。`build_windows_msi.sh --windows-user ...` は `device-id-probe.exe` も一緒に Windows VM へ転送し、別 helper `probe_windows_device_id.sh` で JSON を取得できます。
+
+```bash
+cd <this-repo>
+./infra/terraform/scripts/linux/probe_windows_device_id.sh \
+  --windows-user "<reset-windows-passwordで取得したユーザー名>"
+```
+
+出力 JSON の `expected_device_id` を preregistration し、その値を silent install 時の `EXPECTED_DEVICE_ID` に使います。
 
 ```powershell
 $MsiPathCandidates = @(
@@ -248,13 +259,13 @@ New-Item -ItemType Directory -Path 'C:\ProgramData\MyTunnelApp' -Force | Out-Nul
     "/i `"$MsiPath`"",
     "SERVER_URL=`"$ServiceUrl`"",
     "CLIENT_UID=`"client-001`"",
-  "ENROLLMENT_SECRET=`"one-time-secret`"",
-  "DEVICE_ID_OVERRIDE=`"device-001`"",
-  "POLL_INTERVAL=`"1h`"",
-  "RENEW_BEFORE=`"14d`"",
-  "LOG_LEVEL=`"info`"",
-  "/qn",
-  "/norestart"
+    "ENROLLMENT_SECRET=`"one-time-secret`"",
+    "EXPECTED_DEVICE_ID=`"<probe_windows_device_id.sh で得た expected_device_id>`"",
+    "POLL_INTERVAL=`"1h`"",
+    "RENEW_BEFORE=`"14d`"",
+    "LOG_LEVEL=`"info`"",
+    "/qn",
+    "/norestart"
 ) -join ' '
 Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -NoNewWindow
 ```
@@ -263,7 +274,7 @@ Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -NoNewWindow
 
 - 例: `http://<SERVER_INTERNAL_IP>:3000/scep`
 - 互換用に MSI 内には旧 `SERVICE_URL` property も残していますが、この手順では `SERVER_URL=...` を指定してください。
-- `DEVICE_ID_OVERRIDE` は本来検証環境向け override ですが、現フェーズでは自動 `device_id` 導出が未実装のため必須です。
+- `EXPECTED_DEVICE_ID` は `device-id-probe.exe` / `probe_windows_device_id.sh` で得た canonical TPM identity と一致させてください。helper は install 前に prereg-check を実行し、`ready` でなければ fail fast します。
 
 現状の MSI は non-secret 設定をレジストリへ保存し、`ENROLLMENT_SECRET` はインストール直後にサービスが `EnrollmentSecretProtected` へ移行する前提で短時間だけレジストリへステージングします。
 WiX だけで直接 DPAPI 化しているわけではない点は現フェーズの制約です。
@@ -283,12 +294,14 @@ cd <this-repo>
 ./infra/terraform/scripts/linux/install_windows_msi.sh \
   --client-uid "client-001" \
   --enrollment-secret "one-time-secret" \
-  --device-id-override "device-001"
+  --expected-device-id "<probe_windows_device_id.sh で得た expected_device_id>"
 ```
 
 補足:
 
 - 既定では `C:\Users\Public\MyTunnelApp.msi` を install 対象にするため、先に `build_windows_msi.sh --windows-user ...` などで MSI を Windows VM へ転送しておいてください。
+- `build_windows_msi.sh --windows-user ...` は `device-id-probe.exe` も同時に転送します。silent preregistration では `probe_windows_device_id.sh` を併用してください。
+- `install_windows_msi.sh` / `install-mytunnelapp.ps1` は `device-id-probe.exe -json` で local TPM identity を再確認し、`/api/attestation/prereg-check` が `ready` でなければ `msiexec` 実行前に停止します。
 - helper は一時的に enrollment secret を startup-script metadata へ埋め込みます。これは GCP 検証用の one-time secret 前提で使い、実行後は元の startup script へ戻します。
 - シリアルログでは `MYTUNNEL_MSI_INSTALL_DONE` / `MYTUNNEL_MSI_INSTALL_FAILED` を確認できます。
 
@@ -297,7 +310,7 @@ cd <this-repo>
 ### A.5-1. レジストリ確認
 
 ```powershell
-Get-ItemProperty -Path 'HKLM:\SOFTWARE\MyTunnelApp' -Name ServerUrl,ConfigURL,ClientUid,DeviceId,DeviceIdOverride,PollInterval,RenewBefore,LogLevel,EnrollmentSecretProtected -ErrorAction SilentlyContinue
+Get-ItemProperty -Path 'HKLM:\SOFTWARE\MyTunnelApp' -Name ServerUrl,ConfigURL,ClientUid,ExpectedDeviceId,DeviceId,PollInterval,RenewBefore,LogLevel,EnrollmentSecretProtected -ErrorAction SilentlyContinue
 ```
 
 ### A.5-2. サービス状態確認
@@ -337,7 +350,7 @@ Get-WinEvent -LogName Application -MaxEvents 200 |
   "server_url": "http://<SCEP_SERVER_IP>:3000/scep",
   "client_uid": "client-001",
   "enrollment_secret": "one-time-secret",
-  "device_id": "device-001",
+  "expected_device_id": "device-001",
   "poll_interval": "1h",
   "renew_before": "14d",
   "log_level": "info"
@@ -350,6 +363,7 @@ Get-WinEvent -LogName Application -MaxEvents 200 |
 利用スクリプト:
 - [`scripts/test/preregister_client.sh`](scripts/test/preregister_client.sh)
 - [`scripts/linux/preregister_client_via_startup.sh`](scripts/linux/preregister_client_via_startup.sh)
+- [`scripts/linux/probe_windows_device_id.sh`](scripts/linux/probe_windows_device_id.sh)
 - [`scripts/test/attestation_e2e.sh`](scripts/test/attestation_e2e.sh)
 - [`scripts/test/attestation_e2e_canonical.sh`](scripts/test/attestation_e2e_canonical.sh)
 - [`scripts/test/generate_device_id.sh`](scripts/test/generate_device_id.sh)
@@ -422,7 +436,7 @@ WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
   --windows-user "$WINDOWS_USER" \
   --client-uid "msi-stable-20260318051422" \
   --enrollment-secret "renewal-placeholder" \
-  --device-id-override "device-20260318051422"
+  --expected-device-id "device-20260318051422"
 ```
 
 補足:
@@ -457,7 +471,7 @@ WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
   --windows-user "$WINDOWS_USER" \
   --client-uid "msi-neg-20260325050312" \
   --enrollment-secret "one-time-secret" \
-  --device-id-override "device-neg-20260325050312" \
+  --expected-device-id "device-neg-20260325050312" \
   --force-fresh-install
 ```
 

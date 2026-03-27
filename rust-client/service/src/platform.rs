@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-#[cfg(windows)]
-use std::path::PathBuf;
 
 #[cfg(windows)]
 use std::ptr::null_mut;
@@ -57,10 +57,11 @@ type ClearSecretFn = dyn Fn(&StagedEnrollmentSecret) -> Result<(), PlatformError
 type EnsureMachineKeyFn = dyn Fn(&EnrollmentSettings, &StagedEnrollmentSecret) -> Result<TpmKeyHandle, PlatformError>
     + Send
     + Sync;
-type ProbeCurrentCertificateFn =
-    dyn Fn(&RenewalSettings, Duration, Duration) -> Result<CertificateInventory, PlatformError>
-        + Send
-        + Sync;
+type ProbeCurrentCertificateFn = dyn Fn(&RenewalSettings, Duration, Duration) -> Result<CertificateInventory, PlatformError>
+    + Send
+    + Sync;
+type ResolveExpectedDeviceIdentityFn =
+    dyn Fn(&str) -> Result<ResolvedDeviceIdentity, PlatformError> + Send + Sync;
 type InstallIssuedCertificateFn =
     dyn Fn(&PendingEnrollment, &[u8]) -> Result<InstalledCertificate, PlatformError> + Send + Sync;
 type InstallRenewedCertificateFn =
@@ -93,10 +94,19 @@ pub enum PlatformErrorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlatformErrorContext {
+    DeviceIdentityMismatch {
+        expected_device_id: String,
+        current_device_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformError {
     pub kind: PlatformErrorKind,
     pub component: &'static str,
     pub message: String,
+    pub context: Option<PlatformErrorContext>,
 }
 
 impl PlatformError {
@@ -105,6 +115,7 @@ impl PlatformError {
             kind: PlatformErrorKind::NotImplemented,
             component,
             message: message.into(),
+            context: None,
         }
     }
 
@@ -113,6 +124,7 @@ impl PlatformError {
             kind: PlatformErrorKind::Temporary,
             component,
             message: message.into(),
+            context: None,
         }
     }
 
@@ -121,11 +133,39 @@ impl PlatformError {
             kind: PlatformErrorKind::Permanent,
             component,
             message: message.into(),
+            context: None,
+        }
+    }
+
+    pub fn with_device_identity_mismatch(
+        component: &'static str,
+        expected_device_id: impl Into<String>,
+        current_device_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: PlatformErrorKind::Permanent,
+            component,
+            message: message.into(),
+            context: Some(PlatformErrorContext::DeviceIdentityMismatch {
+                expected_device_id: expected_device_id.into(),
+                current_device_id: current_device_id.into(),
+            }),
         }
     }
 
     pub fn is_not_implemented(&self) -> bool {
         self.kind == PlatformErrorKind::NotImplemented
+    }
+
+    pub fn device_identity_mismatch_details(&self) -> Option<(&str, &str)> {
+        match &self.context {
+            Some(PlatformErrorContext::DeviceIdentityMismatch {
+                expected_device_id,
+                current_device_id,
+            }) => Some((expected_device_id.as_str(), current_device_id.as_str())),
+            None => None,
+        }
     }
 }
 
@@ -213,7 +253,11 @@ impl InstalledCertificate {
     ) -> Option<SystemTime> {
         let not_after = self.not_after?;
         let effective_renew_before = self.effective_renew_before(renew_before, poll_interval);
-        Some(not_after.checked_sub(effective_renew_before).unwrap_or(not_after))
+        Some(
+            not_after
+                .checked_sub(effective_renew_before)
+                .unwrap_or(not_after),
+        )
     }
 }
 
@@ -235,6 +279,7 @@ pub struct AttestationNonce {
     pub endpoint: String,
     pub value: String,
     pub expires_at: Option<String>,
+    pub device_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,6 +326,7 @@ pub struct ServicePlatform {
     pub secrets: SecretLifecycle,
     pub tpm_keys: TpmKeyManager,
     pub machine_store: MachineCertificateStore,
+    pub device_identity: DeviceIdentityProbe,
     pub renewal: RenewalProcessor,
 }
 
@@ -390,6 +436,32 @@ pub struct MachineCertificateStore {
     probe_override: Option<Arc<ProbeCurrentCertificateFn>>,
     install_issued_override: Option<Arc<InstallIssuedCertificateFn>>,
     install_renewed_override: Option<Arc<InstallRenewedCertificateFn>>,
+}
+
+#[derive(Clone, Default)]
+pub struct DeviceIdentityProbe {
+    resolve_override: Option<Arc<ResolveExpectedDeviceIdentityFn>>,
+}
+
+impl DeviceIdentityProbe {
+    pub fn resolve_expected_device_identity(
+        &self,
+        expected_device_id: &str,
+    ) -> Result<ResolvedDeviceIdentity, PlatformError> {
+        if let Some(resolve) = &self.resolve_override {
+            return resolve(expected_device_id);
+        }
+
+        resolve_expected_device_identity(expected_device_id)
+    }
+
+    pub fn with_resolve_expected_device_identity<F>(mut self, resolve: F) -> Self
+    where
+        F: Fn(&str) -> Result<ResolvedDeviceIdentity, PlatformError> + Send + Sync + 'static,
+    {
+        self.resolve_override = Some(Arc::new(resolve));
+        self
+    }
 }
 
 impl MachineCertificateStore {
@@ -684,7 +756,7 @@ fn default_ensure_machine_key(
         Ok(TpmKeyHandle {
             provider: TPM_KEY_PROVIDER,
             algorithm: DEFAULT_KEY_ALGORITHM,
-            key_name_hint: format!("{}-{}", plan.client_uid, plan.device_id),
+            key_name_hint: format!("{}-{}", plan.client_uid, plan.expected_device_id),
             material_state: KeyMaterialState::Planned,
             reuse_policy: KeyReusePolicy::SameKey,
             public_key_spki_b64: None,
@@ -779,7 +851,7 @@ fn default_install_renewed_certificate(
 fn default_fetch_initial_nonce(
     plan: &EnrollmentSettings,
 ) -> Result<AttestationNonce, PlatformError> {
-    fetch_attestation_nonce(&plan.server_url, &plan.client_uid, &plan.device_id)
+    fetch_attestation_nonce(&plan.server_url, &plan.client_uid, &plan.expected_device_id)
 }
 
 fn default_fetch_renewal_nonce(
@@ -788,7 +860,7 @@ fn default_fetch_renewal_nonce(
     fetch_attestation_nonce(
         &context.plan.server_url,
         &context.plan.client_uid,
-        &context.plan.device_id,
+        &context.plan.expected_device_id,
     )
 }
 
@@ -797,19 +869,15 @@ fn default_build_initial_attestation(
     nonce: &AttestationNonce,
 ) -> Result<AttestationPayload, PlatformError> {
     let key = key_with_public_spki(&pending.key)?;
-    let attestation = build_placeholder_attestation(
-        PLACEHOLDER_ATTESTATION_FORMAT_INITIAL,
-        &pending.plan.device_id,
-        &key,
-        nonce,
-    )?;
+    let attestation =
+        build_placeholder_attestation(PLACEHOLDER_ATTESTATION_FORMAT_INITIAL, &key, nonce)?;
 
     #[cfg(windows)]
     {
         return finalize_windows_attestation_via_helper(
             &pending.plan.server_url,
             &pending.plan.client_uid,
-            &pending.plan.device_id,
+            &pending.plan.expected_device_id,
             attestation,
             &key,
         );
@@ -822,24 +890,20 @@ fn default_build_initial_attestation(
 }
 
 fn default_build_renewal_attestation(
-    context: &RenewalContext,
+    _context: &RenewalContext,
     key: &TpmKeyHandle,
     nonce: &AttestationNonce,
 ) -> Result<AttestationPayload, PlatformError> {
     let key = key_with_public_spki(key)?;
-    let attestation = build_placeholder_attestation(
-        PLACEHOLDER_ATTESTATION_FORMAT_RENEWAL,
-        &context.plan.device_id,
-        &key,
-        nonce,
-    )?;
+    let attestation =
+        build_placeholder_attestation(PLACEHOLDER_ATTESTATION_FORMAT_RENEWAL, &key, nonce)?;
 
     #[cfg(windows)]
     {
         return finalize_windows_attestation_via_helper(
-            &context.plan.server_url,
-            &context.plan.client_uid,
-            &context.plan.device_id,
+            &_context.plan.server_url,
+            &_context.plan.client_uid,
+            &_context.plan.expected_device_id,
             attestation,
             &key,
         );
@@ -864,8 +928,8 @@ fn default_submit_initial_scep(
         Err(PlatformError::not_implemented(
             "scep-submission",
             format!(
-                "CSR construction and SCEP PKIOperation submission are not wired yet for device_id={} using reserved key {}; nonce {} from {} and attestation format {} were prepared",
-                request.pending.plan.device_id,
+                "CSR construction and SCEP PKIOperation submission are not wired yet for expected_device_id={} using reserved key {}; nonce {} from {} and attestation format {} were prepared",
+                request.pending.plan.expected_device_id,
                 request.pending.key.key_name_hint,
                 request.nonce.value,
                 request.nonce.endpoint,
@@ -887,7 +951,7 @@ fn ensure_windows_managed_key(plan: &EnrollmentSettings) -> Result<TpmKeyHandle,
             ),
         )
     })?;
-    let key_name_hint = windows_paths::key_dir_name(&plan.client_uid, &plan.device_id);
+    let key_name_hint = windows_paths::key_dir_name(&plan.client_uid, &plan.expected_device_id);
     let (material_state, public_key_spki_b64) = ensure_windows_persisted_key(&key_name_hint)?;
 
     Ok(TpmKeyHandle {
@@ -1108,7 +1172,7 @@ fn load_windows_persisted_key_public_spki_b64(
 
 #[cfg(windows)]
 fn managed_dir_for_plan(plan: &EnrollmentSettings) -> PathBuf {
-    windows_paths::managed_dir(&plan.client_uid, &plan.device_id)
+    windows_paths::managed_dir(&plan.client_uid, &plan.expected_device_id)
 }
 
 #[cfg(windows)]
@@ -1124,12 +1188,9 @@ fn probe_windows_machine_store(
 ) -> Result<CertificateInventory, PlatformError> {
     let managed_cert_path = windows_paths::cert_path(&windows_paths::managed_dir(
         &plan.client_uid,
-        &plan.device_id,
+        &plan.expected_device_id,
     ));
-    let script = build_windows_machine_store_probe_script(
-        &plan.client_uid,
-        &managed_cert_path,
-    );
+    let script = build_windows_machine_store_probe_script(&plan.client_uid, &managed_cert_path);
     let output = run_windows_command(
         "machine-store",
         Command::new("powershell.exe")
@@ -1161,7 +1222,7 @@ fn probe_windows_machine_store(
             .map(|v| v.to_owned()),
         key_name_hint: Some(windows_paths::key_dir_name(
             &plan.client_uid,
-            &plan.device_id,
+            &plan.expected_device_id,
         )),
         not_before: parse_optional_unix_seconds(value.get("NotBeforeUnix")),
         not_after: parse_optional_unix_seconds(value.get("NotAfterUnix")),
@@ -1179,10 +1240,7 @@ fn probe_windows_machine_store(
 }
 
 #[cfg(any(windows, test))]
-fn build_windows_machine_store_probe_script(
-    client_uid: &str,
-    managed_cert_path: &Path,
-) -> String {
+fn build_windows_machine_store_probe_script(client_uid: &str, managed_cert_path: &Path) -> String {
     format!(
         r#"
 $ErrorActionPreference = 'Stop'
@@ -1624,8 +1682,8 @@ fn default_submit_renewal_scep(
         Err(PlatformError::not_implemented(
             "renewal-processing",
             format!(
-                "same-key renewal submission is not wired yet for device_id={} using existing key {}; nonce {} from {} and attestation format {} were prepared",
-                request.context.plan.device_id,
+                "same-key renewal submission is not wired yet for expected_device_id={} using existing key {}; nonce {} from {} and attestation format {} were prepared",
+                request.context.plan.expected_device_id,
                 request.key.key_name_hint,
                 request.nonce.value,
                 request.nonce.endpoint,
@@ -1751,8 +1809,10 @@ fn finalize_windows_attestation_via_helper(
         ));
     }
     if claims.device_id != normalize_device_id(expected_device_id) {
-        return Err(PlatformError::permanent(
+        return Err(PlatformError::with_device_identity_mismatch(
             "attestation-assembly",
+            normalize_device_id(expected_device_id),
+            claims.device_id.clone(),
             format!(
                 "helper attestation device_id mismatch for key {}",
                 key.key_name_hint
@@ -1804,12 +1864,15 @@ fn finalize_windows_attestation_via_helper(
 fn fetch_attestation_nonce(
     server_url: &str,
     client_uid: &str,
-    device_id: &str,
+    expected_device_id: &str,
 ) -> Result<AttestationNonce, PlatformError> {
     let endpoint = derive_attestation_nonce_endpoint(server_url);
+    let device_identity = resolve_expected_device_identity(expected_device_id)?;
+    let ek_public_b64 = device_identity.ek_public_b64.as_deref();
     let request_body = serde_json::to_vec(&AttestationNonceRequest {
         client_uid,
-        device_id,
+        device_id: &device_identity.device_id,
+        ek_public_b64,
     })
     .map_err(|err| {
         PlatformError::permanent(
@@ -1836,13 +1899,13 @@ fn fetch_attestation_nonce(
     }
 
     if let Some(returned_device_id) = response.device_id.as_deref() {
-        if normalize_device_id(returned_device_id) != normalize_device_id(device_id) {
+        if normalize_device_id(returned_device_id) != device_identity.device_id {
             return Err(PlatformError::permanent(
                 "attestation-nonce",
                 format!(
                     "nonce response from {endpoint} was issued for device_id={} instead of {}",
                     normalize_device_id(returned_device_id),
-                    normalize_device_id(device_id)
+                    device_identity.device_id
                 ),
             ));
         }
@@ -1854,6 +1917,7 @@ fn fetch_attestation_nonce(
         expires_at: response
             .expires_at
             .and_then(|value| non_empty_trimmed(Some(value))),
+        device_id: device_identity.device_id,
     })
 }
 
@@ -1938,14 +2002,69 @@ fn derive_attestation_nonce_endpoint(server_url: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedDeviceIdentity {
+    pub device_id: String,
+    pub ek_public_b64: Option<String>,
+}
+
+#[cfg(windows)]
+fn resolve_expected_device_identity(
+    expected_device_id: &str,
+) -> Result<ResolvedDeviceIdentity, PlatformError> {
+    let helper = bundled_helper_path("scepclient.exe")?;
+    let output = run_windows_command(
+        "device-identity",
+        Command::new(helper).arg("-print-device-id").arg("-json"),
+    )?;
+    let response: CurrentDeviceIdentityResponse =
+        serde_json::from_slice(&output).map_err(|err| {
+            PlatformError::temporary(
+                "device-identity",
+                format!("failed to decode helper device identity response: {err}"),
+            )
+        })?;
+    let device_id = normalize_device_id(&response.device_id);
+    if device_id.is_empty() {
+        return Err(PlatformError::temporary(
+            "device-identity",
+            "helper device identity response was missing device_id",
+        ));
+    }
+    let expected_device_id = normalize_device_id(expected_device_id);
+    if !expected_device_id.is_empty() && device_id != expected_device_id {
+        return Err(PlatformError::with_device_identity_mismatch(
+            "device-identity",
+            expected_device_id,
+            device_id,
+            format!("current TPM device identity did not match the configured expected_device_id"),
+        ));
+    }
+    Ok(ResolvedDeviceIdentity {
+        device_id,
+        ek_public_b64: response
+            .ek_public_b64
+            .and_then(|value| non_empty_trimmed(Some(value))),
+    })
+}
+
+#[cfg(not(windows))]
+fn resolve_expected_device_identity(
+    expected_device_id: &str,
+) -> Result<ResolvedDeviceIdentity, PlatformError> {
+    Ok(ResolvedDeviceIdentity {
+        device_id: normalize_device_id(expected_device_id),
+        ek_public_b64: None,
+    })
+}
+
 fn build_placeholder_attestation(
     format: &str,
-    device_id: &str,
     key: &TpmKeyHandle,
     nonce: &AttestationNonce,
 ) -> Result<AttestationPayload, PlatformError> {
     let claims = AttestationClaims {
-        device_id: normalize_device_id(device_id),
+        device_id: normalize_device_id(&nonce.device_id),
         key: AttestationKey {
             algorithm: key.algorithm.to_owned(),
             provider: key.provider.to_owned(),
@@ -2187,6 +2306,8 @@ fn decode_attestation_payload(encoded: &str) -> Result<AttestationClaims, Platfo
 struct AttestationNonceRequest<'a> {
     client_uid: &'a str,
     device_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ek_public_b64: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2196,6 +2317,14 @@ struct AttestationNonceResponse {
     device_id: Option<String>,
     #[serde(default)]
     expires_at: Option<String>,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Deserialize)]
+struct CurrentDeviceIdentityResponse {
+    device_id: String,
+    #[serde(default)]
+    ek_public_b64: Option<String>,
 }
 
 #[cfg(test)]
@@ -2232,15 +2361,12 @@ mod tests {
             endpoint: "https://example.invalid/api/attestation/nonce".to_owned(),
             value: "nonce-123".to_owned(),
             expires_at: Some("later".to_owned()),
+            device_id: "device-001".to_owned(),
         };
 
-        let payload = build_placeholder_attestation(
-            PLACEHOLDER_ATTESTATION_FORMAT_INITIAL,
-            "Device-001",
-            &key,
-            &nonce,
-        )
-        .expect("attestation payload");
+        let payload =
+            build_placeholder_attestation(PLACEHOLDER_ATTESTATION_FORMAT_INITIAL, &key, &nonce)
+                .expect("attestation payload");
         let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload.encoded.as_bytes())
             .expect("decode");
@@ -2329,7 +2455,7 @@ mod tests {
             plan: RenewalSettings {
                 server_url: "https://example.invalid/scep".to_owned(),
                 client_uid: "client-001".to_owned(),
-                device_id: "device-001".to_owned(),
+                expected_device_id: "device-001".to_owned(),
             },
             certificate: InstalledCertificate {
                 store_path: MACHINE_STORE_PATH,
@@ -2375,7 +2501,8 @@ mod tests {
         };
 
         assert_eq!(
-            certificate.effective_renew_before(Duration::from_secs(7_200), Duration::from_secs(300)),
+            certificate
+                .effective_renew_before(Duration::from_secs(7_200), Duration::from_secs(300)),
             Duration::from_secs(3_300)
         );
         assert_eq!(

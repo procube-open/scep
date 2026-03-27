@@ -346,6 +346,12 @@ func buildChallenge(uid, secret, certPath string) (string, error) {
 	}
 }
 
+func invokedAsDeviceIDProbe(programPath string) bool {
+	programPath = strings.ReplaceAll(strings.TrimSpace(programPath), `\`, `/`)
+	base := strings.ToLower(filepath.Base(programPath))
+	return base == "device-id-probe" || base == "device-id-probe.exe"
+}
+
 func main() {
 	var (
 		flUid             = flag.String("uid", "", "uid of user")
@@ -354,15 +360,26 @@ func main() {
 		flServerURLFlag   = flag.String("server-url", flServerURL, "SCEP server URL")
 		flAttestationFlag = flag.String("attestation", flAttestation, "base64url-encoded attestation payload")
 		flEmitAttestation = flag.Bool("emit-attestation", false, "upgrade and print the final attestation payload, then exit")
+		flPrintDeviceID   = flag.Bool("print-device-id", false, "print the canonical device_id derived from the Windows EK public key, then exit")
+		flJSONOutput      = flag.Bool("json", false, "print command output as JSON when supported")
 		flKeyProvider     = flag.String("key-provider", "", "Windows key storage provider name")
 		flKeyName         = flag.String("key-name", "", "Windows persisted key name")
 		flPublicKeySPKI   = flag.String("public-key-spki-b64", "", "optional base64url-encoded SubjectPublicKeyInfo for a Windows persisted key")
 	)
 	flag.Parse()
+	defaultProbeMode := invokedAsDeviceIDProbe(os.Args[0])
 
 	// print version information
 	if flVersion {
 		fmt.Println(version)
+		os.Exit(0)
+	}
+
+	if *flPrintDeviceID || (defaultProbeMode && !*flEmitAttestation) {
+		if err := printCurrentDeviceIdentity(*flJSONOutput); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 

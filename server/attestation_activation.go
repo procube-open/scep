@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/go-attestation/attest"
-	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/utils"
 )
 
@@ -139,7 +138,7 @@ func (s *AttestationActivationService) pruneExpiredLocked() {
 	}
 }
 
-func NewAttestationActivationHandler(depot *mysql.MySQLDepot, nonces *AttestationNonceService, activations *AttestationActivationService) http.HandlerFunc {
+func NewAttestationActivationHandler(depot requestClientStore, nonces *AttestationNonceService, activations *AttestationActivationService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if depot == nil || nonces == nil || activations == nil {
 			http.Error(w, "attestation activation service is unavailable", http.StatusInternalServerError)
@@ -200,16 +199,21 @@ func NewAttestationActivationHandler(depot *mysql.MySQLDepot, nonces *Attestatio
 			return
 		}
 
-		registeredDeviceID, ok := lookupDeviceID(client.Attributes)
-		if !ok {
-			http.Error(w, "registered device_id is missing", http.StatusBadRequest)
+		registeredDeviceID, err := validateClientDeviceIDBinding(client.Attributes, req.DeviceID, req.EKPublicB64)
+		if err != nil {
+			switch err {
+			case errRegisteredDeviceIDMissing:
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			case errRequestDeviceIDMismatch:
+				http.Error(w, err.Error(), http.StatusForbidden)
+			case errEKPublicRequired, errEKPublicInvalid:
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			default:
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		if registeredDeviceID != req.DeviceID {
-			http.Error(w, "device_id mismatch", http.StatusForbidden)
-			return
-		}
-		if !nonces.Has(req.ClientUID, req.DeviceID, req.Nonce) {
+		if !nonces.Has(req.ClientUID, registeredDeviceID, req.Nonce) {
 			http.Error(w, "nonce mismatch", http.StatusForbidden)
 			return
 		}
@@ -247,7 +251,7 @@ func NewAttestationActivationHandler(depot *mysql.MySQLDepot, nonces *Attestatio
 
 		activationID, credential, expiresAt, err := activations.Issue(
 			req.ClientUID,
-			req.DeviceID,
+			registeredDeviceID,
 			req.Nonce,
 			attest.ActivationParameters{
 				EK: ekPublic,
@@ -270,7 +274,7 @@ func NewAttestationActivationHandler(depot *mysql.MySQLDepot, nonces *Attestatio
 			ActivationID:  activationID,
 			CredentialB64: base64.RawURLEncoding.EncodeToString(credential.Credential),
 			SecretB64:     base64.RawURLEncoding.EncodeToString(credential.Secret),
-			DeviceID:      req.DeviceID,
+			DeviceID:      registeredDeviceID,
 			Nonce:         req.Nonce,
 			ExpiresAt:     expiresAt.UTC(),
 		}); err != nil {

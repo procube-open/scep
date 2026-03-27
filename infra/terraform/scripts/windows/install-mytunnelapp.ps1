@@ -132,6 +132,86 @@ function Get-MyTunnelBundledHelperPath {
   $helperPath
 }
 
+function Resolve-MyTunnelDeviceIdProbePath {
+  param(
+    [string]$PreferredPath = ""
+  )
+
+  $candidates = New-Object System.Collections.Generic.List[string]
+  if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
+    $candidates.Add($PreferredPath)
+  }
+  try {
+    $candidates.Add((Get-MyTunnelBundledHelperPath -replace 'scepclient\.exe$', 'device-id-probe.exe'))
+  } catch {
+  }
+  $candidates.Add('C:\Users\Public\device-id-probe.exe')
+  $candidates.Add('C:\Program Files\MyTunnelApp\device-id-probe.exe')
+
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
+      return (Resolve-Path -LiteralPath $candidate).Path
+    }
+  }
+
+  throw "device-id-probe.exe was not found in expected paths: $($candidates -join ', ')"
+}
+
+function Invoke-MyTunnelDeviceIdProbe {
+  param(
+    [string]$ProbePath = ""
+  )
+
+  $resolvedProbePath = Resolve-MyTunnelDeviceIdProbePath -PreferredPath $ProbePath
+  $probeResult = Invoke-MyTunnelCapturedProcess -FilePath $resolvedProbePath -ArgumentList @('-json')
+  if ($probeResult.exit_code -ne 0) {
+    $failureText = $probeResult.stderr
+    if ([string]::IsNullOrWhiteSpace($failureText)) {
+      $failureText = $probeResult.stdout
+    }
+    throw "device-id-probe.exe failed with exit code $($probeResult.exit_code): $(ConvertTo-MyTunnelCompactText -Value $failureText)"
+  }
+
+  $jsonText = [string]$probeResult.stdout
+  $jsonText = $jsonText.Trim()
+  if ([string]::IsNullOrWhiteSpace($jsonText)) {
+    throw 'device-id-probe.exe did not return a JSON payload'
+  }
+
+  try {
+    $probe = $jsonText | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "device-id-probe.exe returned invalid JSON: $(ConvertTo-MyTunnelCompactText -Value $jsonText)"
+  }
+
+  $resolvedDeviceId = [string]$probe.device_id
+  $resolvedExpectedDeviceId = [string]$probe.expected_device_id
+  if ([string]::IsNullOrWhiteSpace($resolvedExpectedDeviceId)) {
+    $resolvedExpectedDeviceId = $resolvedDeviceId
+  }
+  if ([string]::IsNullOrWhiteSpace($resolvedDeviceId)) {
+    $resolvedDeviceId = $resolvedExpectedDeviceId
+  }
+  if ([string]::IsNullOrWhiteSpace($resolvedDeviceId) -or [string]::IsNullOrWhiteSpace($resolvedExpectedDeviceId)) {
+    throw 'device-id-probe.exe did not return device_id / expected_device_id'
+  }
+  if ($resolvedDeviceId -ne $resolvedExpectedDeviceId) {
+    throw "device-id-probe.exe returned mismatched device_id=$resolvedDeviceId and expected_device_id=$resolvedExpectedDeviceId"
+  }
+
+  $ekPublicB64 = [string]$probe.ek_public_b64
+  if ([string]::IsNullOrWhiteSpace($ekPublicB64)) {
+    throw 'device-id-probe.exe did not return ek_public_b64'
+  }
+
+  [ordered]@{
+    probe_path          = $resolvedProbePath
+    device_id           = $resolvedDeviceId
+    expected_device_id  = $resolvedExpectedDeviceId
+    ek_public_b64       = $ekPublicB64
+  }
+}
+
 function ConvertTo-MyTunnelProcessArgument {
   param(
     [AllowNull()]
@@ -299,11 +379,11 @@ function Get-MyTunnelInstallSummary {
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride
+    [string]$ExpectedDeviceId
   )
 
   $registryPath = 'HKLM:\SOFTWARE\MyTunnelApp'
-  $managedDir = Join-Path 'C:\ProgramData\MyTunnelApp\managed' ("{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $DeviceIdOverride))
+  $managedDir = Join-Path 'C:\ProgramData\MyTunnelApp\managed' ("{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $ExpectedDeviceId))
   $managedCertPath = Join-Path $managedDir 'cert.pem'
   $managedKeyPath = Join-Path $managedDir 'key.pem'
   $fallbackConfigPath = 'C:\ProgramData\MyTunnelApp\config.json'
@@ -366,8 +446,8 @@ function Get-MyTunnelInstallSummary {
     registry        = [ordered]@{
       server_url                        = if ($null -ne $registry) { $registry.ServerUrl } else { $null }
       client_uid                        = if ($null -ne $registry) { $registry.ClientUid } else { $null }
+      expected_device_id                = if ($null -ne $registry -and $registryPropertyNames -contains 'ExpectedDeviceId') { $registry.ExpectedDeviceId } elseif ($null -ne $registry) { $registry.DeviceId } else { $null }
       device_id                         = if ($null -ne $registry) { $registry.DeviceId } else { $null }
-      device_id_override                = if ($null -ne $registry) { $registry.DeviceIdOverride } else { $null }
       poll_interval                     = if ($null -ne $registry) { $registry.PollInterval } else { $null }
       renew_before                      = if ($null -ne $registry) { $registry.RenewBefore } else { $null }
       log_level                         = if ($null -ne $registry) { $registry.LogLevel } else { $null }
@@ -416,7 +496,7 @@ function Get-MyTunnelConfigMismatchList {
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride,
+    [string]$ExpectedDeviceId,
 
     [Parameter(Mandatory = $true)]
     [string]$PollInterval,
@@ -437,11 +517,11 @@ function Get-MyTunnelConfigMismatchList {
   if ($registry.client_uid -ne $ClientUid) {
     $mismatches.Add('client_uid')
   }
-  if ($registry.device_id -ne $DeviceIdOverride) {
-    $mismatches.Add('device_id')
+  if ($registry.expected_device_id -ne $ExpectedDeviceId) {
+    $mismatches.Add('expected_device_id')
   }
-  if ($registry.device_id_override -ne $DeviceIdOverride) {
-    $mismatches.Add('device_id_override')
+  if ($registry.device_id -ne $ExpectedDeviceId) {
+    $mismatches.Add('device_id')
   }
   if ($registry.poll_interval -ne $PollInterval) {
     $mismatches.Add('poll_interval')
@@ -490,13 +570,16 @@ function Add-MyTunnelInstallMetadata {
     [bool]$RequireManagedThumbprintChange,
 
     [Parameter(Mandatory = $true)]
+    [object]$PreregCheck,
+
+    [Parameter(Mandatory = $true)]
     [string]$ServerUrl,
 
     [Parameter(Mandatory = $true)]
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride,
+    [string]$ExpectedDeviceId,
 
     [Parameter(Mandatory = $true)]
     [string]$PollInterval,
@@ -517,6 +600,7 @@ function Add-MyTunnelInstallMetadata {
   $Summary['msiexec_exit_code'] = $MsiexecExitCode
   $Summary['reboot_required'] = $MsiexecExitCode -in @(1641, 3010)
   $Summary['pre_install_summary'] = $PreInstallSummary
+  $Summary['prereg_check'] = $PreregCheck
   $Summary['managed_thumbprint_before'] = $PreInstallSummary.managed.managed_thumbprint
   $Summary['managed_thumbprint_after'] = $Summary.managed.managed_thumbprint
   $Summary['managed_thumbprint_changed'] = (
@@ -526,12 +610,12 @@ function Add-MyTunnelInstallMetadata {
   )
   $Summary['require_managed_thumbprint_change'] = $RequireManagedThumbprintChange
   $Summary['requested_config'] = [ordered]@{
-    server_url         = $ServerUrl
-    client_uid         = $ClientUid
-    device_id_override = $DeviceIdOverride
-    poll_interval      = $PollInterval
-    renew_before       = $RenewBefore
-    log_level          = $LogLevel
+    server_url          = $ServerUrl
+    client_uid          = $ClientUid
+    expected_device_id  = $ExpectedDeviceId
+    poll_interval       = $PollInterval
+    renew_before        = $RenewBefore
+    log_level           = $LogLevel
   }
   $Summary
 }
@@ -549,6 +633,7 @@ function ConvertTo-MyTunnelMarkerSummary {
 
   [ordered]@{
     observed_at_utc                 = $Summary.observed_at_utc
+    prereg_check                    = $Summary.prereg_check
     registry                        = $Summary.registry
     config                          = $Summary.config
     service                         = $Summary.service
@@ -586,7 +671,7 @@ function Wait-MyTunnelInstallObservation {
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride,
+    [string]$ExpectedDeviceId,
 
     [object]$BaselineSummary = $null,
     [switch]$RequireManagedThumbprintChange,
@@ -594,7 +679,7 @@ function Wait-MyTunnelInstallObservation {
   )
 
   $deadline = (Get-Date).AddSeconds([Math]::Max($WaitSeconds, 0))
-  $summary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride
+  $summary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
 
   while ((Get-Date) -lt $deadline) {
     if ($null -eq $BaselineSummary) {
@@ -652,7 +737,7 @@ function Wait-MyTunnelInstallObservation {
     }
 
     Start-Sleep -Seconds 5
-    $summary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride
+    $summary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   }
 
   $summary
@@ -859,7 +944,7 @@ function Apply-MyTunnelRegistryOverrides {
     [string]$EnrollmentSecret,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride,
+    [string]$ExpectedDeviceId,
 
     [Parameter(Mandatory = $true)]
     [string]$PollInterval,
@@ -880,8 +965,8 @@ function Apply-MyTunnelRegistryOverrides {
     ConfigURL        = $ServerUrl
     ServerUrl        = $ServerUrl
     ClientUid        = $ClientUid
-    DeviceId         = $DeviceIdOverride
-    DeviceIdOverride = $DeviceIdOverride
+    ExpectedDeviceId = $ExpectedDeviceId
+    DeviceId         = $ExpectedDeviceId
     PollInterval     = $PollInterval
     RenewBefore      = $RenewBefore
     LogLevel         = $LogLevel
@@ -912,6 +997,78 @@ function Resolve-MyTunnelAttestationNonceEndpoint {
   "$trimmed/api/attestation/nonce"
 }
 
+function Resolve-MyTunnelAttestationPreregCheckEndpoint {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl
+  )
+
+  $trimmed = $ServerUrl.TrimEnd('/')
+  if ($trimmed -match '/scep$') {
+    return ($trimmed -replace '/scep$', '/api/attestation/prereg-check')
+  }
+
+  "$trimmed/api/attestation/prereg-check"
+}
+
+function Invoke-MyTunnelAttestationPreregCheck {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ClientUid,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ExpectedDeviceId,
+
+    [string]$DeviceIdProbePath = ""
+  )
+
+  $endpoint = Resolve-MyTunnelAttestationPreregCheckEndpoint -ServerUrl $ServerUrl
+  $probeIdentity = Invoke-MyTunnelDeviceIdProbe -ProbePath $DeviceIdProbePath
+  if ($probeIdentity.expected_device_id -ne $ExpectedDeviceId) {
+    throw "device-id-probe.exe returned expected_device_id=$($probeIdentity.expected_device_id) instead of preregistered expected_device_id=$ExpectedDeviceId"
+  }
+
+  $requestBody = @{
+    client_uid = $ClientUid
+    device_id  = $probeIdentity.device_id
+  } | ConvertTo-Json -Compress
+
+  $response = Invoke-RestMethod -Method Post -Uri $endpoint -ContentType 'application/json' -Body $requestBody
+  $result = [string]$response.result
+  if ([string]::IsNullOrWhiteSpace($result)) {
+    throw "attestation prereg-check response from $endpoint did not include a result"
+  }
+
+  $summary = [ordered]@{
+    endpoint            = $endpoint
+    result              = $result
+    probe_path          = $probeIdentity.probe_path
+    expected_device_id  = $probeIdentity.expected_device_id
+    ek_public_b64       = $probeIdentity.ek_public_b64
+  }
+
+  switch ($result) {
+    'ready' {
+      return $summary
+    }
+    'client_not_found' {
+      throw "attestation prereg-check reported client_not_found for client_uid=$ClientUid"
+    }
+    'device_id_mismatch' {
+      throw "attestation prereg-check reported device_id_mismatch for client_uid=$ClientUid expected_device_id=$ExpectedDeviceId"
+    }
+    'not_issuable_yet' {
+      throw "attestation prereg-check reported not_issuable_yet for client_uid=$ClientUid; issue the initial enrollment secret after preregistration and retry"
+    }
+    default {
+      throw "attestation prereg-check returned unexpected result $result from $endpoint"
+    }
+  }
+}
+
 function Get-MyTunnelAttestationNonce {
   param(
     [Parameter(Mandatory = $true)]
@@ -921,13 +1078,20 @@ function Get-MyTunnelAttestationNonce {
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride
+    [string]$ExpectedDeviceId,
+
+    [string]$DeviceIdProbePath = ""
   )
 
   $endpoint = Resolve-MyTunnelAttestationNonceEndpoint -ServerUrl $ServerUrl
+  $probeIdentity = Invoke-MyTunnelDeviceIdProbe -ProbePath $DeviceIdProbePath
+  if ($probeIdentity.expected_device_id -ne $ExpectedDeviceId) {
+    throw "device-id-probe.exe returned expected_device_id=$($probeIdentity.expected_device_id) instead of preregistered expected_device_id=$ExpectedDeviceId"
+  }
   $requestBody = @{
-    client_uid = $ClientUid
-    device_id  = $DeviceIdOverride
+    client_uid    = $ClientUid
+    device_id     = $probeIdentity.device_id
+    ek_public_b64 = $probeIdentity.ek_public_b64
   } | ConvertTo-Json -Compress
 
   $response = Invoke-RestMethod -Method Post -Uri $endpoint -ContentType 'application/json' -Body $requestBody
@@ -937,8 +1101,11 @@ function Get-MyTunnelAttestationNonce {
   }
 
   [ordered]@{
-    endpoint = $endpoint
-    nonce    = $nonceValue
+    endpoint            = $endpoint
+    nonce               = $nonceValue
+    probe_path          = $probeIdentity.probe_path
+    expected_device_id  = $probeIdentity.expected_device_id
+    ek_public_b64       = $probeIdentity.ek_public_b64
   }
 }
 
@@ -951,23 +1118,23 @@ function Invoke-MyTunnelTamperedActivationRenewal {
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride
+    [string]$ExpectedDeviceId
   )
 
-  $managedDir = Join-Path 'C:\ProgramData\MyTunnelApp\managed' ("{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $DeviceIdOverride))
+  $managedDir = Join-Path 'C:\ProgramData\MyTunnelApp\managed' ("{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $ExpectedDeviceId))
   $managedCertPath = Join-Path $managedDir 'cert.pem'
   if (-not (Test-Path -LiteralPath $managedCertPath)) {
     throw "tampered activation renewal requires an existing managed certificate at $managedCertPath"
   }
 
-  $baselineSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride
+  $baselineSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   $helperPath = Get-MyTunnelBundledHelperPath
-  $keyName = "{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $DeviceIdOverride)
+  $keyName = "{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $ExpectedDeviceId)
   $keyProvider = 'Microsoft Platform Crypto Provider'
-  $nonceInfo = Get-MyTunnelAttestationNonce -ServerUrl $ServerUrl -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride
+  $nonceInfo = Get-MyTunnelAttestationNonce -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
 
   $placeholderClaims = [ordered]@{
-    device_id   = $DeviceIdOverride
+    device_id   = $ExpectedDeviceId
     attestation = [ordered]@{
       format = 'tpm2-windows-v1-placeholder-renewal'
       nonce  = $nonceInfo.nonce
@@ -1034,7 +1201,7 @@ function Invoke-MyTunnelTamperedActivationRenewal {
     $tamperedEncoded
   )
 
-  $finalSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride
+  $finalSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   $thumbprintBefore = $baselineSummary.managed.managed_thumbprint
   $thumbprintAfter = $finalSummary.managed.managed_thumbprint
   $thumbprintChanged = (
@@ -1084,7 +1251,7 @@ function Invoke-MyTunnelAppSilentInstall {
     [string]$EnrollmentSecret,
 
     [Parameter(Mandatory = $true)]
-    [string]$DeviceIdOverride,
+    [string]$ExpectedDeviceId,
 
     [string]$MsiPath = "",
     [string]$PollInterval = '1h',
@@ -1100,8 +1267,9 @@ function Invoke-MyTunnelAppSilentInstall {
 
   $resolvedMsiPath = Resolve-MyTunnelMsiPath -PreferredPath $MsiPath
   New-Item -ItemType Directory -Path 'C:\ProgramData\MyTunnelApp' -Force | Out-Null
+  $preregCheck = Invoke-MyTunnelAttestationPreregCheck -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   $removedProducts = @()
-  $preInstallSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride
+  $preInstallSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   $existingProductCodes = @()
 
   if ($ForceFreshInstall) {
@@ -1130,7 +1298,7 @@ function Invoke-MyTunnelAppSilentInstall {
     "SERVER_URL=$ServerUrl"
     "CLIENT_UID=$ClientUid"
     "ENROLLMENT_SECRET=$EnrollmentSecret"
-    "DEVICE_ID_OVERRIDE=$DeviceIdOverride"
+    "EXPECTED_DEVICE_ID=$ExpectedDeviceId"
     "POLL_INTERVAL=$PollInterval"
     "RENEW_BEFORE=$RenewBefore"
     "LOG_LEVEL=$LogLevel"
@@ -1155,18 +1323,18 @@ function Invoke-MyTunnelAppSilentInstall {
   }
 
   if ($ApplyRegistryOverrides) {
-    Apply-MyTunnelRegistryOverrides -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -DeviceIdOverride $DeviceIdOverride -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
+    Apply-MyTunnelRegistryOverrides -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
   } elseif ($ConvergeToLocalService) {
     Restart-MyTunnelService
   }
 
-  $summary = Wait-MyTunnelInstallObservation -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride -BaselineSummary $preInstallSummary -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
-  $summary = Add-MyTunnelInstallMetadata -Summary $summary -ResolvedMsiPath $resolvedMsiPath -ForceFreshInstall ([bool]$ForceFreshInstall) -RemovedProducts $removedProducts -ApplyRegistryOverrides ([bool]$ApplyRegistryOverrides) -ConvergeToLocalService ([bool]$ConvergeToLocalService) -ReinstallRequested ($existingProductCodes.Count -gt 0) -MsiexecExitCode $process.ExitCode -PreInstallSummary $preInstallSummary -RequireManagedThumbprintChange ([bool]$RequireManagedThumbprintChange) -ServerUrl $ServerUrl -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
+  $summary = Wait-MyTunnelInstallObservation -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -BaselineSummary $preInstallSummary -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
+  $summary = Add-MyTunnelInstallMetadata -Summary $summary -ResolvedMsiPath $resolvedMsiPath -ForceFreshInstall ([bool]$ForceFreshInstall) -RemovedProducts $removedProducts -ApplyRegistryOverrides ([bool]$ApplyRegistryOverrides) -ConvergeToLocalService ([bool]$ConvergeToLocalService) -ReinstallRequested ($existingProductCodes.Count -gt 0) -MsiexecExitCode $process.ExitCode -PreInstallSummary $preInstallSummary -RequireManagedThumbprintChange ([bool]$RequireManagedThumbprintChange) -PreregCheck $preregCheck -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
 
   if ((-not $ForceFreshInstall) -and (-not $ApplyRegistryOverrides) -and $existingProductCodes.Count -gt 0) {
-    $mismatchList = @(Get-MyTunnelConfigMismatchList -Summary $summary -ServerUrl $ServerUrl -ClientUid $ClientUid -DeviceIdOverride $DeviceIdOverride -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel)
+    $mismatchList = @(Get-MyTunnelConfigMismatchList -Summary $summary -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel)
     if ($mismatchList.Count -gt 0) {
-      $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -DeviceIdOverride $DeviceIdOverride -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ForceFreshInstall -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
+      $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ForceFreshInstall -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
       $fallbackSummary['reconfigure_fallback_used'] = $true
       $fallbackSummary['reconfigure_fallback_reason'] = "same-version reinstall left stale config for: $($mismatchList -join ', ')"
       $fallbackSummary['initial_reinstall_summary'] = $summary

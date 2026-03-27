@@ -239,8 +239,7 @@ func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *Attestat
 		}
 		client := identity.client
 
-		registeredDeviceID, hasRegisteredDeviceID := lookupDeviceID(client.Attributes)
-		if !hasRegisteredDeviceID {
+		if _, hasRegisteredDeviceID := lookupDeviceID(client.Attributes); !hasRegisteredDeviceID {
 			if attestation == "" {
 				return nil
 			}
@@ -255,8 +254,18 @@ func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *Attestat
 		if err != nil {
 			return err
 		}
-		if claims.DeviceID != registeredDeviceID {
-			return fmt.Errorf("%w: device_id_mismatch", ErrInvalidAttestation)
+		registeredDeviceID, err := validateClientDeviceIDBinding(client.Attributes, claims.DeviceID, claims.Attestation.EKPublicB64)
+		if err != nil {
+			switch err {
+			case errRegisteredDeviceIDMissing:
+				return fmt.Errorf("%w: missing_device_id", ErrInvalidAttestation)
+			case errRequestDeviceIDMismatch:
+				return fmt.Errorf("%w: device_id_mismatch", ErrInvalidAttestation)
+			case errEKPublicRequired, errEKPublicInvalid:
+				return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
+			default:
+				return err
+			}
 		}
 		if err := verifyAttestedPublicKey(ctx, claims, true); err != nil {
 			return err
@@ -274,7 +283,7 @@ func MySQLDeviceIDAttestationVerifier(depot requestClientStore, nonces *Attestat
 			if claims.Attestation.Nonce == "" {
 				return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
 			}
-			if !nonces.Consume(client.Uid, claims.DeviceID, claims.Attestation.Nonce) {
+			if !nonces.Consume(client.Uid, registeredDeviceID, claims.Attestation.Nonce) {
 				return fmt.Errorf("%w: nonce_mismatch", ErrInvalidAttestation)
 			}
 		}
@@ -382,22 +391,6 @@ func lookupSHA256Fingerprint(attributes map[string]interface{}, key string) (str
 		return "", false
 	}
 	value = utils.NormalizeSHA256Fingerprint(value)
-	if value == "" {
-		return "", false
-	}
-	return value, true
-}
-
-func lookupManagedClientType(attributes map[string]interface{}) (string, bool) {
-	if attributes == nil {
-		return "", false
-	}
-
-	value, ok := attributes[utils.ClientAttributeManagedClientType].(string)
-	if !ok {
-		return "", false
-	}
-	value = utils.NormalizeManagedClientType(value)
 	if value == "" {
 		return "", false
 	}

@@ -13,7 +13,7 @@ Options:
   --server-url <URL>                  Full SCEP URL. Defaults to http://<server_internal_ip>:3000/scep when available, otherwise external IP
   --client-uid <UID>                  Required client UID
   --enrollment-secret <SECRET>        Required one-time enrollment secret
-  --device-id-override <DEVICE_ID>    Required device_id override for the current phase
+  --expected-device-id <DEVICE_ID>    Required preregistered TPM identity for the VM
   --poll-interval <DURATION>          Optional MSI property (default: 1h)
   --renew-before <DURATION>           Optional MSI property (default: 14d)
   --log-level <LEVEL>                 Optional MSI property (default: info)
@@ -45,7 +45,7 @@ INSTANCE=""
 SERVER_URL=""
 CLIENT_UID=""
 ENROLLMENT_SECRET=""
-DEVICE_ID_OVERRIDE=""
+EXPECTED_DEVICE_ID=""
 POLL_INTERVAL="1h"
 RENEW_BEFORE="14d"
 LOG_LEVEL="info"
@@ -72,8 +72,8 @@ while [[ $# -gt 0 ]]; do
       ENROLLMENT_SECRET="${2:?missing value for --enrollment-secret}"
       shift 2
       ;;
-    --device-id-override)
-      DEVICE_ID_OVERRIDE="${2:?missing value for --device-id-override}"
+    --expected-device-id)
+      EXPECTED_DEVICE_ID="${2:?missing value for $1}"
       shift 2
       ;;
     --poll-interval)
@@ -148,8 +148,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$CLIENT_UID" || -z "$ENROLLMENT_SECRET" || -z "$DEVICE_ID_OVERRIDE" ]]; then
-  echo "--client-uid, --enrollment-secret, and --device-id-override are required." >&2
+if [[ -z "$CLIENT_UID" || -z "$ENROLLMENT_SECRET" || -z "$EXPECTED_DEVICE_ID" ]]; then
+  echo "--client-uid, --enrollment-secret, and --expected-device-id are required." >&2
   exit 1
 fi
 
@@ -269,10 +269,10 @@ cat >> "$temp_script" <<EOF
 
 \$copilotInstallId = '$(escape_ps_single_quoted "$install_id")'
 try {
-  Write-Output "MYTUNNEL_MSI_INSTALL_START id=\$copilotInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") device_id=$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")"
-  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
+  Write-Output "MYTUNNEL_MSI_INSTALL_START id=\$copilotInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") expected_device_id=$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")"
+  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
 $(if [[ "$TAMPER_ACTIVATION_PROOF_RENEWAL" -eq 1 ]]; then cat <<PS
-  \$copilotActivationNegative = Invoke-MyTunnelTamperedActivationRenewal -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -DeviceIdOverride '$(escape_ps_single_quoted "$DEVICE_ID_OVERRIDE")'
+  \$copilotActivationNegative = Invoke-MyTunnelTamperedActivationRenewal -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")'
   \$copilotInstallSummary['activation_negative'] = \$copilotActivationNegative
 PS
 fi)

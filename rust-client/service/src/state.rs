@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServicePhase {
     NotConfigured,
+    BlockedDeviceIdentityMismatch,
     WaitingForEnrollment,
     GeneratingKey,
     SubmittingCsr,
@@ -20,6 +21,7 @@ impl ServicePhase {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NotConfigured => "NotConfigured",
+            Self::BlockedDeviceIdentityMismatch => "BlockedDeviceIdentityMismatch",
             Self::WaitingForEnrollment => "WaitingForEnrollment",
             Self::GeneratingKey => "GeneratingKey",
             Self::SubmittingCsr => "SubmittingCSR",
@@ -34,6 +36,11 @@ impl ServicePhase {
 pub enum ServiceState {
     NotConfigured {
         missing: Vec<RequiredField>,
+        note: String,
+    },
+    BlockedDeviceIdentityMismatch {
+        expected_device_id: String,
+        current_device_id: String,
         note: String,
     },
     WaitingForEnrollment {
@@ -67,6 +74,9 @@ impl ServiceState {
     pub fn phase(&self) -> ServicePhase {
         match self {
             Self::NotConfigured { .. } => ServicePhase::NotConfigured,
+            Self::BlockedDeviceIdentityMismatch { .. } => {
+                ServicePhase::BlockedDeviceIdentityMismatch
+            }
             Self::WaitingForEnrollment { .. } => ServicePhase::WaitingForEnrollment,
             Self::GeneratingKey { .. } => ServicePhase::GeneratingKey,
             Self::SubmittingCsr { .. } => ServicePhase::SubmittingCsr,
@@ -82,18 +92,26 @@ impl ServiceState {
                 "waiting for configuration (missing: {}): {note}",
                 format_missing_fields(missing)
             ),
+            Self::BlockedDeviceIdentityMismatch {
+                expected_device_id,
+                current_device_id,
+                note,
+            } => format!(
+                "blocking enrollment and renewal because expected_device_id={} does not match current TPM device_id={}: {note}",
+                expected_device_id, current_device_id
+            ),
             Self::WaitingForEnrollment { plan, note } => format!(
-                "device_id={} is ready for initial enrollment: {note}",
-                plan.device_id
+                "expected_device_id={} is ready for initial enrollment: {note}",
+                plan.expected_device_id
             ),
             Self::GeneratingKey { plan, secret } => format!(
-                "preparing TPM-backed key for device_id={} using {} bootstrap secret staging",
-                plan.device_id,
+                "preparing TPM-backed key for expected_device_id={} using {} bootstrap secret staging",
+                plan.expected_device_id,
                 secret.source.as_str()
             ),
             Self::SubmittingCsr { pending } => format!(
-                "submitting an attested CSR for device_id={} via {} ({:?}, {:?})",
-                pending.plan.device_id,
+                "submitting an attested CSR for expected_device_id={} via {} ({:?}, {:?})",
+                pending.plan.expected_device_id,
                 pending.key.provider,
                 pending.key.material_state,
                 pending.key.reuse_policy
@@ -111,9 +129,9 @@ impl ServiceState {
                     .unwrap_or("<unknown-key>")
             ),
             Self::RenewalDue { context } => format!(
-                "certificate in {} requires same-key renewal for device_id={} using key {}",
+                "certificate in {} requires same-key renewal for expected_device_id={} using key {}",
                 context.certificate.store_path,
-                context.plan.device_id,
+                context.plan.expected_device_id,
                 context
                     .certificate
                     .key_name_hint
@@ -213,20 +231,27 @@ impl ServiceEngine {
         if let Err(missing) = config.renewal_settings() {
             return self.transition_to(ServiceState::NotConfigured {
                 missing,
-                note: "server_url, client_uid, and device_id must be configured before the service can enroll or renew certificates"
+                note: "server_url, client_uid, and expected_device_id must be configured before the service can enroll or renew certificates"
                     .to_owned(),
             });
         }
 
         let next = match &self.state {
             ServiceState::NotConfigured { .. } => self.resolve_configuration_state(config),
+            ServiceState::BlockedDeviceIdentityMismatch { .. } => {
+                self.resolve_configuration_state(config)
+            }
             ServiceState::WaitingForEnrollment { plan, .. } => {
                 match self.platform.secrets.stage_enrollment_secret(plan) {
                     Ok(secret) => ServiceState::GeneratingKey {
                         plan: plan.clone(),
                         secret,
                     },
-                    Err(err) => self.error_backoff(config, ServicePhase::WaitingForEnrollment, err),
+                    Err(err) => self.state_from_platform_error(
+                        config,
+                        ServicePhase::WaitingForEnrollment,
+                        err,
+                    ),
                 }
             }
             ServiceState::GeneratingKey { plan, secret } => {
@@ -238,19 +263,23 @@ impl ServiceEngine {
                             key,
                         },
                     },
-                    Err(err) => self.error_backoff(config, ServicePhase::GeneratingKey, err),
+                    Err(err) => {
+                        self.state_from_platform_error(config, ServicePhase::GeneratingKey, err)
+                    }
                 }
             }
             ServiceState::SubmittingCsr { pending } => {
                 match self.submit_initial_enrollment(pending) {
                     Ok(certificate) => ServiceState::Issued { certificate },
-                    Err(err) => self.error_backoff(config, ServicePhase::SubmittingCsr, err),
+                    Err(err) => {
+                        self.state_from_platform_error(config, ServicePhase::SubmittingCsr, err)
+                    }
                 }
             }
             ServiceState::Issued { .. } => self.resolve_configuration_state(config),
             ServiceState::RenewalDue { context } => match self.renew_certificate(context) {
                 Ok(certificate) => ServiceState::Issued { certificate },
-                Err(err) => self.error_backoff(config, ServicePhase::RenewalDue, err),
+                Err(err) => self.state_from_platform_error(config, ServicePhase::RenewalDue, err),
             },
             ServiceState::ErrorBackoff { .. } => self.resolve_configuration_state(config),
         };
@@ -297,11 +326,19 @@ impl ServiceEngine {
             Err(missing) => {
                 return ServiceState::NotConfigured {
                     missing,
-                    note: "server_url, client_uid, and device_id must be configured before the service can enroll or renew certificates"
+                    note: "server_url, client_uid, and expected_device_id must be configured before the service can enroll or renew certificates"
                         .to_owned(),
                 };
             }
         };
+
+        if let Err(err) = self
+            .platform
+            .device_identity
+            .resolve_expected_device_identity(&renewal.expected_device_id)
+        {
+            return self.state_from_platform_error(config, self.state.phase(), err);
+        }
 
         match self
             .platform
@@ -347,8 +384,26 @@ impl ServiceEngine {
                     },
                 },
             },
-            Err(err) => self.error_backoff(config, ServicePhase::Issued, err),
+            Err(err) => self.state_from_platform_error(config, ServicePhase::Issued, err),
         }
+    }
+
+    fn state_from_platform_error(
+        &self,
+        config: &ServiceConfig,
+        failed_phase: ServicePhase,
+        err: PlatformError,
+    ) -> ServiceState {
+        if let Some((expected_device_id, current_device_id)) =
+            err.device_identity_mismatch_details()
+        {
+            return ServiceState::BlockedDeviceIdentityMismatch {
+                expected_device_id: expected_device_id.to_owned(),
+                current_device_id: current_device_id.to_owned(),
+                note: err.message,
+            };
+        }
+        self.error_backoff(config, failed_phase, err)
     }
 
     fn error_backoff(
@@ -432,7 +487,7 @@ fn issued_certificate_matches_config(
         .key_name_hint
         .as_deref()
         .map(|key_name_hint| {
-            key_name_hint == format!("{}-{}", renewal.client_uid, renewal.device_id)
+            key_name_hint == format!("{}-{}", renewal.client_uid, renewal.expected_device_id)
         })
         .unwrap_or(false)
 }
@@ -462,7 +517,7 @@ mod tests {
             server_url: Some("https://example.invalid/scep".to_owned()),
             client_uid: Some("client-001".to_owned()),
             enrollment_secret: Some("bootstrap-secret".to_owned()),
-            device_id: Some("device-001".to_owned()),
+            expected_device_id: Some("device-001".to_owned()),
             poll_interval: Duration::from_secs(300),
             renew_before: Duration::from_secs(3600),
             log_level: "info".to_owned(),
@@ -476,6 +531,7 @@ mod tests {
             endpoint: "https://example.invalid/api/attestation/nonce".to_owned(),
             value: "nonce-123".to_owned(),
             expires_at: Some("later".to_owned()),
+            device_id: "device-001".to_owned(),
         }
     }
 
@@ -507,7 +563,7 @@ mod tests {
             ServiceState::NotConfigured { missing, .. } => {
                 assert!(missing.contains(&RequiredField::ServerUrl));
                 assert!(missing.contains(&RequiredField::ClientUid));
-                assert!(missing.contains(&RequiredField::DeviceId));
+                assert!(missing.contains(&RequiredField::ExpectedDeviceId));
             }
             other => panic!("expected NotConfigured, got {other:?}"),
         }
@@ -692,7 +748,7 @@ mod tests {
             plan: RenewalSettings {
                 server_url: "https://example.invalid/scep".to_owned(),
                 client_uid: "client-001".to_owned(),
-                device_id: "device-001".to_owned(),
+                expected_device_id: "device-001".to_owned(),
             },
             certificate: InstalledCertificate {
                 store_path: r"LocalMachine\My",
@@ -766,5 +822,77 @@ mod tests {
             }
             other => panic!("expected NotConfigured, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn bootstrap_blocks_when_current_tpm_identity_mismatches_expected_device_id() {
+        let mut engine = ServiceEngine::new(ServicePlatform {
+            device_identity: crate::platform::DeviceIdentityProbe::default()
+                .with_resolve_expected_device_identity(|expected_device_id| {
+                    Err(PlatformError::with_device_identity_mismatch(
+                        "device-identity",
+                        expected_device_id.to_owned(),
+                        "device-actual-999".to_owned(),
+                        "current TPM device identity did not match the configured expected_device_id",
+                    ))
+                }),
+            ..ServicePlatform::default()
+        });
+
+        let transition = engine.bootstrap(&ready_config());
+        assert_eq!(
+            transition.current,
+            ServicePhase::BlockedDeviceIdentityMismatch
+        );
+        match engine.state() {
+            ServiceState::BlockedDeviceIdentityMismatch {
+                expected_device_id,
+                current_device_id,
+                note,
+            } => {
+                assert_eq!(expected_device_id, "device-001");
+                assert_eq!(current_device_id, "device-actual-999");
+                assert!(note.contains("expected_device_id"));
+            }
+            other => panic!("expected BlockedDeviceIdentityMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blocked_state_rechecks_identity_and_recovers_when_config_is_fixed() {
+        let current_expected = Arc::new(Mutex::new("device-actual-999".to_owned()));
+        let mut engine = ServiceEngine::new(ServicePlatform {
+            device_identity: crate::platform::DeviceIdentityProbe::default()
+                .with_resolve_expected_device_identity({
+                    let current_expected = current_expected.clone();
+                    move |expected_device_id| {
+                        let actual = current_expected.lock().expect("expected").clone();
+                        if actual != expected_device_id {
+                            return Err(PlatformError::with_device_identity_mismatch(
+                                "device-identity",
+                                expected_device_id.to_owned(),
+                                actual,
+                                "current TPM device identity did not match the configured expected_device_id",
+                            ));
+                        }
+                        Ok(crate::platform::ResolvedDeviceIdentity {
+                            device_id: actual,
+                            ek_public_b64: None,
+                        })
+                    }
+                }),
+            ..ServicePlatform::default()
+        });
+
+        let mut config = ready_config();
+        let transition = engine.bootstrap(&config);
+        assert_eq!(
+            transition.current,
+            ServicePhase::BlockedDeviceIdentityMismatch
+        );
+
+        config.expected_device_id = Some("device-actual-999".to_owned());
+        let transition = engine.tick(&config);
+        assert_eq!(transition.current, ServicePhase::WaitingForEnrollment);
     }
 }

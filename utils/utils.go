@@ -1,7 +1,11 @@
 package utils
 
 import (
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -66,4 +70,30 @@ func NormalizeSHA256Fingerprint(raw string) string {
 		return ""
 	}
 	return normalized
+}
+
+func CanonicalDeviceIDFromPKIXPublicKeyDER(der []byte) (string, error) {
+	if len(der) == 0 {
+		return "", fmt.Errorf("public key was empty")
+	}
+	if _, err := x509.ParsePKIXPublicKey(der); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(der)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+func CanonicalDeviceIDFromBase64URLPKIXPublicKey(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("public key was empty")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(trimmed)
+	if err != nil {
+		decoded, err = base64.URLEncoding.DecodeString(trimmed)
+		if err != nil {
+			return "", err
+		}
+	}
+	return CanonicalDeviceIDFromPKIXPublicKeyDER(decoded)
 }

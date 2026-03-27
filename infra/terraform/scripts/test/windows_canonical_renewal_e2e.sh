@@ -17,7 +17,7 @@ Required:
   --windows-user <USER>               Windows username for MSI transfer
   --client-uid <UID>                  Registered client UID
   --enrollment-secret <SECRET>        One-time enrollment secret
-  --device-id-override <DEVICE_ID>    Registered device_id override currently used on the VM
+  --expected-device-id <DEVICE_ID>    Registered TPM identity currently used on the VM
 
 Optional:
   --server-url <URL>                  Full SCEP URL (default: Terraform-derived)
@@ -43,7 +43,7 @@ TERRAFORM_DIR=""
 WINDOWS_USER=""
 CLIENT_UID=""
 ENROLLMENT_SECRET=""
-DEVICE_ID_OVERRIDE=""
+EXPECTED_DEVICE_ID=""
 SERVER_URL=""
 PROJECT_ID=""
 ZONE=""
@@ -70,8 +70,8 @@ while [[ $# -gt 0 ]]; do
       ENROLLMENT_SECRET="${2:?missing value for --enrollment-secret}"
       shift 2
       ;;
-    --device-id-override)
-      DEVICE_ID_OVERRIDE="${2:?missing value for --device-id-override}"
+    --expected-device-id)
+      EXPECTED_DEVICE_ID="${2:?missing value for $1}"
       shift 2
       ;;
     --server-url)
@@ -138,8 +138,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$WINDOWS_USER" || -z "$CLIENT_UID" || -z "$ENROLLMENT_SECRET" || -z "$DEVICE_ID_OVERRIDE" ]]; then
-  echo "--windows-user, --client-uid, --enrollment-secret, and --device-id-override are required." >&2
+if [[ -z "$WINDOWS_USER" || -z "$CLIENT_UID" || -z "$ENROLLMENT_SECRET" || -z "$EXPECTED_DEVICE_ID" ]]; then
+  echo "--windows-user, --client-uid, --enrollment-secret, and --expected-device-id are required." >&2
   exit 1
 fi
 
@@ -214,7 +214,7 @@ install_args=(
   --terraform-dir "$TERRAFORM_DIR"
   --client-uid "$CLIENT_UID"
   --enrollment-secret "$ENROLLMENT_SECRET"
-  --device-id-override "$DEVICE_ID_OVERRIDE"
+  --expected-device-id "$EXPECTED_DEVICE_ID"
   --poll-interval "$POLL_INTERVAL"
   --renew-before "$RENEW_BEFORE"
   --log-level "$LOG_LEVEL"

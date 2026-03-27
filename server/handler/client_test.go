@@ -9,7 +9,7 @@ import (
 func TestNormalizeClientAttributes(t *testing.T) {
 	attributes := map[string]interface{}{
 		utils.ClientAttributeManagedClientType:        " Windows-MSI ",
-		utils.ClientAttributeDeviceID:                 " Device-001 ",
+		utils.ClientAttributeDeviceID:                 "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899",
 		utils.ClientAttributeAttestationAIKSPKISHA256: "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
 		utils.ClientAttributeAttestationEKCertSHA256:  "AA-BB-CC-DD-EE-FF-00-11-22-33-44-55-66-77-88-99-AA-BB-CC-DD-EE-FF-00-11-22-33-44-55-66-77-88-99",
 	}
@@ -18,7 +18,7 @@ func TestNormalizeClientAttributes(t *testing.T) {
 		t.Fatalf("expected normalization to succeed, got %v", err)
 	}
 
-	if got := attributes[utils.ClientAttributeDeviceID]; got != "device-001" {
+	if got := attributes[utils.ClientAttributeDeviceID]; got != "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899" {
 		t.Fatalf("unexpected normalized device_id: %#v", got)
 	}
 	if got := attributes[utils.ClientAttributeAttestationAIKSPKISHA256]; got != "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899" {
@@ -84,6 +84,21 @@ func TestNormalizeClientAttributesRequiresDeviceIDForWindowsMSI(t *testing.T) {
 		t.Fatal("expected windows managed client without device_id to fail")
 	}
 	if got := err.Error(); got != "device_id is required when managed_client_type=windows-msi" {
+		t.Fatalf("unexpected error: %v", got)
+	}
+}
+
+func TestNormalizeClientAttributesRejectsNonCanonicalWindowsMSIDeviceID(t *testing.T) {
+	attributes := map[string]interface{}{
+		utils.ClientAttributeManagedClientType: utils.ManagedClientTypeWindowsMSI,
+		utils.ClientAttributeDeviceID:          "aa:bb:cc",
+	}
+
+	err := normalizeClientAttributes(attributes)
+	if err == nil {
+		t.Fatal("expected non-canonical device_id to fail")
+	}
+	if got := err.Error(); got != "device_id must be a lowercase 64-character SHA-256 fingerprint when managed_client_type=windows-msi" {
 		t.Fatalf("unexpected error: %v", got)
 	}
 }

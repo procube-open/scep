@@ -1,6 +1,14 @@
 package utils
 
-import "testing"
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"fmt"
+	"testing"
+)
 
 func TestNormalizeDeviceID(t *testing.T) {
 	tests := []struct {
@@ -63,5 +71,49 @@ func TestNormalizeSHA256Fingerprint(t *testing.T) {
 				t.Fatalf("want %q, got %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestCanonicalDeviceIDFromPKIXPublicKeyDER(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(key.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := CanonicalDeviceIDFromPKIXPublicKeyDER(der)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sum := sha256.Sum256(der)
+	want := fmt.Sprintf("%x", sum[:])
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestCanonicalDeviceIDFromBase64URLPKIXPublicKey(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(key.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := CanonicalDeviceIDFromBase64URLPKIXPublicKey(base64.RawURLEncoding.EncodeToString(der))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sum := sha256.Sum256(der)
+	want := fmt.Sprintf("%x", sum[:])
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
 	}
 }

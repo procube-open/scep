@@ -241,8 +241,12 @@ func validateManagedClientAttributes(attributes map[string]interface{}) error {
 	}
 
 	if managedClientType == utils.ManagedClientTypeWindowsMSI {
-		if _, ok := lookupNormalizedDeviceIDAttribute(attributes); !ok {
+		deviceID, ok := lookupNormalizedDeviceIDAttribute(attributes)
+		if !ok {
 			return fmt.Errorf("device_id is required when managed_client_type=%s", utils.ManagedClientTypeWindowsMSI)
+		}
+		if utils.NormalizeSHA256Fingerprint(deviceID) != deviceID {
+			return errors.New("device_id must be a lowercase 64-character SHA-256 fingerprint when managed_client_type=windows-msi")
 		}
 	}
 

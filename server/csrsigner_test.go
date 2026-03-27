@@ -116,6 +116,52 @@ func TestAttestationMiddlewareInvokesVerifierForGET(t *testing.T) {
 	}
 }
 
+func TestMySQLChallengeMiddlewareRejectsWindowsMSIChallengeUpdate(t *testing.T) {
+	signer := MySQLChallengeMiddleWare(&stubChallengeStore{
+		clients: map[string]*mysql.Client{
+			"client-001": {
+				Uid:    "client-001",
+				Status: "UPDATABLE",
+				Attributes: map[string]interface{}{
+					utils.ClientAttributeManagedClientType: utils.ManagedClientTypeWindowsMSI,
+				},
+			},
+		},
+		secret: mysql.GetSecretInfo{Secret: "secret"},
+	}, NopCSRSigner())
+
+	ctx := ContextWithChallengePassword(context.Background(), "client-001\\secret")
+	_, err := signer.SignCSRContext(ctx, &scep.CSRReqMessage{})
+	if err == nil || err.Error() != "windows-msi client is not issuable" {
+		t.Fatalf("expected windows-msi challenge rejection, got %v", err)
+	}
+}
+
+func TestMySQLChallengeMiddlewareRejectsWindowsMSIRenewalFromUpdatable(t *testing.T) {
+	signer := MySQLChallengeMiddleWare(&stubChallengeStore{
+		clients: map[string]*mysql.Client{
+			"client-001": {
+				Uid:    "client-001",
+				Status: "UPDATABLE",
+				Attributes: map[string]interface{}{
+					utils.ClientAttributeManagedClientType: utils.ManagedClientTypeWindowsMSI,
+				},
+			},
+		},
+		activeCert: true,
+	}, NopCSRSigner())
+
+	ctx := ContextWithSCEPMessageType(context.Background(), scep.RenewalReq)
+	ctx = ContextWithSignerCertificate(ctx, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "client-001"},
+	})
+
+	_, err := signer.SignCSRContext(ctx, &scep.CSRReqMessage{})
+	if err == nil || err.Error() != "windows-msi client is not issued" {
+		t.Fatalf("expected windows-msi renewal rejection, got %v", err)
+	}
+}
+
 func TestDecodeAttestation(t *testing.T) {
 	tests := []struct {
 		name                string

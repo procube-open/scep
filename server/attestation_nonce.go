@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/utils"
 )
 
@@ -29,8 +28,9 @@ type attestationNonceRecord struct {
 }
 
 type AttestationNonceRequest struct {
-	ClientUID string `json:"client_uid"`
-	DeviceID  string `json:"device_id"`
+	ClientUID   string `json:"client_uid"`
+	DeviceID    string `json:"device_id"`
+	EKPublicB64 string `json:"ek_public_b64"`
 }
 
 type AttestationNonceResponse struct {
@@ -136,7 +136,7 @@ func (s *AttestationNonceService) pruneExpiredLocked() {
 	}
 }
 
-func NewAttestationNonceHandler(depot *mysql.MySQLDepot, nonces *AttestationNonceService) http.HandlerFunc {
+func NewAttestationNonceHandler(depot requestClientStore, nonces *AttestationNonceService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if depot == nil || nonces == nil {
 			http.Error(w, "attestation nonce service is unavailable", http.StatusInternalServerError)
@@ -153,6 +153,7 @@ func NewAttestationNonceHandler(depot *mysql.MySQLDepot, nonces *AttestationNonc
 
 		req.ClientUID = strings.TrimSpace(req.ClientUID)
 		req.DeviceID = utils.NormalizeDeviceID(req.DeviceID)
+		req.EKPublicB64 = strings.TrimSpace(req.EKPublicB64)
 		if req.ClientUID == "" {
 			http.Error(w, "client_uid is required", http.StatusBadRequest)
 			return
@@ -172,17 +173,26 @@ func NewAttestationNonceHandler(depot *mysql.MySQLDepot, nonces *AttestationNonc
 			return
 		}
 
-		registeredDeviceID, ok := lookupDeviceID(client.Attributes)
-		if !ok {
-			http.Error(w, "registered device_id is missing", http.StatusBadRequest)
+		registeredDeviceID, err := validateClientDeviceIDBinding(client.Attributes, req.DeviceID, req.EKPublicB64)
+		if err != nil {
+			switch err {
+			case errRegisteredDeviceIDMissing:
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			case errRequestDeviceIDMismatch:
+				http.Error(w, err.Error(), http.StatusForbidden)
+			case errEKPublicRequired, errEKPublicInvalid:
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			default:
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		if registeredDeviceID != req.DeviceID {
-			http.Error(w, "device_id mismatch", http.StatusForbidden)
+		if isWindowsManagedClient(client.Attributes) && client.Status != "ISSUABLE" && client.Status != "ISSUED" {
+			http.Error(w, "client is not ready for attestation", http.StatusForbidden)
 			return
 		}
 
-		nonce, expiresAt, err := nonces.Issue(req.ClientUID, req.DeviceID)
+		nonce, expiresAt, err := nonces.Issue(req.ClientUID, registeredDeviceID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -191,7 +201,7 @@ func NewAttestationNonceHandler(depot *mysql.MySQLDepot, nonces *AttestationNonc
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(AttestationNonceResponse{
 			Nonce:     nonce,
-			DeviceID:  req.DeviceID,
+			DeviceID:  registeredDeviceID,
 			ExpiresAt: expiresAt.UTC(),
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

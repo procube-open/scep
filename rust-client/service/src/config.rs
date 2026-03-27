@@ -17,7 +17,8 @@ const REGISTRY_ENROLLMENT_SECRET_VALUE: &str = "EnrollmentSecret";
 #[cfg(windows)]
 const REGISTRY_ENROLLMENT_SECRET_PROTECTED_VALUE: &str = "EnrollmentSecretProtected";
 #[cfg(windows)]
-const REGISTRY_DEVICE_ID_VALUES: &[&str] = &["DeviceId", "DeviceID", "DeviceIdOverride"];
+const REGISTRY_EXPECTED_DEVICE_ID_VALUES: &[&str] =
+    &["ExpectedDeviceId", "ExpectedDeviceID", "DeviceId"];
 #[cfg(windows)]
 const REGISTRY_POLL_INTERVAL_VALUE: &str = "PollInterval";
 #[cfg(windows)]
@@ -48,7 +49,7 @@ impl ConfigSource {
 pub enum RequiredField {
     ServerUrl,
     ClientUid,
-    DeviceId,
+    ExpectedDeviceId,
     EnrollmentSecret,
 }
 
@@ -57,7 +58,7 @@ impl RequiredField {
         match self {
             Self::ServerUrl => "server_url",
             Self::ClientUid => "client_uid",
-            Self::DeviceId => "device_id",
+            Self::ExpectedDeviceId => "expected_device_id",
             Self::EnrollmentSecret => "enrollment_secret",
         }
     }
@@ -68,7 +69,7 @@ pub struct ServiceConfig {
     pub server_url: Option<String>,
     pub client_uid: Option<String>,
     pub enrollment_secret: Option<String>,
-    pub device_id: Option<String>,
+    pub expected_device_id: Option<String>,
     pub poll_interval: Duration,
     pub renew_before: Duration,
     pub log_level: String,
@@ -82,7 +83,7 @@ impl Default for ServiceConfig {
             server_url: None,
             client_uid: None,
             enrollment_secret: None,
-            device_id: None,
+            expected_device_id: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             renew_before: DEFAULT_RENEW_BEFORE,
             log_level: DEFAULT_LOG_LEVEL.to_owned(),
@@ -101,7 +102,7 @@ impl fmt::Debug for ServiceConfig {
                 "enrollment_secret",
                 &self.enrollment_secret.as_ref().map(|_| "<redacted>"),
             )
-            .field("device_id", &self.device_id)
+            .field("expected_device_id", &self.expected_device_id)
             .field("poll_interval", &self.poll_interval)
             .field("renew_before", &self.renew_before)
             .field("log_level", &self.log_level)
@@ -116,7 +117,7 @@ pub struct EnrollmentSettings {
     pub server_url: String,
     pub client_uid: String,
     pub enrollment_secret: String,
-    pub device_id: String,
+    pub expected_device_id: String,
 }
 
 impl fmt::Debug for EnrollmentSettings {
@@ -125,7 +126,7 @@ impl fmt::Debug for EnrollmentSettings {
             .field("server_url", &self.server_url)
             .field("client_uid", &self.client_uid)
             .field("enrollment_secret", &"<redacted>")
-            .field("device_id", &self.device_id)
+            .field("expected_device_id", &self.expected_device_id)
             .finish()
     }
 }
@@ -134,7 +135,7 @@ impl fmt::Debug for EnrollmentSettings {
 pub struct RenewalSettings {
     pub server_url: String,
     pub client_uid: String,
-    pub device_id: String,
+    pub expected_device_id: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -151,13 +152,8 @@ struct RawServiceConfig {
     client_uid: Option<String>,
     #[serde(alias = "ENROLLMENT_SECRET", alias = "enrollment_secret")]
     enrollment_secret: Option<String>,
-    #[serde(
-        alias = "DEVICE_ID",
-        alias = "DEVICE_ID_OVERRIDE",
-        alias = "device_id",
-        alias = "device_id_override"
-    )]
-    device_id: Option<String>,
+    #[serde(alias = "EXPECTED_DEVICE_ID", alias = "expected_device_id")]
+    expected_device_id: Option<String>,
     #[serde(alias = "POLL_INTERVAL", alias = "poll_interval")]
     poll_interval: Option<String>,
     #[serde(alias = "RENEW_BEFORE", alias = "renew_before")]
@@ -204,7 +200,7 @@ impl ServiceConfig {
         Ok(RenewalSettings {
             server_url: self.server_url.clone().unwrap_or_default(),
             client_uid: self.client_uid.clone().unwrap_or_default(),
-            device_id: self.device_id.clone().unwrap_or_default(),
+            expected_device_id: self.expected_device_id.clone().unwrap_or_default(),
         })
     }
 
@@ -221,7 +217,7 @@ impl ServiceConfig {
             server_url: self.server_url.clone().unwrap_or_default(),
             client_uid: self.client_uid.clone().unwrap_or_default(),
             enrollment_secret: self.enrollment_secret.clone().unwrap_or_default(),
-            device_id: self.device_id.clone().unwrap_or_default(),
+            expected_device_id: self.expected_device_id.clone().unwrap_or_default(),
         })
     }
 
@@ -263,8 +259,8 @@ impl ServiceConfig {
         );
         push_missing(
             &mut missing,
-            self.device_id.as_ref(),
-            RequiredField::DeviceId,
+            self.expected_device_id.as_ref(),
+            RequiredField::ExpectedDeviceId,
         );
         missing
     }
@@ -275,7 +271,7 @@ impl RawServiceConfig {
         self.server_url.is_none()
             && self.client_uid.is_none()
             && self.enrollment_secret.is_none()
-            && self.device_id.is_none()
+            && self.expected_device_id.is_none()
             && self.poll_interval.is_none()
             && self.renew_before.is_none()
             && self.log_level.is_none()
@@ -291,8 +287,8 @@ impl RawServiceConfig {
         if other.enrollment_secret.is_some() {
             self.enrollment_secret = other.enrollment_secret;
         }
-        if other.device_id.is_some() {
-            self.device_id = other.device_id;
+        if other.expected_device_id.is_some() {
+            self.expected_device_id = other.expected_device_id;
         }
         if other.poll_interval.is_some() {
             self.poll_interval = other.poll_interval;
@@ -344,7 +340,11 @@ fn load_from_registry() -> SourceLoad {
         server_url: capture_registry_value_list(&key, REGISTRY_SERVER_URL_VALUES, &mut warnings),
         client_uid: capture_registry_value(&key, REGISTRY_CLIENT_UID_VALUE, &mut warnings),
         enrollment_secret: capture_enrollment_secret(&key, writable, &mut warnings),
-        device_id: capture_registry_value_list(&key, REGISTRY_DEVICE_ID_VALUES, &mut warnings),
+        expected_device_id: capture_registry_value_list(
+            &key,
+            REGISTRY_EXPECTED_DEVICE_ID_VALUES,
+            &mut warnings,
+        ),
         poll_interval: capture_registry_value(&key, REGISTRY_POLL_INTERVAL_VALUE, &mut warnings),
         renew_before: capture_registry_value(&key, REGISTRY_RENEW_BEFORE_VALUE, &mut warnings),
         log_level: capture_registry_value(&key, REGISTRY_LOG_LEVEL_VALUE, &mut warnings),
@@ -433,7 +433,8 @@ fn build_service_config(
         server_url: optional_value(raw.server_url),
         client_uid: optional_value(raw.client_uid),
         enrollment_secret: optional_value(raw.enrollment_secret),
-        device_id: optional_value(raw.device_id).map(|value| value.to_lowercase()),
+        expected_device_id: optional_value(raw.expected_device_id)
+            .map(|value| value.to_lowercase()),
         poll_interval,
         renew_before,
         log_level,
@@ -442,10 +443,7 @@ fn build_service_config(
     }
 }
 
-fn validate_duration_relationships(
-    poll_interval: Duration,
-    renew_before: Duration,
-) -> Vec<String> {
+fn validate_duration_relationships(poll_interval: Duration, renew_before: Duration) -> Vec<String> {
     let mut warnings = Vec::new();
     if !renew_before.is_zero() && poll_interval > renew_before {
         warnings.push(format!(
@@ -908,12 +906,12 @@ mod tests {
         let config = ServiceConfig {
             server_url: Some("https://example.invalid/scep".to_owned()),
             client_uid: Some("client-001".to_owned()),
-            device_id: Some("device-001".to_owned()),
+            expected_device_id: Some("device-001".to_owned()),
             ..ServiceConfig::default()
         };
 
         let renewal = config.renewal_settings().expect("renewal settings");
-        assert_eq!(renewal.device_id, "device-001");
+        assert_eq!(renewal.expected_device_id, "device-001");
         assert_eq!(
             config.initial_enrollment().expect_err("missing secret"),
             vec![RequiredField::EnrollmentSecret]
@@ -958,17 +956,17 @@ mod tests {
     }
 
     #[test]
-    fn device_id_is_normalized() {
+    fn expected_device_id_is_normalized() {
         let config = build_service_config(
             RawServiceConfig {
-                device_id: Some("  DEVICE-ABC  ".to_owned()),
+                expected_device_id: Some("  DEVICE-ABC  ".to_owned()),
                 ..RawServiceConfig::default()
             },
             vec![ConfigSource::Registry],
             Vec::new(),
         );
 
-        assert_eq!(config.device_id.as_deref(), Some("device-abc"));
+        assert_eq!(config.expected_device_id.as_deref(), Some("device-abc"));
     }
 
     #[test]

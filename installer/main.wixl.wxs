@@ -41,14 +41,21 @@
                       Type="raw" />
     </Property>
     <Property Id="ENROLLMENT_SECRET" Secure="yes" />
-    <Property Id="EXISTING_DEVICE_ID_OVERRIDE" Secure="yes">
-      <RegistrySearch Id="SearchDeviceIdOverride"
+    <Property Id="EXISTING_EXPECTED_DEVICE_ID" Secure="yes">
+      <RegistrySearch Id="SearchExpectedDeviceId"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ExpectedDeviceId"
+                      Type="raw" />
+    </Property>
+    <Property Id="EXISTING_LEGACY_DEVICE_ID" Secure="yes">
+      <RegistrySearch Id="SearchLegacyDeviceId"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="DeviceId"
                       Type="raw" />
     </Property>
-    <Property Id="DEVICE_ID_OVERRIDE" Secure="yes" />
+    <Property Id="EXPECTED_DEVICE_ID" Secure="yes" />
     <Property Id="EXISTING_POLL_INTERVAL" Secure="yes">
       <RegistrySearch Id="SearchPollInterval"
                       Root="HKLM"
@@ -79,7 +86,8 @@
     <CustomAction Id="SetServerUrlDefault" Property="SERVER_URL" Value="https://example.invalid/scep" Execute="firstSequence" />
     <CustomAction Id="SetClientUidFromExisting" Property="CLIENT_UID" Value="[EXISTING_CLIENT_UID]" Execute="firstSequence" />
     <CustomAction Id="SetEnrollmentSecretFromExisting" Property="ENROLLMENT_SECRET" Value="[EXISTING_ENROLLMENT_SECRET]" Execute="firstSequence" />
-    <CustomAction Id="SetDeviceIdFromExisting" Property="DEVICE_ID_OVERRIDE" Value="[EXISTING_DEVICE_ID_OVERRIDE]" Execute="firstSequence" />
+    <CustomAction Id="SetExpectedDeviceIdFromExisting" Property="EXPECTED_DEVICE_ID" Value="[EXISTING_EXPECTED_DEVICE_ID]" Execute="firstSequence" />
+    <CustomAction Id="SetExpectedDeviceIdFromLegacyRegistry" Property="EXPECTED_DEVICE_ID" Value="[EXISTING_LEGACY_DEVICE_ID]" Execute="firstSequence" />
     <CustomAction Id="SetPollIntervalFromExisting" Property="POLL_INTERVAL" Value="[EXISTING_POLL_INTERVAL]" Execute="firstSequence" />
     <CustomAction Id="SetPollIntervalDefault" Property="POLL_INTERVAL" Value="1h" Execute="firstSequence" />
     <CustomAction Id="SetRenewBeforeFromExisting" Property="RENEW_BEFORE" Value="[EXISTING_RENEW_BEFORE]" Execute="firstSequence" />
@@ -93,8 +101,9 @@
       <Custom Action="SetServerUrlDefault" After="SetServerUrlFromLegacy">NOT SERVER_URL</Custom>
       <Custom Action="SetClientUidFromExisting" After="SetServerUrlDefault">NOT CLIENT_UID AND EXISTING_CLIENT_UID</Custom>
       <Custom Action="SetEnrollmentSecretFromExisting" After="SetClientUidFromExisting">NOT ENROLLMENT_SECRET AND EXISTING_ENROLLMENT_SECRET</Custom>
-      <Custom Action="SetDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT DEVICE_ID_OVERRIDE AND EXISTING_DEVICE_ID_OVERRIDE</Custom>
-      <Custom Action="SetPollIntervalFromExisting" After="SetDeviceIdFromExisting">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
+      <Custom Action="SetExpectedDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT EXPECTED_DEVICE_ID AND EXISTING_EXPECTED_DEVICE_ID</Custom>
+      <Custom Action="SetExpectedDeviceIdFromLegacyRegistry" After="SetExpectedDeviceIdFromExisting">NOT EXPECTED_DEVICE_ID AND EXISTING_LEGACY_DEVICE_ID</Custom>
+      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromLegacyRegistry">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
       <Custom Action="SetPollIntervalDefault" After="SetPollIntervalFromExisting">NOT POLL_INTERVAL</Custom>
       <Custom Action="SetRenewBeforeFromExisting" After="SetPollIntervalDefault">NOT RENEW_BEFORE AND EXISTING_RENEW_BEFORE</Custom>
       <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting">NOT RENEW_BEFORE</Custom>
@@ -119,15 +128,15 @@
               <RegistryValue Name="EnrollmentSecret"
                              Type="string"
                              Value="[ENROLLMENT_SECRET]" />
-              <RegistryValue Name="DeviceId"
-                             Type="string"
-                             Value="[DEVICE_ID_OVERRIDE]" />
-              <RegistryValue Name="DeviceIdOverride"
-                             Type="string"
-                             Value="[DEVICE_ID_OVERRIDE]" />
-              <RegistryValue Name="PollInterval"
-                             Type="string"
-                             Value="[POLL_INTERVAL]" />
+               <RegistryValue Name="ExpectedDeviceId"
+                              Type="string"
+                              Value="[EXPECTED_DEVICE_ID]" />
+               <RegistryValue Name="DeviceId"
+                              Type="string"
+                              Value="[EXPECTED_DEVICE_ID]" />
+               <RegistryValue Name="PollInterval"
+                              Type="string"
+                              Value="[POLL_INTERVAL]" />
               <RegistryValue Name="RenewBefore"
                              Type="string"
                              Value="[RENEW_BEFORE]" />
@@ -142,6 +151,8 @@
                   KeyPath="yes" />
             <File Id="ScepClientExe"
               Source="../cmd/scepclient/scepclient.exe" />
+            <File Id="DeviceIdProbeExe"
+              Source="../cmd/scepclient/device-id-probe.exe" />
             <ServiceInstall Id="ServiceInstaller"
                             Type="ownProcess"
                             Name="MyTunnelService"

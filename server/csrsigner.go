@@ -76,6 +76,9 @@ func MySQLChallengeMiddleWare(depot mysqlChallengeStore, next CSRSignerContext) 
 
 		switch identity.authMethod {
 		case requestIdentityByChallenge:
+			if isWindowsManagedClient(identity.client.Attributes) && identity.client.Status != "ISSUABLE" {
+				return nil, errors.New("windows-msi client is not issuable")
+			}
 			if !(identity.client.Status == "ISSUABLE" || identity.client.Status == "UPDATABLE") {
 				return nil, errors.New("client is not issuable or updatable")
 			}
@@ -87,6 +90,9 @@ func MySQLChallengeMiddleWare(depot mysqlChallengeStore, next CSRSignerContext) 
 				return nil, errors.New("invalid secret")
 			}
 		case requestIdentityBySignerCertificate:
+			if isWindowsManagedClient(identity.client.Attributes) && identity.client.Status != "ISSUED" {
+				return nil, errors.New("windows-msi client is not issued")
+			}
 			if !(identity.client.Status == "ISSUED" || identity.client.Status == "UPDATABLE") {
 				return nil, errors.New("client is not issued or updatable")
 			}

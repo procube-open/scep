@@ -20,6 +20,8 @@ import (
 	"github.com/google/go-attestation/attest"
 	legacytpm2 "github.com/google/go-tpm/legacy/tpm2"
 	"golang.org/x/sys/windows"
+
+	"github.com/procube-open/scep/utils"
 )
 
 const (
@@ -29,6 +31,7 @@ const (
 )
 
 type windowsTPMQuoteMaterial struct {
+	DeviceID                  string
 	AIKDER                    []byte
 	AIKTPMPublic              []byte
 	AKUseTCSDActivationFormat bool
@@ -75,6 +78,9 @@ func maybeUpgradeAttestation(attestation, keyProvider, keyName, publicKeySPKI, s
 		claims.Attestation.QuoteSignatureB64 != "" &&
 		claims.Attestation.EKPublicB64 != "" &&
 		(!activationRequested || (claims.Attestation.ActivationID != "" && claims.Attestation.ActivationProofB64 != "")):
+		if err := validateCanonicalWindowsDeviceID(claims); err != nil {
+			return "", err
+		}
 		return attestation, nil
 	case strings.HasPrefix(claims.Attestation.Format, placeholderWindowsTPMAttestationFmt),
 		claims.Attestation.Format == canonicalWindowsTPMAttestationFormat:
@@ -88,9 +94,6 @@ func buildWindowsCanonicalAttestation(claims *attestationClaims, keyProvider, ke
 	if claims == nil {
 		return "", fmt.Errorf("attestation payload is missing")
 	}
-	if claims.DeviceID == "" {
-		return "", fmt.Errorf("attestation payload is missing device_id")
-	}
 	if claims.Attestation.Nonce == "" {
 		return "", fmt.Errorf("attestation payload is missing nonce")
 	}
@@ -103,7 +106,6 @@ func buildWindowsCanonicalAttestation(claims *attestationClaims, keyProvider, ke
 	material, err := buildWindowsTPMQuote(
 		keyName,
 		publicKeySPKI,
-		claims.DeviceID,
 		claims.Attestation.Nonce,
 		serverURL,
 		clientUID,
@@ -122,7 +124,7 @@ func buildWindowsCanonicalAttestation(claims *attestationClaims, keyProvider, ke
 	}
 
 	encoded, err := encodeAttestationPayload(buildCanonicalAttestationClaims(
-		claims.DeviceID,
+		material.DeviceID,
 		attestationKey{
 			Algorithm:        keyAlgorithm,
 			Provider:         keyProvider,
@@ -146,7 +148,7 @@ func buildWindowsCanonicalAttestation(claims *attestationClaims, keyProvider, ke
 	return encoded, nil
 }
 
-func buildWindowsTPMQuote(keyName, publicKeySPKI, deviceID, nonceB64, serverURL, clientUID string) (_ *windowsTPMQuoteMaterial, err error) {
+func buildWindowsTPMQuote(keyName, publicKeySPKI, nonceB64, serverURL, clientUID string) (_ *windowsTPMQuoteMaterial, err error) {
 	publicKeyDER, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(publicKeySPKI))
 	if err != nil {
 		return nil, fmt.Errorf("decode public key spki: %w", err)
@@ -209,6 +211,13 @@ func buildWindowsTPMQuote(keyName, publicKeySPKI, deviceID, nonceB64, serverURL,
 		ekCertDER = nil
 		ekCertificateURL = ""
 	}
+	if len(ekPublicSPKIDER) == 0 {
+		return nil, fmt.Errorf("Windows endorsement key is unavailable")
+	}
+	deviceID, err := utils.CanonicalDeviceIDFromPKIXPublicKeyDER(ekPublicSPKIDER)
+	if err != nil {
+		return nil, fmt.Errorf("derive canonical device_id from Windows EK public key: %w", err)
+	}
 
 	quote, err := quoteWithWindowsAK(ak, tpm, extraData)
 	if err != nil {
@@ -235,6 +244,7 @@ func buildWindowsTPMQuote(keyName, publicKeySPKI, deviceID, nonceB64, serverURL,
 	}
 
 	return &windowsTPMQuoteMaterial{
+		DeviceID:                  deviceID,
 		AIKDER:                    aikDER,
 		AIKTPMPublic:              append([]byte(nil), params.Public...),
 		AKUseTCSDActivationFormat: params.UseTCSDActivationFormat,
@@ -249,6 +259,50 @@ func buildWindowsTPMQuote(keyName, publicKeySPKI, deviceID, nonceB64, serverURL,
 		EKCertDER:                 ekCertDER,
 		EKCertificateURL:          strings.TrimSpace(ekCertificateURL),
 	}, nil
+}
+
+func currentDeviceIdentity() (*deviceIdentity, error) {
+	tpm, err := attest.OpenTPM(nil)
+	if err != nil {
+		return nil, fmt.Errorf("open Windows TPM: %w", err)
+	}
+	defer tpm.Close()
+
+	ekPublicSPKIDER, _, _, err := readWindowsEndorsementKey(tpm)
+	if err != nil {
+		return nil, err
+	}
+	if len(ekPublicSPKIDER) == 0 {
+		return nil, fmt.Errorf("Windows endorsement key is unavailable")
+	}
+
+	deviceID, err := utils.CanonicalDeviceIDFromPKIXPublicKeyDER(ekPublicSPKIDER)
+	if err != nil {
+		return nil, fmt.Errorf("derive canonical device_id from Windows EK public key: %w", err)
+	}
+
+	return &deviceIdentity{
+		ExpectedDeviceID: deviceID,
+		DeviceID:         deviceID,
+		EKPublicB64:      base64.RawURLEncoding.EncodeToString(ekPublicSPKIDER),
+	}, nil
+}
+
+func validateCanonicalWindowsDeviceID(claims *attestationClaims) error {
+	if claims == nil {
+		return fmt.Errorf("attestation payload is missing")
+	}
+	if claims.Attestation.EKPublicB64 == "" {
+		return fmt.Errorf("attestation payload is missing ek_public_b64")
+	}
+	deviceID, err := utils.CanonicalDeviceIDFromBase64URLPKIXPublicKey(claims.Attestation.EKPublicB64)
+	if err != nil {
+		return fmt.Errorf("derive canonical device_id from ek_public_b64: %w", err)
+	}
+	if claims.DeviceID != deviceID {
+		return fmt.Errorf("attestation payload device_id did not match ek_public_b64")
+	}
+	return nil
 }
 
 func readWindowsEndorsementKey(tpm *attest.TPM) (ekPublicSPKIDER, ekCertDER []byte, ekCertificateURL string, err error) {

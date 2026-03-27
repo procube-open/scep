@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"os"
@@ -39,6 +40,74 @@ func TestBuildChallengeRequiresSecretWhenCertificateIsMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "please set -secret option for initial enrollment") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInvokedAsDeviceIDProbe(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name    string
+		path    string
+		expects bool
+	}{
+		{name: "probe exe", path: `C:\Program Files\MyTunnelApp\device-id-probe.exe`, expects: true},
+		{name: "probe bare", path: `device-id-probe`, expects: true},
+		{name: "scepclient exe", path: `C:\Program Files\MyTunnelApp\scepclient.exe`, expects: false},
+		{name: "other", path: `helper.exe`, expects: false},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := invokedAsDeviceIDProbe(tc.path); got != tc.expects {
+				t.Fatalf("invokedAsDeviceIDProbe(%q) = %v, want %v", tc.path, got, tc.expects)
+			}
+		})
+	}
+}
+
+func TestFormatDeviceIdentityOutputText(t *testing.T) {
+	t.Parallel()
+
+	output, err := formatDeviceIdentityOutput(&deviceIdentity{
+		ExpectedDeviceID: "abc123",
+		DeviceID:         "abc123",
+		EKPublicB64:      "Zm9v",
+	}, false)
+	if err != nil {
+		t.Fatalf("formatDeviceIdentityOutput returned error: %v", err)
+	}
+	if !strings.Contains(output, "expected_device_id: abc123\n") {
+		t.Fatalf("expected human-readable output to contain expected_device_id, got %q", output)
+	}
+	if !strings.Contains(output, "device_id: abc123\n") {
+		t.Fatalf("expected human-readable output to contain device_id, got %q", output)
+	}
+	if !strings.Contains(output, "ek_public_b64: Zm9v\n") {
+		t.Fatalf("expected human-readable output to contain ek_public_b64, got %q", output)
+	}
+}
+
+func TestFormatDeviceIdentityOutputJSON(t *testing.T) {
+	t.Parallel()
+
+	output, err := formatDeviceIdentityOutput(&deviceIdentity{
+		ExpectedDeviceID: "abc123",
+		DeviceID:         "abc123",
+		EKPublicB64:      "Zm9v",
+	}, true)
+	if err != nil {
+		t.Fatalf("formatDeviceIdentityOutput returned error: %v", err)
+	}
+
+	var decoded deviceIdentity
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &decoded); err != nil {
+		t.Fatalf("output was not valid JSON: %v", err)
+	}
+	if decoded.ExpectedDeviceID != "abc123" || decoded.DeviceID != "abc123" || decoded.EKPublicB64 != "Zm9v" {
+		t.Fatalf("unexpected decoded payload: %+v", decoded)
 	}
 }
 

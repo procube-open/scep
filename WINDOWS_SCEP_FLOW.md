@@ -13,14 +13,18 @@
 
 現在のフローは、大きく分けると次の順番です。
 
-1. 管理者がサーバー側でクライアントを事前登録する
-2. Windows Service が TPM 保護鍵を用意する
-3. Windows がサーバーから一回限りの `nonce` を受け取る
-4. Windows が TPM を使って「この端末の今回の申請です」という証明データを作る
-5. Windows が `CSR` を `SCEP` でサーバーへ送る
-6. サーバーが `device_id`、TPM 証明、初回 secret または既存証明書を検証する
-7. サーバーが証明書を返す
-8. Windows が証明書を `LocalMachine\My` に入れる
+1. GUI MSI の 1 ページ目、または silent install 用 `device-id-probe` が、`EK public` 由来の canonical `device_id` を採取する
+2. 管理者がサーバー側で opaque `client_uid` / `managed_client_type=windows-msi` / canonical `device_id` を preregister する
+3. 管理者が preregistration 完了後にだけ初回発行用 `enrollment_secret` を発行し、client state を `INACTIVE -> ISSUABLE` にする
+4. GUI MSI または silent bootstrap が prereg-check で `device_id` 一致と readiness を確認する
+5. Windows Service が TPM 保護鍵を用意し、同じ規則で canonical `device_id` を再導出する
+6. Windows が `ek_public_b64` を添えてサーバーから一回限りの `nonce` を受け取る
+7. Windows が TPM を使って「この端末の今回の申請です」という証明データを作る
+8. Windows が `CSR` を `SCEP` でサーバーへ送る
+9. サーバーが canonical `device_id` binding、TPM 証明、初回 secret または既存証明書を検証する
+10. サーバーが証明書を返し、初回発行なら client state を `ISSUED` にする
+11. Windows が証明書を `LocalMachine\My` に入れる
+12. 通常の自動更新は `ISSUED` のまま `既存証明書 + TPM 証明` で継続する
 
 ## 主な登場人物
 
@@ -46,11 +50,13 @@
 
 ### `client_uid`
 
-サーバーに登録されているクライアント識別子です。現在の実装では、CSR の `Common Name` にもこの値が入ります。
+サーバーに登録されているクライアント識別子です。Windows MSI 管理対象では、unauthenticated prereg-check endpoint を前提に、高 entropy の opaque ID を使います。現在の実装では、CSR の `Common Name` にもこの値が入ります。
 
 ### `device_id`
 
-端末識別子です。事前にサーバーへ登録しておき、申請時に送られてきた値と一致するかをサーバーが確認します。
+端末識別子です。Windows MSI 管理対象では手入力値ではなく、`EK public` を `SubjectPublicKeyInfo` DER に正規化し、その全体に対する `SHA-256` を lowercase 64 文字の 16 進文字列にした canonical 値を使います。
+
+管理者は GUI MSI の 1 ページ目または `device-id-probe` でその canonical 値を採取し、サーバーへ事前登録します。Windows Service / helper も実行時に同じ規則で `device_id` を再導出し、申請に含めます。
 
 ### `enrollment_secret`
 
@@ -100,42 +106,101 @@ Windows の「マシン全体で使う証明書ストア」です。最終的に
 
 ## 前提条件
 
-初回発行の前に、管理者が server 側で次を登録しておきます。
+Windows MSI 管理対象の正式 flow は、GUI MSI を primary にし、silent install では別配布の `device-id-probe` を使う前提にします。
 
-- `client_uid`
-- `device_id`
+初回発行の前に、次が完了している必要があります。
+
+- GUI MSI の 1 ページ目、または `device-id-probe` が target Windows machine の `EK public` から canonical `device_id` を採取できること
+- 高 entropy の opaque `client_uid`
+- canonical `device_id`
 - `managed_client_type=windows-msi`
+- preregistration 完了後にだけ発行された one-time `enrollment_secret`
 
-`managed_client_type=windows-msi` は、「このクライアントは Windows MSI 管理対象なので、`device_id` と TPM 由来の追加証明が必須」という意味です。
+`managed_client_type=windows-msi` は、「このクライアントは Windows MSI 管理対象なので、EK-derived `device_id`、`credential activation`、CSR key binding を満たした要求だけを受け付ける」という意味です。
+
+初回用 `enrollment_secret` は preregistration 完了後にだけ発行され、server 側 client state を `INACTIVE -> ISSUABLE` にします。
+
+---
+
+## Windows MSI 管理対象 client の状態遷移
+
+Windows MSI 管理対象では、server 側 client state を次の 3 状態だけで運用します。
+
+- `INACTIVE`
+  - preregistration 済みだが、まだ初回発行用 secret を発行していない状態
+  - expiry recovery や TPM / vTPM replacement 後に明示的に戻す状態でもある
+- `ISSUABLE`
+  - preregistration 完了後に初回または再 enrollment 用の one-time secret を発行済みで、enrollment を受け付ける状態
+- `ISSUED`
+  - 有効なクライアント証明書があり、通常の自動更新を受け付ける状態
+
+Windows MSI の正式ライフサイクルは、次を前提にします。
+
+- 初回発行: `INACTIVE -> ISSUABLE -> ISSUED`
+- 自動更新: `ISSUED -> renewal -> ISSUED`
+- expiry recovery: `ISSUED -> INACTIVE -> ISSUABLE -> ISSUED`
+- TPM / vTPM replacement: 管理者が `device_id` を更新し、旧証明書を revoke したうえで `INACTIVE -> ISSUABLE -> ISSUED`
+
+`UPDATABLE` / `PENDING` は server 全体には残り得ますが、`managed_client_type=windows-msi` では使いません。update-secret を使う manual / legacy flow は Windows MSI 管理対象から外します。
 
 ---
 
 ## 初回発行の時系列
 
-### 1. ユーザーが MSI を実行する
+### 0. GUI MSI または `device-id-probe` が canonical `device_id` を出す
 
-ユーザーは MSI を起動し、少なくとも次を入力します。
+GUI MSI の primary flow では、1 ページ目が `EK public` から canonical `device_id` を計算して表示します。
+
+silent install では別配布の `device-id-probe` を使います。これは通常は人間向け表示を行い、`--json` で machine-readable output も返します。
+
+### 1. 管理者が preregistration を完了させる
+
+server 側では次を行います。
+
+1. 高 entropy の opaque `client_uid` を払い出す
+2. canonical `device_id` を登録する
+3. `managed_client_type=windows-msi` を登録する
+4. preregistration 完了後にだけ初回発行用 `enrollment_secret` を発行し、client state を `ISSUABLE` にする
+
+### 2. GUI MSI が prereg-check を行う
+
+GUI MSI は次の入力を受け取ります。
 
 - `SERVER_URL`
 - `CLIENT_UID`
-- `ENROLLMENT_SECRET`
-- 現状では `DEVICE_ID_OVERRIDE`
 
-MSI は設定値と Windows Service を配置します。
+その後、read-only prereg-check endpoint に対して、local machine で再導出した canonical `device_id` を添えて問い合わせます。
 
-### 2. Windows Service が設定を読み、初回発行の準備に入る
+server が返すのは限定的 reason code だけです。
+
+- `client_not_found`
+- `device_id_mismatch`
+- `not_issuable_yet`
+- `ready`
+
+`not_issuable_yet` の場合、GUI MSI は同じ画面で `Retry` できるようにし、ready になるまで先へ進ませません。
+
+prereg-check 成功後にだけ、GUI MSI は `ENROLLMENT_SECRET` の入力と install 実行を許可します。
+
+silent install でも同じ prereg-check を実施し、ready でなければ bootstrap を fail-fast で止めます。
+
+### 3. Windows Service が設定を読み、初回発行の準備に入る
 
 Service はレジストリなどから設定を読みます。`enrollment_secret` は Windows の保護機構である `DPAPI Machine Scope` に移せる形に整理されます。
 
-ここでの目的は、「初回 secret を平文のまま長く残さない」ことです。
+ここでの目的は、「初回 secret を平文のまま長く残さない」ことと、「`expected_device_id` を local safety rail として保持する」ことです。
 
-### 3. Windows Service が TPM 保護鍵を開くか、新規作成する
+### 4. Windows Service が TPM 保護鍵を開くか、新規作成する
 
 Service は Windows の `CNG` / `NCrypt` を通して、`Microsoft Platform Crypto Provider` を使い、機械用の TPM 保護鍵を準備します。
 
 この鍵の秘密鍵は TPM 内にあり、OS からファイルとして取り出されません。外へ出せるのは公開鍵だけです。
 
-### 4. Windows が server から `nonce` を取得する
+この段階で Service / helper は `EK public` を読み出し、GUI MSI や `device-id-probe` と同じ規則で canonical `device_id` を再導出します。つまり、runtime に使う `device_id` は「`EK public` の `SPKI DER` -> `SHA-256` -> lowercase hex」で決まります。
+
+Service が再導出した値が local config の `expected_device_id` と一致しない場合、Service は blocked / mismatch state に入り、enrollment / renewal を止めて管理者対応を待ちます。
+
+### 5. Windows が server から `nonce` を取得する
 
 Windows Service は次の API を呼びます。
 
@@ -145,13 +210,16 @@ Windows が渡すもの:
 
 - `client_uid`
 - `device_id`
+- `ek_public_b64`
 
 server が内部で行うこと:
 
 1. `client_uid` が登録済みか確認する
-2. 登録済み `device_id` と一致するか確認する
-3. ランダムな `nonce` を生成する
-4. その `nonce` を `client_uid + device_id` にひも付けて短時間だけ保持する
+2. `managed_client_type=windows-msi` の対象か確認する
+3. `ek_public_b64` から canonical `device_id` を再計算する
+4. 登録済み `device_id` と request `device_id` の両方に一致するか確認する
+5. ランダムな `nonce` を生成する
+6. その `nonce` を `client_uid + device_id` にひも付けて短時間だけ保持する
 
 server が返すもの:
 
@@ -161,7 +229,7 @@ server が返すもの:
 
 この `nonce` は、あとで TPM 証明の中に入ります。
 
-### 5. Windows Service が helper に attestation 組み立てを依頼する
+### 6. Windows Service が helper に attestation 組み立てを依頼する
 
 Service は `scepclient.exe -emit-attestation` を呼びます。
 
@@ -326,16 +394,20 @@ server が内部で行うこと:
 
 1. `challengePassword` を `client_uid\secret` に分解する
 2. 登録済み secret と一致するか確認する
-3. client の状態が発行可能か確認する
+3. client の状態が `ISSUABLE` であることを確認する
 
 つまり初回発行では、最終的に次の両方が通る必要があります。
 
 - TPM 由来の証明
 - 初回発行 secret
 
+管理者が one-time secret を発行するのは、この初回発行 path のためだけです。
+
 ### 15. server が証明書を発行する
 
 CSR と各種検証が通ると、server 側の CA が CSR の公開鍵に対してクライアント証明書を署名します。
+
+この初回発行 path では、server 側 client state は `ISSUABLE -> ISSUED` になります。
 
 server から helper へ返るもの:
 
@@ -362,17 +434,31 @@ helper は返ってきた証明書を受け取り、managed directory の `cert.
 ```mermaid
 sequenceDiagram
     autonumber
+    participant Admin as Administrator
     participant User as Windows user
     participant MSI as MSI installer
     participant Service as Windows Service
+    participant Probe as device-id-probe / GUI page 1
     participant Helper as scepclient.exe
     participant TPM as TPM / vTPM
     participant Server as SCEP server
 
-    User->>MSI: MSI を実行し、SERVER_URL / CLIENT_UID / ENROLLMENT_SECRET / DEVICE_ID_OVERRIDE を入力
-    MSI->>Service: 設定と service を配置
-    Service->>TPM: TPM 保護鍵を開く / なければ作成
-    Service->>Server: POST /api/attestation/nonce {client_uid, device_id}
+    Admin->>Probe: canonical device_id を採取
+    Probe->>TPM: EK public を読む
+    TPM-->>Probe: EK public
+    Probe-->>Admin: canonical device_id
+    Admin->>Server: opaque client_uid / managed_client_type / device_id を preregister
+    Admin->>Server: preregistration 完了後にだけ初回 secret を発行し、state を ISSUABLE にする
+    User->>MSI: MSI を実行し、SERVER_URL / CLIENT_UID を入力
+    loop ready になるまで prereg-check
+        MSI->>Server: POST /api/attestation/prereg-check {client_uid, device_id}
+        Server-->>MSI: ready | client_not_found | device_id_mismatch | not_issuable_yet
+    end
+    User->>MSI: ENROLLMENT_SECRET を入力
+    MSI->>Service: expected_device_id を含む設定と service を配置
+    Service->>TPM: TPM 保護鍵を開く / なければ作成し、EK public から canonical device_id を再導出
+    Service->>Server: POST /api/attestation/nonce {client_uid, device_id, ek_public_b64}
+    Server->>Server: ek_public から canonical device_id を再計算して一致確認
     Server-->>Service: nonce
     Service->>Helper: -emit-attestation で attestation 組み立てを依頼
     Helper->>TPM: 一時 AK を作成し、quote(public-key-hash + nonce) を生成
@@ -383,12 +469,13 @@ sequenceDiagram
     Helper->>Server: GetCACert
     Server-->>Helper: CA 証明書
     Helper->>TPM: 同じ TPM 鍵で CSR を作成
-    Note over Helper,Server: challengePassword = client_uid\\enrollment_secret
+    Note over Helper,Server: challengePassword = client_uid\enrollment_secret, client state = ISSUABLE
     Helper->>Server: POST /scep?operation=PKIOperation&attestation=...
     Server->>Server: device_id / CSR公開鍵一致 / quote / activation proof / secret を検証
+    Server->>Server: client state を ISSUED に更新
     Server-->>Helper: 発行済み証明書
     Helper-->>Service: cert.pem
-    Service->>Service: 証明書を LocalMachine\\My に登録
+    Service->>Service: 証明書を LocalMachine\My に登録
     Service->>Service: 初回 enrollment_secret を削除
 ```
 
@@ -431,6 +518,8 @@ helper は初回と同じように、新しい `quote`、新しい `activation_i
 
 つまり、更新の認可は「すでに正しく発行された既存証明書を持っているか」で行います。
 
+ここで重要なのは、通常の Windows MSI 自動更新の前に、管理者が新しい secret を発行したり client state を `UPDATABLE` にしたりする必要はないことです。
+
 ### 6. server が既存証明書ベースで更新権限を確認する
 
 更新時の server の確認ポイントは次です。
@@ -451,6 +540,14 @@ helper は初回と同じように、新しい `quote`、新しい `activation_i
 
 の組み合わせです。
 
+通常の Windows MSI 自動更新では、server 側 client state は `ISSUED` のままでよく、更新成功後も `ISSUED` に戻ります。
+
+### 補足: `UPDATABLE` / `PENDING` が使われるのはどんなときか
+
+`UPDATABLE` / `PENDING` は、server 全体の generic/legacy client には残り得ますが、`managed_client_type=windows-msi` では使いません。
+
+そのため、「Windows MSI の自動更新が失敗するたびに管理者が secret を再発行する」「Windows MSI client を `UPDATABLE` にして update-secret flow へ逃がす」という運用は、この文書の target path に含めません。
+
 ### 7. server が更新済み証明書を返し、Windows が差し替える
 
 server は新しい証明書を返します。
@@ -469,7 +566,8 @@ sequenceDiagram
     participant TPM as TPM / vTPM
     participant Server as SCEP server
 
-    Service->>Server: POST /api/attestation/nonce {client_uid, device_id}
+    Service->>Server: POST /api/attestation/nonce {client_uid, device_id, ek_public_b64}
+    Server->>Server: ek_public から canonical device_id を再計算して一致確認
     Server-->>Service: new nonce
     Service->>Helper: same-key renewal を依頼
     Helper->>TPM: 既存 TPM 鍵を再利用し、新しい quote を生成
@@ -477,12 +575,13 @@ sequenceDiagram
     Server-->>Helper: new activation_id + encrypted credential
     Helper->>TPM: ActivateCredential(...)
     TPM-->>Helper: new activation_proof
-    Note over Helper,Server: renewal では enrollment_secret ではなく既存証明書で認可する
+    Note over Helper,Server: renewal では enrollment_secret ではなく既存証明書で認可し、通常 path では client state は ISSUED のまま
     Helper->>Server: POST /scep?operation=PKIOperation&attestation=... (RenewalReq)
     Server->>Server: 既存証明書の有効性 + TPM 証明 + nonce を検証
+    Server->>Server: client state は ISSUED を維持する
     Server-->>Helper: 更新済み証明書
     Helper-->>Service: 新しい cert.pem
-    Service->>Service: LocalMachine\\My に新証明書を登録
+    Service->>Service: LocalMachine\My に新証明書を登録
 ```
 
 ---
@@ -491,7 +590,9 @@ sequenceDiagram
 
 | 送信元 | 送信先 | 渡すもの | 目的 |
 |---|---|---|---|
-| Windows Service | server `/api/attestation/nonce` | `client_uid`, `device_id` | 今回の申請専用 `nonce` を受け取る |
+| GUI page 1 / `device-id-probe` | 管理者 | canonical `device_id` | preregistration に使う TPM identity を提示する |
+| GUI MSI | server `/api/attestation/prereg-check` | `client_uid`, `device_id` | preregistration 完了と `device_id` 一致を確認する |
+| Windows Service | server `/api/attestation/nonce` | `client_uid`, `device_id`, `ek_public_b64` | 今回の申請専用 `nonce` を受け取る |
 | server | Windows Service | `nonce`, `expires_at` | 一回限りの証明用乱数を渡す |
 | helper | server `/api/attestation/activation/start` | `client_uid`, `device_id`, `nonce`, `AIK TPM public`, `EK public`, AIK 作成情報 | TPM が本物か追加確認するための準備 |
 | server | helper | `activation_id`, 暗号化 credential | TPM だけが復元できる確認データを渡す |
@@ -509,6 +610,7 @@ sequenceDiagram
 ### Windows Service がやっていること
 
 - MSI で入った設定を読む
+- `expected_device_id` と runtime 再導出値の一致を確認し、不一致なら blocked state に入る
 - `enrollment_secret` の扱いを整理する
 - TPM 保護鍵を用意する
 - `nonce` を取得する
@@ -516,6 +618,12 @@ sequenceDiagram
 - 発行済み証明書を `LocalMachine\My` に入れる
 - 初回発行後に `enrollment_secret` を削除する
 - 更新時期を判定する
+
+### `device-id-probe` / GUI page 1 がやっていること
+
+- `EK public` から canonical `device_id` を表示する
+- copy/paste しやすい preregistration 導線を提供する
+- silent install 用には `--json` で machine-readable output を返す
 
 ### `scepclient.exe` がやっていること
 
@@ -537,13 +645,15 @@ sequenceDiagram
 ### server がやっていること
 
 - 事前登録された client 情報を引く
-- `device_id` を照合する
+- prereg-check endpoint で `client_uid` と `device_id` の readiness を限定的 reason code で返す
+- `ek_public_b64` から canonical `device_id` を再計算し、registered / request / TPM material を照合する
 - `nonce` を発行し、最後に消費する
 - `quote` の署名を検証する
 - CSR 公開鍵と attestation 公開鍵の一致を確認する
 - `credential activation` の正解と `activation_proof_b64` を照合する
-- 初回なら `enrollment_secret` を確認する
-- 更新なら既存証明書を確認する
+- 初回なら `enrollment_secret` と `ISSUABLE` state を確認する
+- 更新なら既存証明書と `ISSUED` state を確認する
+- `managed_client_type=windows-msi` では `UPDATABLE` / `PENDING` の update-secret flow を許可しない
 - 証明書を署名して返す
 
 ---
@@ -567,7 +677,10 @@ sequenceDiagram
 この仕組みを一言で言うと、次のようになります。
 
 - **初回発行** は `enrollment_secret + TPM 証明` で通す
-- **自動更新** は `既存証明書 + TPM 証明` で通す
+- **自動更新** は `ISSUED` state のまま `既存証明書 + TPM 証明` で通す
+- **Windows MSI 管理対象** は `INACTIVE` / `ISSUABLE` / `ISSUED` の 3 状態だけで運用する
+- **`device_id`** は GUI page 1 / `device-id-probe` で採取した `EK public` 由来の canonical 値を使う
+- **prereg-check** を通るまでは install / bootstrap を進めない
 - **同じ TPM 鍵** を使い続ける
 - **秘密鍵は TPM から出さない**
 - **証明書は Windows の `LocalMachine\My` に入れる**

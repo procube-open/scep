@@ -40,14 +40,25 @@
                       Type="raw" />
     </Property>
     <Property Id="ENROLLMENT_SECRET" Hidden="yes" Secure="yes" />
-    <Property Id="EXISTING_DEVICE_ID_OVERRIDE" Secure="yes">
-      <RegistrySearch Id="SearchDeviceIdOverride"
+    <Property Id="EXISTING_EXPECTED_DEVICE_ID" Secure="yes">
+      <RegistrySearch Id="SearchExpectedDeviceId"
+                      Root="HKLM"
+                      Key="SOFTWARE\MyTunnelApp"
+                      Name="ExpectedDeviceId"
+                      Type="raw" />
+    </Property>
+    <Property Id="EXISTING_LEGACY_DEVICE_ID" Secure="yes">
+      <RegistrySearch Id="SearchLegacyDeviceId"
                       Root="HKLM"
                       Key="SOFTWARE\MyTunnelApp"
                       Name="DeviceId"
                       Type="raw" />
     </Property>
-    <Property Id="DEVICE_ID_OVERRIDE" Secure="yes" />
+    <Property Id="CURRENT_DEVICE_ID" Secure="yes" />
+    <Property Id="EXPECTED_DEVICE_ID" Secure="yes" />
+    <Property Id="PROBE_STATUS_MESSAGE" Secure="yes" />
+    <Property Id="PREREG_CHECK_RESULT" Secure="yes" />
+    <Property Id="PREREG_STATUS_MESSAGE" Secure="yes" />
     <Property Id="EXISTING_POLL_INTERVAL" Secure="yes">
       <RegistrySearch Id="SearchPollInterval"
                       Root="HKLM"
@@ -91,16 +102,31 @@
     <CustomAction Id="SetServerUrlDefault" Property="SERVER_URL" Value="https://example.invalid/scep" Execute="firstSequence" />
     <CustomAction Id="SetClientUidFromExisting" Property="CLIENT_UID" Value="[EXISTING_CLIENT_UID]" Execute="firstSequence" />
     <CustomAction Id="SetEnrollmentSecretFromExisting" Property="ENROLLMENT_SECRET" Value="[EXISTING_ENROLLMENT_SECRET]" Execute="firstSequence" />
-    <CustomAction Id="SetDeviceIdFromExisting" Property="DEVICE_ID_OVERRIDE" Value="[EXISTING_DEVICE_ID_OVERRIDE]" Execute="firstSequence" />
+    <CustomAction Id="SetExpectedDeviceIdFromExisting" Property="EXPECTED_DEVICE_ID" Value="[EXISTING_EXPECTED_DEVICE_ID]" Execute="firstSequence" />
+    <CustomAction Id="SetExpectedDeviceIdFromLegacyRegistry" Property="EXPECTED_DEVICE_ID" Value="[EXISTING_LEGACY_DEVICE_ID]" Execute="firstSequence" />
     <CustomAction Id="SetPollIntervalFromExisting" Property="POLL_INTERVAL" Value="[EXISTING_POLL_INTERVAL]" Execute="firstSequence" />
     <CustomAction Id="SetPollIntervalDefault" Property="POLL_INTERVAL" Value="1h" Execute="firstSequence" />
     <CustomAction Id="SetRenewBeforeFromExisting" Property="RENEW_BEFORE" Value="[EXISTING_RENEW_BEFORE]" Execute="firstSequence" />
     <CustomAction Id="SetRenewBeforeDefault" Property="RENEW_BEFORE" Value="14d" Execute="firstSequence" />
     <CustomAction Id="SetLogLevelFromExisting" Property="LOG_LEVEL" Value="[EXISTING_LOG_LEVEL]" Execute="firstSequence" />
     <CustomAction Id="SetLogLevelDefault" Property="LOG_LEVEL" Value="info" Execute="firstSequence" />
+    <CustomAction Id="SetProbeStatusDefault" Property="PROBE_STATUS_MESSAGE" Value="Reading the canonical TPM device identity from the local endorsement key." Execute="firstSequence" />
+    <CustomAction Id="SetPreregStatusDefault" Property="PREREG_STATUS_MESSAGE" Value="Enter SERVER_URL and CLIENT_UID, then click Check preregistration." Execute="firstSequence" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
               Value="MyTunnelService runs as LocalService. Uninstall removes installer-managed configuration but intentionally leaves issued certificates and TPM-backed keys in place." />
+    <Binary Id="DeviceIdentityPreregScript"
+            SourceFile="device_identity_prereg.vbs" />
+    <CustomAction Id="RunProbeCurrentDeviceIdentityUI"
+                  BinaryRef="DeviceIdentityPreregScript"
+                  VBScriptCall="ProbeCurrentDeviceIdentity"
+                  Execute="immediate"
+                  Return="check" />
+    <CustomAction Id="RunCheckPreregistrationUI"
+                  BinaryRef="DeviceIdentityPreregScript"
+                  VBScriptCall="CheckPreregistration"
+                  Execute="immediate"
+                  Return="check" />
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <UIRef Id="WixUI_ErrorProgressText" />
@@ -114,8 +140,8 @@
     <Condition Message="ENROLLMENT_SECRET must be specified for new installs. Repairs and upgrades may leave it blank when the machine is already configured.">
       <![CDATA[REMOVE="ALL" OR ENROLLMENT_SECRET OR Installed]]>
     </Condition>
-    <Condition Message="DEVICE_ID_OVERRIDE is required in the current phase until automatic device_id derivation is implemented.">
-      <![CDATA[REMOVE="ALL" OR DEVICE_ID_OVERRIDE]]>
+    <Condition Message="EXPECTED_DEVICE_ID must be specified. The GUI MSI probes the canonical TPM device identity on page 1 before preregistration.">
+      <![CDATA[REMOVE="ALL" OR EXPECTED_DEVICE_ID]]>
     </Condition>
     <Condition Message="LOG_LEVEL must be one of trace, debug, info, warn, or error.">
       <![CDATA[REMOVE="ALL" OR NOT LOG_LEVEL OR LOG_LEVEL = "trace" OR LOG_LEVEL = "debug" OR LOG_LEVEL = "info" OR LOG_LEVEL = "warn" OR LOG_LEVEL = "error"]]>
@@ -127,13 +153,17 @@
       <Custom Action="SetServerUrlDefault" After="SetServerUrlFromLegacy">NOT SERVER_URL</Custom>
       <Custom Action="SetClientUidFromExisting" After="SetServerUrlDefault">NOT CLIENT_UID AND EXISTING_CLIENT_UID</Custom>
       <Custom Action="SetEnrollmentSecretFromExisting" After="SetClientUidFromExisting">NOT ENROLLMENT_SECRET AND EXISTING_ENROLLMENT_SECRET</Custom>
-      <Custom Action="SetDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT DEVICE_ID_OVERRIDE AND EXISTING_DEVICE_ID_OVERRIDE</Custom>
-      <Custom Action="SetPollIntervalFromExisting" After="SetDeviceIdFromExisting">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
+      <Custom Action="SetExpectedDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT EXPECTED_DEVICE_ID AND EXISTING_EXPECTED_DEVICE_ID</Custom>
+      <Custom Action="SetExpectedDeviceIdFromLegacyRegistry" After="SetExpectedDeviceIdFromExisting">NOT EXPECTED_DEVICE_ID AND EXISTING_LEGACY_DEVICE_ID</Custom>
+      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromLegacyRegistry">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
       <Custom Action="SetPollIntervalDefault" After="SetPollIntervalFromExisting">NOT POLL_INTERVAL</Custom>
       <Custom Action="SetRenewBeforeFromExisting" After="SetPollIntervalDefault">NOT RENEW_BEFORE AND EXISTING_RENEW_BEFORE</Custom>
       <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting">NOT RENEW_BEFORE</Custom>
       <Custom Action="SetLogLevelFromExisting" After="SetRenewBeforeDefault">NOT LOG_LEVEL AND EXISTING_LOG_LEVEL</Custom>
       <Custom Action="SetLogLevelDefault" After="SetLogLevelFromExisting">NOT LOG_LEVEL</Custom>
+      <Custom Action="SetProbeStatusDefault" After="SetLogLevelDefault">NOT PROBE_STATUS_MESSAGE</Custom>
+      <Custom Action="SetPreregStatusDefault" After="SetProbeStatusDefault">NOT PREREG_STATUS_MESSAGE</Custom>
+      <Custom Action="RunProbeCurrentDeviceIdentityUI" After="SetPreregStatusDefault">NOT REMOVE="ALL"</Custom>
     </InstallUISequence>
 
     <InstallExecuteSequence>
@@ -142,8 +172,9 @@
       <Custom Action="SetServerUrlDefault" After="SetServerUrlFromLegacy">NOT SERVER_URL</Custom>
       <Custom Action="SetClientUidFromExisting" After="SetServerUrlDefault">NOT CLIENT_UID AND EXISTING_CLIENT_UID</Custom>
       <Custom Action="SetEnrollmentSecretFromExisting" After="SetClientUidFromExisting">NOT ENROLLMENT_SECRET AND EXISTING_ENROLLMENT_SECRET</Custom>
-      <Custom Action="SetDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT DEVICE_ID_OVERRIDE AND EXISTING_DEVICE_ID_OVERRIDE</Custom>
-      <Custom Action="SetPollIntervalFromExisting" After="SetDeviceIdFromExisting">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
+      <Custom Action="SetExpectedDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting">NOT EXPECTED_DEVICE_ID AND EXISTING_EXPECTED_DEVICE_ID</Custom>
+      <Custom Action="SetExpectedDeviceIdFromLegacyRegistry" After="SetExpectedDeviceIdFromExisting">NOT EXPECTED_DEVICE_ID AND EXISTING_LEGACY_DEVICE_ID</Custom>
+      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromLegacyRegistry">NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL</Custom>
       <Custom Action="SetPollIntervalDefault" After="SetPollIntervalFromExisting">NOT POLL_INTERVAL</Custom>
       <Custom Action="SetRenewBeforeFromExisting" After="SetPollIntervalDefault">NOT RENEW_BEFORE AND EXISTING_RENEW_BEFORE</Custom>
       <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting">NOT RENEW_BEFORE</Custom>
@@ -153,7 +184,7 @@
 
     <UI>
       <!-- Keep the standard WixUI flow for directory selection, then collect SCEP values just before ExecuteAction. -->
-      <Dialog Id="ScepConfigDlg" Width="370" Height="270" Title="[ProductName] configuration">
+      <Dialog Id="DeviceIdentityDlg" Width="370" Height="270" Title="[ProductName] device identity">
         <Control Id="IntroTitle"
                  Type="Text"
                  X="20"
@@ -161,7 +192,79 @@
                  Width="330"
                  Height="18"
                  NoPrefix="yes"
-                 Text="Configure SCEP enrollment" />
+                 Text="Step 1: probe the canonical TPM device identity" />
+        <Control Id="IntroText"
+                 Type="Text"
+                 X="20"
+                 Y="35"
+                 Width="330"
+                 Height="40"
+                 NoPrefix="yes"
+                 Text="This page reads the Windows TPM endorsement key and derives the canonical device identity for preregistration. Copy CURRENT_DEVICE_ID, register it on the server, then continue." />
+        <Control Id="CurrentDeviceIdLabel"
+                 Type="Text"
+                 X="20"
+                 Y="92"
+                 Width="120"
+                 Height="15"
+                 Text="CURRENT_DEVICE_ID" />
+        <Control Id="CurrentDeviceIdEdit"
+                 Type="Edit"
+                 X="20"
+                 Y="110"
+                 Width="330"
+                 Height="18"
+                 Property="CURRENT_DEVICE_ID" />
+        <Control Id="ProbeStatusText"
+                 Type="Text"
+                 X="20"
+                 Y="142"
+                 Width="330"
+                 Height="58"
+                 NoPrefix="yes"
+                 Text="[PROBE_STATUS_MESSAGE]" />
+        <Control Id="RetryProbe"
+                 Type="PushButton"
+                 X="20"
+                 Y="240"
+                 Width="80"
+                 Height="17"
+                 Text="Retry probe">
+          <Publish Event="DoAction" Value="RunProbeCurrentDeviceIdentityUI">1</Publish>
+        </Control>
+        <Control Id="Next"
+                 Type="PushButton"
+                 X="240"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Text="Next">
+          <Publish Event="DoAction" Value="RunProbeCurrentDeviceIdentityUI" Order="1">1</Publish>
+          <Publish Event="SpawnDialog" Value="MissingProbeDlg" Order="2">NOT CURRENT_DEVICE_ID</Publish>
+          <Publish Event="NewDialog" Value="PreregCheckDlg" Order="10">CURRENT_DEVICE_ID</Publish>
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="304"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="PreregCheckDlg" Width="370" Height="270" Title="[ProductName] preregistration check">
+        <Control Id="IntroTitle"
+                 Type="Text"
+                 X="20"
+                 Y="15"
+                 Width="330"
+                 Height="18"
+                 NoPrefix="yes"
+                 Text="Step 2: confirm preregistration readiness" />
         <Control Id="IntroText"
                  Type="Text"
                  X="20"
@@ -169,7 +272,7 @@
                  Width="330"
                  Height="32"
                  NoPrefix="yes"
-                 Text="Provide the required SCEP values. MSI stages ENROLLMENT_SECRET so the service can start, then the Windows service migrates it to DPAPI-protected storage on first start." />
+                 Text="Enter SERVER_URL and opaque CLIENT_UID, then ask the server whether this machine is preregistered and ready for the initial enrollment secret." />
         <Control Id="ServerUrlLabel"
                  Type="Text"
                  X="20"
@@ -198,17 +301,118 @@
                  Width="210"
                  Height="18"
                  Property="CLIENT_UID" />
-        <Control Id="EnrollmentSecretLabel"
+        <Control Id="CurrentDeviceIdLabel"
                  Type="Text"
                  X="20"
                  Y="142"
+                 Width="110"
+                 Height="15"
+                 Text="CURRENT_DEVICE_ID" />
+        <Control Id="CurrentDeviceIdEdit"
+                 Type="Edit"
+                 X="140"
+                 Y="140"
+                 Width="210"
+                 Height="18"
+                 Property="CURRENT_DEVICE_ID" />
+        <Control Id="PreregStatusText"
+                 Type="Text"
+                 X="20"
+                 Y="170"
+                 Width="330"
+                 Height="42"
+                 NoPrefix="yes"
+                 Text="[PREREG_STATUS_MESSAGE]" />
+        <Control Id="Check"
+                 Type="PushButton"
+                 X="20"
+                 Y="240"
+                 Width="80"
+                 Height="17"
+                 Text="Check">
+          <Publish Event="DoAction" Value="RunCheckPreregistrationUI">1</Publish>
+        </Control>
+        <Control Id="Back"
+                 Type="PushButton"
+                 X="180"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Text="Back">
+          <Publish Event="NewDialog" Value="DeviceIdentityDlg">1</Publish>
+        </Control>
+        <Control Id="Next"
+                 Type="PushButton"
+                 X="240"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Text="Next">
+          <Publish Event="DoAction" Value="RunCheckPreregistrationUI" Order="1">1</Publish>
+          <Publish Event="SpawnDialog" Value="ServerUrlPlaceholderDlg" Order="2">SERVER_URL = "https://example.invalid/scep"</Publish>
+          <Publish Event="SpawnDialog" Value="ServerUrlFormatDlg" Order="3"><![CDATA[SERVER_URL AND NOT (SERVER_URL >< "://")]]></Publish>
+          <Publish Event="SpawnDialog" Value="MissingProbeDlg" Order="4">NOT CURRENT_DEVICE_ID</Publish>
+          <Publish Event="SpawnDialog" Value="MissingPreregValuesDlg" Order="5">NOT SERVER_URL OR NOT CLIENT_UID</Publish>
+          <Publish Event="SpawnDialog" Value="PreregCheckNotReadyDlg" Order="6">SERVER_URL AND CLIENT_UID AND CURRENT_DEVICE_ID AND PREREG_CHECK_RESULT &lt;&gt; "ready"</Publish>
+          <Publish Event="NewDialog" Value="ScepConfigDlg" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND CURRENT_DEVICE_ID AND PREREG_CHECK_RESULT = "ready"]]></Publish>
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="304"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ScepConfigDlg" Width="370" Height="270" Title="[ProductName] enrollment secret">
+        <Control Id="IntroTitle"
+                 Type="Text"
+                 X="20"
+                 Y="15"
+                 Width="330"
+                 Height="18"
+                 NoPrefix="yes"
+                 Text="Step 3: enter the initial enrollment secret" />
+        <Control Id="IntroText"
+                 Type="Text"
+                 X="20"
+                 Y="35"
+                 Width="330"
+                 Height="32"
+                 NoPrefix="yes"
+                 Text="Preregistration is ready. Enter the one-time ENROLLMENT_SECRET issued after preregistration. The service will migrate it into DPAPI-protected storage on first start." />
+        <Control Id="ServerUrlSummary"
+                 Type="Text"
+                 X="20"
+                 Y="82"
+                 Width="330"
+                 Height="15"
+                 NoPrefix="yes"
+                 Text="SERVER_URL: [SERVER_URL]" />
+        <Control Id="ClientUidSummary"
+                 Type="Text"
+                 X="20"
+                 Y="102"
+                 Width="330"
+                 Height="15"
+                 NoPrefix="yes"
+                 Text="CLIENT_UID: [CLIENT_UID]" />
+        <Control Id="EnrollmentSecretLabel"
+                 Type="Text"
+                 X="20"
+                 Y="132"
                  Width="110"
                  Height="15"
                  Text="ENROLLMENT_SECRET" />
         <Control Id="EnrollmentSecretEdit"
                  Type="Edit"
                  X="140"
-                 Y="140"
+                 Y="130"
                  Width="210"
                  Height="18"
                  Property="ENROLLMENT_SECRET"
@@ -216,11 +420,11 @@
         <Control Id="SecretHint"
                  Type="Text"
                  X="20"
-                 Y="168"
+                 Y="158"
                  Width="330"
-                 Height="28"
+                 Height="40"
                  NoPrefix="yes"
-                 Text="Leave ENROLLMENT_SECRET blank only during repair or upgrade of an already configured machine. In the current phase, open Advanced... and set DEVICE_ID_OVERRIDE before installing." />
+                 Text="Leave ENROLLMENT_SECRET blank only during repair or upgrade of an already configured machine. EXPECTED_DEVICE_ID is fixed from the probed TPM identity and no longer accepts manual overrides in release builds." />
         <Control Id="Advanced"
                  Type="PushButton"
                  X="20"
@@ -229,6 +433,15 @@
                  Height="17"
                  Text="Advanced...">
           <Publish Event="NewDialog" Value="ScepAdvancedDlg">1</Publish>
+        </Control>
+        <Control Id="Back"
+                 Type="PushButton"
+                 X="180"
+                 Y="240"
+                 Width="56"
+                 Height="17"
+                 Text="Back">
+          <Publish Event="NewDialog" Value="PreregCheckDlg">1</Publish>
         </Control>
         <Control Id="Install"
                  Type="PushButton"
@@ -240,8 +453,11 @@
                  Text="Install">
           <Publish Event="SpawnDialog" Value="ServerUrlPlaceholderDlg" Order="1">SERVER_URL = "https://example.invalid/scep"</Publish>
           <Publish Event="SpawnDialog" Value="ServerUrlFormatDlg" Order="2"><![CDATA[SERVER_URL AND NOT (SERVER_URL >< "://")]]></Publish>
-          <Publish Event="SpawnDialog" Value="MissingRequiredValuesDlg" Order="3">NOT SERVER_URL OR NOT CLIENT_UID OR (NOT ENROLLMENT_SECRET AND (NOT Installed OR (NOT EXISTING_ENROLLMENT_SECRET_PROTECTED AND NOT EXISTING_ENROLLMENT_SECRET_LEGACY)))</Publish>
-          <Publish Event="EndDialog" Value="Return" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND (ENROLLMENT_SECRET OR (Installed AND (EXISTING_ENROLLMENT_SECRET_PROTECTED OR EXISTING_ENROLLMENT_SECRET_LEGACY)))]]></Publish>
+          <Publish Event="SpawnDialog" Value="MissingProbeDlg" Order="3">NOT CURRENT_DEVICE_ID OR NOT EXPECTED_DEVICE_ID</Publish>
+          <Publish Event="SpawnDialog" Value="MissingPreregValuesDlg" Order="4">NOT SERVER_URL OR NOT CLIENT_UID</Publish>
+          <Publish Event="SpawnDialog" Value="PreregCheckNotReadyDlg" Order="5">SERVER_URL AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT &lt;&gt; "ready"</Publish>
+          <Publish Event="SpawnDialog" Value="MissingEnrollmentSecretDlg" Order="6">SERVER_URL AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT = "ready" AND NOT ENROLLMENT_SECRET AND (NOT Installed OR (NOT EXISTING_ENROLLMENT_SECRET_PROTECTED AND NOT EXISTING_ENROLLMENT_SECRET_LEGACY))</Publish>
+          <Publish Event="EndDialog" Value="Return" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT = "ready" AND (ENROLLMENT_SECRET OR (Installed AND (EXISTING_ENROLLMENT_SECRET_PROTECTED OR EXISTING_ENROLLMENT_SECRET_LEGACY)))]]></Publish>
         </Control>
         <Control Id="Cancel"
                  Type="PushButton"
@@ -271,21 +487,22 @@
                  Width="330"
                  Height="30"
                  NoPrefix="yes"
-                 Text="DEVICE_ID_OVERRIDE is required in the current phase because automatic device_id derivation is not wired yet. POLL_INTERVAL, RENEW_BEFORE, and LOG_LEVEL remain optional troubleshooting values." />
-        <Control Id="DeviceIdLabel"
+                 Text="EXPECTED_DEVICE_ID is fixed from the probed TPM identity and confirmed by preregistration. Only timing and logging knobs remain editable here." />
+        <Control Id="ExpectedDeviceIdLabel"
                  Type="Text"
                  X="20"
                  Y="82"
                  Width="110"
                  Height="15"
-                 Text="DEVICE_ID_OVERRIDE" />
-        <Control Id="DeviceIdEdit"
-                 Type="Edit"
+                 Text="EXPECTED_DEVICE_ID" />
+        <Control Id="ExpectedDeviceIdValue"
+                 Type="Text"
                  X="140"
-                 Y="80"
+                 Y="82"
                  Width="210"
                  Height="18"
-                 Property="DEVICE_ID_OVERRIDE" />
+                 NoPrefix="yes"
+                 Text="[EXPECTED_DEVICE_ID]" />
         <Control Id="PollIntervalLabel"
                  Type="Text"
                  X="20"
@@ -355,9 +572,12 @@
                  Text="Install">
           <Publish Event="SpawnDialog" Value="ServerUrlPlaceholderDlg" Order="1">SERVER_URL = "https://example.invalid/scep"</Publish>
           <Publish Event="SpawnDialog" Value="ServerUrlFormatDlg" Order="2"><![CDATA[SERVER_URL AND NOT (SERVER_URL >< "://")]]></Publish>
-          <Publish Event="SpawnDialog" Value="MissingRequiredValuesDlg" Order="3">NOT SERVER_URL OR NOT CLIENT_UID OR NOT DEVICE_ID_OVERRIDE OR (NOT ENROLLMENT_SECRET AND NOT Installed)</Publish>
-          <Publish Event="SpawnDialog" Value="InvalidLogLevelDlg" Order="4">LOG_LEVEL AND LOG_LEVEL &lt;&gt; "trace" AND LOG_LEVEL &lt;&gt; "debug" AND LOG_LEVEL &lt;&gt; "info" AND LOG_LEVEL &lt;&gt; "warn" AND LOG_LEVEL &lt;&gt; "error"</Publish>
-          <Publish Event="EndDialog" Value="Return" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND DEVICE_ID_OVERRIDE AND (ENROLLMENT_SECRET OR Installed) AND (NOT LOG_LEVEL OR LOG_LEVEL = "trace" OR LOG_LEVEL = "debug" OR LOG_LEVEL = "info" OR LOG_LEVEL = "warn" OR LOG_LEVEL = "error")]]></Publish>
+          <Publish Event="SpawnDialog" Value="MissingProbeDlg" Order="3">NOT CURRENT_DEVICE_ID OR NOT EXPECTED_DEVICE_ID</Publish>
+          <Publish Event="SpawnDialog" Value="MissingPreregValuesDlg" Order="4">NOT SERVER_URL OR NOT CLIENT_UID</Publish>
+          <Publish Event="SpawnDialog" Value="PreregCheckNotReadyDlg" Order="5">SERVER_URL AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT &lt;&gt; "ready"</Publish>
+          <Publish Event="SpawnDialog" Value="MissingEnrollmentSecretDlg" Order="6">SERVER_URL AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT = "ready" AND NOT ENROLLMENT_SECRET AND (NOT Installed OR (NOT EXISTING_ENROLLMENT_SECRET_PROTECTED AND NOT EXISTING_ENROLLMENT_SECRET_LEGACY))</Publish>
+          <Publish Event="SpawnDialog" Value="InvalidLogLevelDlg" Order="7">SERVER_URL AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT = "ready" AND LOG_LEVEL AND LOG_LEVEL &lt;&gt; "trace" AND LOG_LEVEL &lt;&gt; "debug" AND LOG_LEVEL &lt;&gt; "info" AND LOG_LEVEL &lt;&gt; "warn" AND LOG_LEVEL &lt;&gt; "error"</Publish>
+          <Publish Event="EndDialog" Value="Return" Order="10"><![CDATA[SERVER_URL AND SERVER_URL <> "https://example.invalid/scep" AND SERVER_URL >< "://" AND CLIENT_UID AND CURRENT_DEVICE_ID AND EXPECTED_DEVICE_ID AND PREREG_CHECK_RESULT = "ready" AND (ENROLLMENT_SECRET OR (Installed AND (EXISTING_ENROLLMENT_SECRET_PROTECTED OR EXISTING_ENROLLMENT_SECRET_LEGACY))) AND (NOT LOG_LEVEL OR LOG_LEVEL = "trace" OR LOG_LEVEL = "debug" OR LOG_LEVEL = "info" OR LOG_LEVEL = "warn" OR LOG_LEVEL = "error")]]></Publish>
         </Control>
         <Control Id="Cancel"
                  Type="PushButton"
@@ -371,7 +591,29 @@
         </Control>
       </Dialog>
 
-      <Dialog Id="MissingRequiredValuesDlg" Width="260" Height="95" Title="[ProductName] validation">
+      <Dialog Id="MissingProbeDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="34"
+                 NoPrefix="yes"
+                 Text="[PROBE_STATUS_MESSAGE]" />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="MissingPreregValuesDlg" Width="260" Height="95" Title="[ProductName] validation">
         <Control Id="Message"
                  Type="Text"
                  X="20"
@@ -379,7 +621,51 @@
                  Width="220"
                  Height="30"
                  NoPrefix="yes"
-                 Text="SERVER_URL, CLIENT_UID, DEVICE_ID_OVERRIDE, and ENROLLMENT_SECRET are required for new installs." />
+                 Text="SERVER_URL and CLIENT_UID are required before the preregistration check can run." />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="MissingEnrollmentSecretDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="30"
+                 NoPrefix="yes"
+                 Text="ENROLLMENT_SECRET is required for new installs. Repairs and upgrades may leave it blank when the machine is already configured." />
+        <Control Id="Ok"
+                 Type="PushButton"
+                 X="102"
+                 Y="60"
+                 Width="56"
+                 Height="17"
+                 Default="yes"
+                 Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="PreregCheckNotReadyDlg" Width="260" Height="95" Title="[ProductName] validation">
+        <Control Id="Message"
+                 Type="Text"
+                 X="20"
+                 Y="18"
+                 Width="220"
+                 Height="34"
+                 NoPrefix="yes"
+                 Text="[PREREG_STATUS_MESSAGE]" />
         <Control Id="Ok"
                  Type="PushButton"
                  X="102"
@@ -461,7 +747,7 @@
     </UI>
 
     <InstallUISequence>
-      <Show Dialog="ScepConfigDlg" Before="ExecuteAction">NOT REMOVE="ALL"</Show>
+      <Show Dialog="DeviceIdentityDlg" Before="ExecuteAction">NOT REMOVE="ALL"</Show>
     </InstallUISequence>
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -490,12 +776,12 @@
             <RegistryValue Name="EnrollmentSecret"
                            Type="string"
                            Value="[ENROLLMENT_SECRET]" />
+            <RegistryValue Name="ExpectedDeviceId"
+                           Type="string"
+                           Value="[EXPECTED_DEVICE_ID]" />
             <RegistryValue Name="DeviceId"
                            Type="string"
-                           Value="[DEVICE_ID_OVERRIDE]" />
-            <RegistryValue Name="DeviceIdOverride"
-                           Type="string"
-                           Value="[DEVICE_ID_OVERRIDE]" />
+                           Value="[EXPECTED_DEVICE_ID]" />
             <RegistryValue Name="PollInterval"
                            Type="string"
                            Value="[POLL_INTERVAL]" />
@@ -516,6 +802,8 @@
                 KeyPath="yes" />
           <File Id="ScepClientExe"
                 Source="..\cmd\scepclient\scepclient.exe" />
+          <File Id="DeviceIdProbeExe"
+                Source="..\cmd\scepclient\device-id-probe.exe" />
           <ServiceInstall Id="ServiceInstaller"
                           Type="ownProcess"
                           Name="MyTunnelService"

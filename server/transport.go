@@ -60,6 +60,7 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 
 	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
 	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
+	r.Methods("POST").Path("/api/attestation/prereg-check").HandlerFunc(NewAttestationPreregCheckHandler(depot, nil))
 	r.Methods("POST").Path("/api/attestation/nonce").HandlerFunc(NewAttestationNonceHandler(depot, nonces))
 	r.Methods("POST").Path("/api/attestation/activation/start").HandlerFunc(NewAttestationActivationHandler(depot, nonces, activations))
 
