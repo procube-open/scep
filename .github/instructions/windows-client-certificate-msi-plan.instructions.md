@@ -621,9 +621,9 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ## Current Implementation Status
 
-最終更新日: 2026-03-27
+最終更新日: 2026-03-30
 
-この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。今回の更新では、local source の credential activation round-trip 実装と、再起動した live GCP 上の `scep-client-vm` / `scep-server-vm` に対する positive / negative validation を統合している。検証環境そのものは引き続き Terraform 管理下にあるが、本日の作業終了時点では `scep-server-vm` と `scep-client-vm` を再度停止済みである。
+この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。今回の更新では、2026-03-27 までの credential activation / renewal validation に加え、**VM を再作成した fresh `scep-client-vm` / `scep-server-vm` 上での再検証**を統合している。具体的には、Linux-host の `build_windows_msi.sh --msi-builder wix` による WiX v4 build verification、fresh Windows TPM identity の再採取、server-side preregistration、`install_windows_msi.sh` による fresh issuance までを取り直した。本更新時点では検証環境そのものは引き続き Terraform 管理下にあり、`scep-server-vm` と `scep-client-vm` は **RUNNING** のままである。
 
 ### Overall Verdict
 
@@ -636,6 +636,11 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - server / helper / Rust の 3 者で credential activation round-trip を source に実装済みである。server は `/api/attestation/activation/start` で one-time challenge を払い出し、helper は Windows TPM 上で `ActivateCredential` を実行し、final attestation verifier は `activation_id` / `activation_proof_b64` を nonce consume 前に one-time verify する
 - live GCP では managed Windows client `msi-neg-20260325050312` を `preregister_client.sh --managed-client-type windows-msi` で登録し、Windows MSI install probes 後の external `GET /api/client/msi-neg-20260325050312` が `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返すことを確認した。既存 activation client `msi-activation-20260325014801` についても managed thumbprint=`539779D92B8EB0E463C0CC547E8819B7E6E0E212`, `service_state=Running` を継続確認した
 - live negative では `POST /api/attestation/activation/start` の endpoint-layer rejection (`403 nonce mismatch`, `400 ek_public_b64 is not a valid SubjectPublicKeyInfo`) に加え、clean rerun `copilot-install-20260325T053507Z-2543` が `activation_negative.renewal_exit_code=1`, `managed_thumbprint_before=managed_thumbprint_after=24E1087234C045FBEB6DC3E2A65646908AD9024A`, `service_state=Running` を返した。live `scep-server-vm` journal でも `2026-03-25T05:35:49Z` に `invalid attestation: invalid_activation_proof` を確認し、tampered `activation_proof_b64` renewal の negative semantics を committed helper path で回収できた
+- 2026-03-30 の fresh reset validation では、`scep-server-vm` / `scep-client-vm` を再作成し、server 側 IP が `10.42.0.5` / `34.134.179.59`、client 側 IP が `10.42.0.6` / `136.119.232.42` で再起動した状態から再検証した
+- 同日の Linux-host WiX v4 verification では、`DOTNET_ROOT=/home/vscode/.dotnet` と `/home/vscode/.dotnet/tools` を通したうえで `build_windows_msi.sh --msi-builder wix` の実 path まで到達したが、`installer/main.wxs` に対して `WIX0005`（`Package` に unexpected child `Condition`）と `WIX0400`（`Custom` / `Publish` の illegal inner text）を返して exit し、MSI artifact は生成されなかった
+- fresh Windows VM 側の TPM diagnostic では、boot 直後の `Get-Tpm` が `LockedOut=True`, `LockoutCount=3/3`, `LockoutHealTime=16 minutes 40 seconds` を返し、GCE guest agent の MDS bootstrap でも `TPM is in DA lockout mode` warning が出ることを再確認した。一方で `device-id-probe.exe` 自体は captured-process path で canonical TPM identity を返し、live `device_id=89907dc0857e0eac03068a96a01f2b8dd0ece7d048d550bd1d774999576f5471` を採取できた
+- `preregister_client_via_startup.sh --managed-client-type windows-msi` を使った server-local preregistration run `copilot-preregister-20260330T071358Z-6486` では、fresh client `wc_20260330T071358Z_3150aa764ea5` を canonical `device_id` とともに登録し、initial enrollment secret 発行まで成功した
+- 続く fresh install run `copilot-install-20260330T071516Z-16875` では `install_windows_msi.sh --server-url http://10.42.0.5:3000/scep --converge-to-local-service --apply-registry-overrides --wait-seconds 1800` が成功し、`prereg-check=result=ready`、`service.state=Running`、`service.start_name=NT AUTHORITY\\LocalService`、`managed_thumbprint=84853AC8126A77CF7BE28E29D0F5ABC786E38718`、`present_in_machine_store=true`、`has_enrollment_secret=false`、`has_enrollment_secret_protected=true` を current-run summary で確認した
 
 ### Implemented In Source
 
@@ -708,6 +713,9 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - `infra/terraform/scripts/linux/install_windows_msi.sh` は serial wait grace、`--require-thumbprint-change`、`--apply-registry-overrides`、`--converge-to-local-service` を備え、`--server-url` 省略時は Terraform 出力の `server_internal_ip` を優先し、reconfiguration 用には stale-config detection 後の auto fresh-install fallback を利用できる
 - `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` と `windows_activation_negative_renewal_e2e.sh` は `--msi-builder auto|wix|wixl` を `build_windows_msi.sh` へ forward でき、さらに `install_windows_msi.sh --converge-to-local-service` を通すため、将来の WiX v4 path 検証と current `wixl` fallback の LocalService runtime validation を wrapper script の編集なしで行える
 - `installer/main.wxs` / `installer/main.wixl.wxs` では registry-searched existing values と public input properties を分離し、default / existing / explicit input の precedence を custom action で表現する slice を追加した
+- `infra/terraform/scripts/linux/preregister_client_via_startup.sh` は 2026-03-30 時点で `--managed-client-type windows-msi` を受け付け、external admin API が安定していない環境でも server VM localhost 経由で Windows managed client の preregistration を作成できる
+- `infra/terraform/scripts/linux/probe_windows_device_id.sh` は 2026-03-30 時点で PowerShell の raw `& device-id-probe.exe -json` ではなく `Start-Process` で stdout / stderr を capture するよう更新済みであり、`install-mytunnelapp.ps1` の live-success path と probe helper の起動方法を揃えた
+- Linux-host `build_windows_msi.sh --msi-builder wix` はもはや missing tooling ではなく `installer/main.wxs` の WiX v4 authoring errors (`WIX0005`, `WIX0400`) で止まることが確認済みであり、current blocker は tool installation ではなく MSI authoring 側に移っている
 
 注意:
 
@@ -783,12 +791,27 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - current GCP Windows vTPM path では `EK certificate` chain validation は成立しない。`EK certificate` は取得できない一方、`AIK TPM public` と `EK public` は取得できるため、trust hardening は credential activation path へ pivot するのが妥当である
 - repeated reboot / probe による TPM DA lockout warning があるため、Windows 側の追加実験では reset を短時間に繰り返しすぎないこと
 
+#### Reset revalidation on 2026-03-30
+
+- 2026-03-30 の run では、user 要件どおり `scep-server-vm` / `scep-client-vm` を **再作成してリセットした状態**から検証をやり直した
+- fresh server VM では `preregister_client_via_startup.sh` を使って `managed_client_type=windows-msi` つきの preregistration を localhost 経由で作成し、external admin API へ依存せずに `INACTIVE -> ISSUABLE` を成立させた
+- fresh client VM では boot 直後の TPM DA lockout を serial 上で再現確認したが、captured-process path では `device-id-probe.exe` が canonical TPM identity を返せることを確認した
+- fresh issuance は `install_windows_msi.sh` の helper path で成功し、registry・service・managed cert・`LocalMachine\\My`・DPAPI-protected secret cleanup を current-run summary で取り切れた
+- 2026-03-30 の positive path は **WiX-built MSI ではなく、当該時点で Windows VM に転送済みだった current MSI artifact** を使っている。したがって、fresh prereg / issuance 自体は確認できたが、**Linux-host WiX v4 build output と issuance path の結合検証**はまだ残っている
+
+判断:
+
+- 2026-03-30 時点で、helper-backed preregistration + fresh issuance の正常系は、**VM を作り直した clean 環境でも**成立している
+- current Windows TPM identity / prereg-check / LocalService convergence / Machine Store install の一連の wiring は live GCP で再確認できた
+- Linux-host WiX v4 path の blocker は、もはや `dotnet` / `wix` 未導入ではなく、`installer/main.wxs` の current authoring が WiX v4 schema / UI authoring ルールに適合していない点である
+- probe helper の previous stall は TPM identity そのものの欠落ではなく、PowerShell からの process 起動方法の差異に強く結び付いていた。captured-process path は live TPM identity probe と install helper の双方で成立している
+
 ### Remaining Gaps Against This Plan
 
 #### Phase 1 Gaps
 
 - Windows startup script が placeholder のままで、Terraform だけで MSI / service 実装が再現される状態ではない
-- `build_windows_msi.sh` は `wix` がある環境では `installer/main.wxs` を source of truth として使えるようになったが、このワークスペースにはまだ `dotnet` / `wix` が入っていないため、現時点の local / GCP validation path はなお `wixl` fallback が中心である
+- Linux-host の workspace にはすでに `dotnet` / `wix` / `WixToolset.UI.wixext` を入れてあるが、`build_windows_msi.sh --msi-builder wix` は `installer/main.wxs` の `WIX0005` / `WIX0400` で失敗する。したがって現時点の live issuance validation path はなお `wixl` / transferred MSI artifact ベースであり、**Linux-host WiX v4 build output をそのまま VM issuance に使う検証**は未完了である
 - `wixl` fallback は raw MSI authoring 上はなお `LocalSystem` + uninstall cleanup gap を残すが、supported helper path (`install_windows_msi.sh --converge-to-local-service`) では live GCP で `LocalService` runtime へ収束できる
 
 #### Phase 2 Gaps
@@ -797,6 +820,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - committed GCP validation artifact は `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` として追加済みであり、reconfiguration 用の lower-level helper には stale-config detection + auto fresh-install fallback を追加済みである。raw same-version `msiexec` semantics 自体はなお旧 registry 値に負けるが、supported helper path では requested config を最終的に反映できる
 - managed-client model (`managed_client_type=windows-msi`, `device_id` 必須, deprecated `attestation_activation_required` reject) と preregistration / frontend create-list / client info edit surfaces は source に反映済みである。frontend の admin mode では InfoPage から `managed_client_type`, `device_id`, 追加属性を更新できる
 - `windows_activation_negative_renewal_e2e.sh` と lower-level `--tamper-activation-proof-renewal` wiring は source に追加済みで、live helper rerun `copilot-install-20260325T053507Z-2543` まで current-run summary 付きで成功した。remaining concern は runbook の存在ではなく、GCP guest agent の TPM DA lockout warning を避けるため rerun 間隔に注意が必要な点である
+- fresh reboot 直後の Windows VM では `Get-Tpm.LockedOut=True`, `LockoutCount=3/3`, `LockoutHealTime=16 minutes 40 seconds` を live で観測したため、TPM-facing helper の retry / wait budget と runbook をこの現実に合わせて整理しきる余地がまだある
 
 #### Phase 3 Gaps
 
@@ -807,13 +831,25 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 次セッションは以下の順で進めること。
 
-1. 既存 Windows 管理対象 client の migration runbook を docs に落とし切る
-2. renewal guardrail の live GCP runbook と certificate cleanup / retention policy を整理し、必要なら追加 validation を行う
-3. Windows startup script placeholder 依存を引き続き縮めつつ、WiX v4 toolchain を入れた環境で `build_windows_msi.sh --msi-builder wix` を実 build / 実 VM 検証し、`installer/main.wxs` path を Linux build の primary に昇格できるか確認する。`wixl` fallback に残る raw MSI uninstall cleanup 差分には引き続き別対策が必要である
-4. repeated Windows validation run で guest agent が `TPM is in DA lockout mode` warning を出しうるため、reboot-heavy probe の cadence と runbook を整理する
+1. **`installer/main.wxs` を current WiX v4 schema に合わせて直す**  
+   - `Package` 配下の `Condition`
+   - `InstallUISequence` / `InstallExecuteSequence` の `Custom` 条件記法
+   - dialog 内 `Publish` の条件 / 値の authoring  
+   まずは 2026-03-30 に実際に出た `WIX0005` / `WIX0400` を潰し、`build_windows_msi.sh --msi-builder wix` が Linux-host で MSI artifact を出せる状態にする。
+2. **WiX v4 で Linux-host build した MSI をそのまま fresh VM issuance に流し、build path と issuance path を結合検証する**  
+   2026-03-30 の fresh issuance 自体は成功したが、使ったのは transferred MSI artifact であり、Linux-host WiX v4 build output ではない。
+3. **Windows startup script placeholder 依存を縮める**  
+   Terraform だけで GUI / silent install の bootstrap を再現できる状態に近づけ、手動の startup-script 差し替えや metadata-driven helper への依存を減らす。
+4. **fresh VM の TPM DA lockout 観測を helper / runbook に落とし切る**  
+   reboot-heavy probe の cadence、wait budget、captured-process path 優先、`LockoutHealTime` 観測時の扱いを文書化する。
+5. 既存 Windows 管理対象 client の migration runbook と certificate cleanup / retention policy を docs に落とし切る
 
 ### Session Handoff Notes
 
+- 2026-03-30 の latest rerun では `scep-server-vm` / `scep-client-vm` を再作成し、現時点では **どちらも RUNNING**。current IP は server=`10.42.0.5` / `34.134.179.59`, client=`10.42.0.6` / `136.119.232.42` である
+- latest positive path は server-local preregistration run `copilot-preregister-20260330T071358Z-6486` と fresh install run `copilot-install-20260330T071516Z-16875` であり、managed thumbprint は `84853AC8126A77CF7BE28E29D0F5ABC786E38718`、service account は `NT AUTHORITY\\LocalService` である。enrollment secret 自体は本メモには残さない
+- latest Linux-host WiX verification では `build_windows_msi.sh --msi-builder wix` が `installer/main.wxs` の `WIX0005` / `WIX0400` で失敗しており、tool installation ではなく authoring fix が次の blocker である
+- latest probe helper behavior として、`probe_windows_device_id.sh` は raw PowerShell `&` ではなく captured-process path へ更新済みである。fresh VM では `Get-Tpm.LockedOut=True` / `LockoutCount=3/3` / `LockoutHealTime=16 minutes 40 seconds` を観測したため、連続 reboot を詰めすぎないこと
 - `infra/terraform` の local state は import により再構築済みで、`terraform output` は live GCP 状況と再同期済みである
 - `terraform.tfvars` には placeholder source range が残っているため、接続不能時は current operator IP に合わせた firewall 更新が必要になる
 - validation 中に一時的に `scep-vpc-allow-scep-3000` を `0.0.0.0/0` へ広げたが、作業終了前に `35.233.235.22/32` へ戻してある

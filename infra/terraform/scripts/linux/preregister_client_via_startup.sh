@@ -14,6 +14,7 @@ Options:
   --uid <UID>                        Required client UID
   --secret <SECRET>                  Required one-time enrollment secret
   --device-id <DEVICE_ID>            Required device_id
+  --managed-client-type windows-msi  Optional managed client type
   --available-period <DURATION>      Secret availability window (default: 30m)
   --pending-period <DURATION>        Secret pending window (default: 0s)
   --server-base-url <URL>            Base URL on the server VM (default: http://127.0.0.1:3000)
@@ -36,10 +37,26 @@ INSTANCE=""
 UID_VALUE=""
 SECRET_VALUE=""
 DEVICE_ID=""
+MANAGED_CLIENT_TYPE=""
+MANAGED_CLIENT_TYPE_SET=0
 AVAILABLE_PERIOD="30m"
 PENDING_PERIOD="0s"
 SERVER_BASE_URL="http://127.0.0.1:3000"
 WAIT_SECONDS=240
+
+normalize_managed_client_type() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$value" in
+    windows-msi)
+      printf '%s' "$value"
+      ;;
+    *)
+      echo "managed client type must be windows-msi" >&2
+      exit 1
+      ;;
+  esac
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +70,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device-id)
       DEVICE_ID="${2:?missing value for --device-id}"
+      shift 2
+      ;;
+    --managed-client-type)
+      MANAGED_CLIENT_TYPE="$(normalize_managed_client_type "${2:?missing value for --managed-client-type}")"
+      MANAGED_CLIENT_TYPE_SET=1
       shift 2
       ;;
     --available-period)
@@ -241,6 +263,8 @@ device_id='$(escape_bash_single_quoted "$DEVICE_ID")'
 available_period='$(escape_bash_single_quoted "$AVAILABLE_PERIOD")'
 pending_period='$(escape_bash_single_quoted "$PENDING_PERIOD")'
 server_base_url='$(escape_bash_single_quoted "$SERVER_BASE_URL")'
+managed_client_type='$(escape_bash_single_quoted "$MANAGED_CLIENT_TYPE")'
+managed_client_type_set='$(escape_bash_single_quoted "$MANAGED_CLIENT_TYPE_SET")'
 encoded_uid="\${uid}"
 
 api_request() {
@@ -274,7 +298,11 @@ if [[ "\$existing_client" != "null" ]]; then
   exit 1
 fi
 
-add_payload="\$(printf '{"uid":"%s","attributes":{"device_id":"%s"}}' "\$uid" "\$device_id")"
+if [[ "\$managed_client_type_set" == "1" ]]; then
+  add_payload="\$(printf '{"uid":"%s","attributes":{"device_id":"%s","managed_client_type":"%s"}}' "\$uid" "\$device_id" "\$managed_client_type")"
+else
+  add_payload="\$(printf '{"uid":"%s","attributes":{"device_id":"%s"}}' "\$uid" "\$device_id")"
+fi
 api_request POST "/admin/api/client/add" "\$add_payload" 200 >/dev/null
 
 secret_payload="\$(printf '{"target":"%s","secret":"%s","available_period":"%s","pending_period":"%s"}' "\$uid" "\$secret" "\$available_period" "\$pending_period")"

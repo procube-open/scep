@@ -197,11 +197,24 @@ try {
       throw "device-id-probe.exe was not found at \$copilotProbePath or \$copilotFallbackProbePath"
     }
   }
-  \$copilotProbeJson = & \$copilotProbePath -json
-  if (\$LASTEXITCODE -ne 0) {
-    throw "device-id-probe.exe exited with code \$LASTEXITCODE"
+  \$copilotProbeStdout = Join-Path \$env:TEMP ("copilot-probe-{0}.out" -f \$copilotProbeId)
+  \$copilotProbeStderr = Join-Path \$env:TEMP ("copilot-probe-{0}.err" -f \$copilotProbeId)
+  \$copilotProbeProcess = Start-Process -FilePath \$copilotProbePath -ArgumentList @('-json') -PassThru -NoNewWindow -RedirectStandardOutput \$copilotProbeStdout -RedirectStandardError \$copilotProbeStderr
+  [void]\$copilotProbeProcess.WaitForExit()
+  \$copilotProbeJson = ''
+  if (Test-Path -LiteralPath \$copilotProbeStdout) {
+    \$copilotProbeJson = (Get-Content -LiteralPath \$copilotProbeStdout -Raw).Trim()
   }
-  \$copilotProbeJson = (\$copilotProbeJson | Out-String).Trim()
+  if (\$copilotProbeProcess.ExitCode -ne 0) {
+    \$copilotProbeErrorText = ''
+    if (Test-Path -LiteralPath \$copilotProbeStderr) {
+      \$copilotProbeErrorText = ((Get-Content -LiteralPath \$copilotProbeStderr -Raw) -replace '[\\r\\n]+', ' ').Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace(\$copilotProbeErrorText)) {
+      \$copilotProbeErrorText = "device-id-probe.exe exited with code \$($copilotProbeProcess.ExitCode)"
+    }
+    throw \$copilotProbeErrorText
+  }
   if ([string]::IsNullOrWhiteSpace(\$copilotProbeJson)) {
     throw 'device-id-probe.exe returned an empty payload'
   }
