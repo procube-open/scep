@@ -49,6 +49,188 @@ function ConvertTo-MyTunnelCompactText {
   return $compact.Substring(0, [Math]::Max($MaxLength - 3, 0)) + '...'
 }
 
+function Write-MyTunnelProgress {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Message
+  )
+
+  Write-Host $Message
+}
+
+function ConvertTo-MyTunnelEncodedPowerShellCommand {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Command
+  )
+
+  $bytes = [System.Text.Encoding]::Unicode.GetBytes($Command)
+  [Convert]::ToBase64String($bytes)
+}
+
+function Get-MyTunnelTpmLockoutInfo {
+  $result = [ordered]@{
+    locked_out    = $false
+    wait_seconds  = 0
+    lockout_count = $null
+    lockout_max   = $null
+    raw_heal_time = $null
+    query_timed_out = $false
+    query_error     = $null
+  }
+
+  if (-not (Get-Command Get-Tpm -ErrorAction SilentlyContinue)) {
+    Write-MyTunnelProgress 'MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-query-unavailable reason=Get-Tpm-command-not-available'
+    return $result
+  }
+
+  $queryScript = @'
+$ErrorActionPreference = 'Stop'
+$tpm = Get-Tpm
+if ($null -eq $tpm) {
+  return
+}
+
+$lockedOut = $false
+if ($tpm.PSObject.Properties.Match('LockedOut').Count -gt 0) {
+  $lockedOut = [bool]$tpm.LockedOut
+} elseif ($tpm.PSObject.Properties.Match('TpmLockedOut').Count -gt 0) {
+  $lockedOut = [bool]$tpm.TpmLockedOut
+}
+
+$lockoutCount = $null
+if ($tpm.PSObject.Properties.Match('LockoutCount').Count -gt 0) {
+  $lockoutCount = $tpm.LockoutCount
+}
+
+$lockoutMax = $null
+if ($tpm.PSObject.Properties.Match('LockoutMax').Count -gt 0) {
+  $lockoutMax = $tpm.LockoutMax
+}
+
+$rawHealTime = $null
+if ($tpm.PSObject.Properties.Match('LockoutHealTime').Count -gt 0) {
+  $rawHealTime = [string]$tpm.LockoutHealTime
+}
+
+[ordered]@{
+  locked_out    = $lockedOut
+  lockout_count = $lockoutCount
+  lockout_max   = $lockoutMax
+  raw_heal_time = $rawHealTime
+} | ConvertTo-Json -Compress -Depth 4
+'@
+
+  Write-MyTunnelProgress 'MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-query-start timeout_seconds=30'
+  $queryResult = Invoke-MyTunnelCapturedProcess -FilePath 'powershell.exe' -ArgumentList @(
+    '-NoLogo'
+    '-NoProfile'
+    '-NonInteractive'
+    '-EncodedCommand'
+    (ConvertTo-MyTunnelEncodedPowerShellCommand -Command $queryScript)
+  ) -TimeoutSeconds 30
+
+  if ($queryResult.timed_out) {
+    $result.query_timed_out = $true
+    $result.query_error = 'Get-Tpm query timed out after 30 seconds'
+    Write-MyTunnelProgress 'MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-query-timeout timeout_seconds=30'
+    return $result
+  }
+  if ($queryResult.exit_code -ne 0) {
+    $failureText = $queryResult.stderr
+    if ([string]::IsNullOrWhiteSpace($failureText)) {
+      $failureText = $queryResult.stdout
+    }
+    $result.query_error = "Get-Tpm query failed with exit code $($queryResult.exit_code): $(ConvertTo-MyTunnelCompactText -Value $failureText -MaxLength 160)"
+    Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-query-failed exit_code={0} message={1}" -f $queryResult.exit_code, (ConvertTo-MyTunnelCompactText -Value $result.query_error -MaxLength 160))
+    return $result
+  }
+
+  $jsonText = ([string]$queryResult.stdout).Trim()
+  if ([string]::IsNullOrWhiteSpace($jsonText)) {
+    Write-MyTunnelProgress 'MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-query-empty'
+    return $result
+  }
+
+  try {
+    $tpm = $jsonText | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    $result.query_error = "Get-Tpm query returned invalid JSON: $(ConvertTo-MyTunnelCompactText -Value $jsonText -MaxLength 160)"
+    Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-query-invalid-json message={0}" -f (ConvertTo-MyTunnelCompactText -Value $result.query_error -MaxLength 160))
+    return $result
+  }
+
+  $result.locked_out = [bool]$tpm.locked_out
+  $result.lockout_count = $tpm.lockout_count
+  $result.lockout_max = $tpm.lockout_max
+  $healTime = $tpm.raw_heal_time
+  if ($null -ne $healTime) {
+    $result.raw_heal_time = [string]$healTime
+  }
+
+  $waitSeconds = 0
+  if ($healTime -is [TimeSpan]) {
+    $waitSeconds = [int][Math]::Ceiling($healTime.TotalSeconds)
+  } elseif ($healTime -is [ValueType]) {
+    try {
+      $waitSeconds = [int][Math]::Ceiling([double]$healTime)
+    } catch {
+      $waitSeconds = 0
+    }
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$healTime)) {
+    $healText = [string]$healTime
+    if ($healText -match '^\d+$') {
+      $waitSeconds = [int]$healText
+    } else {
+      $total = 0
+      $matches = [regex]::Matches($healText, '(\d+)\s*(day|days|hour|hours|minute|minutes|second|seconds)')
+      foreach ($match in $matches) {
+        $value = [int]$match.Groups[1].Value
+        switch -Regex ($match.Groups[2].Value) {
+          '^day' { $total += $value * 24 * 60 * 60 }
+          '^hour' { $total += $value * 60 * 60 }
+          '^minute' { $total += $value * 60 }
+          '^second' { $total += $value }
+        }
+      }
+      $waitSeconds = $total
+    }
+  }
+
+  if ($waitSeconds -lt 0) {
+    $waitSeconds = 0
+  }
+  $result.wait_seconds = $waitSeconds
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-state locked_out={0} wait_seconds={1} lockout_count={2} lockout_max={3} raw_heal_time={4}" -f $result.locked_out, $result.wait_seconds, $result.lockout_count, $result.lockout_max, (ConvertTo-MyTunnelCompactText -Value ([string]$result.raw_heal_time) -MaxLength 80))
+  $result
+}
+
+function Wait-MyTunnelTpmLockoutClear {
+  param(
+    [int]$ExtraSeconds = 30,
+    [int]$MaxSleepSeconds = 1800
+  )
+
+  $lockout = Get-MyTunnelTpmLockoutInfo
+  if (-not $lockout.locked_out) {
+    return $lockout
+  }
+
+  $sleepSeconds = [Math]::Max($lockout.wait_seconds + [Math]::Max($ExtraSeconds, 0), [Math]::Max($ExtraSeconds, 0))
+  if ($MaxSleepSeconds -gt 0) {
+    $sleepSeconds = [Math]::Min($sleepSeconds, $MaxSleepSeconds)
+  }
+
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-wait locked_out=true wait_seconds={0} lockout_count={1} lockout_max={2} raw_heal_time={3}" -f $sleepSeconds, $lockout.lockout_count, $lockout.lockout_max, (ConvertTo-MyTunnelCompactText -Value ([string]$lockout.raw_heal_time) -MaxLength 80))
+  if ($sleepSeconds -gt 0) {
+    Start-Sleep -Seconds $sleepSeconds
+  }
+
+  $postLockout = Get-MyTunnelTpmLockoutInfo
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=tpm-lockout-check locked_out={0} wait_seconds={1} lockout_count={2} lockout_max={3} raw_heal_time={4}" -f $postLockout.locked_out, $postLockout.wait_seconds, $postLockout.lockout_count, $postLockout.lockout_max, (ConvertTo-MyTunnelCompactText -Value ([string]$postLockout.raw_heal_time) -MaxLength 80))
+  $postLockout
+}
+
 function ConvertTo-MyTunnelBase64UrlString {
   param(
     [Parameter(Mandatory = $true)]
@@ -98,10 +280,10 @@ function Resolve-MyTunnelMsiPath {
   throw "MSI not found in expected paths: $($candidates -join ', ')"
 }
 
-function Get-MyTunnelBundledHelperPath {
+function Get-MyTunnelServiceExecutablePath {
   $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='MyTunnelService'" -ErrorAction SilentlyContinue
   if ($null -eq $service) {
-    throw 'MyTunnelService is not installed; cannot locate bundled helper'
+    throw 'MyTunnelService is not installed; cannot locate the service executable'
   }
 
   $servicePathName = [string]$service.PathName
@@ -124,6 +306,11 @@ function Get-MyTunnelBundledHelperPath {
     throw "Unable to resolve MyTunnelService executable path from PathName: $servicePathName"
   }
 
+  $serviceExePath
+}
+
+function Get-MyTunnelBundledHelperPath {
+  $serviceExePath = Get-MyTunnelServiceExecutablePath
   $helperPath = Join-Path (Split-Path -Parent $serviceExePath) 'scepclient.exe'
   if (-not (Test-Path -LiteralPath $helperPath)) {
     throw "Bundled scepclient.exe was not found at $helperPath"
@@ -132,29 +319,137 @@ function Get-MyTunnelBundledHelperPath {
   $helperPath
 }
 
-function Resolve-MyTunnelDeviceIdProbePath {
+function Get-MyTunnelInstalledBinaryState {
+  param(
+    [string]$ExpectedServiceSha256 = "",
+    [string]$ExpectedBundledHelperSha256 = ""
+  )
+
+  $state = [ordered]@{
+    service_path                   = $null
+    service_sha256                 = $null
+    service_matches_expected       = $null
+    bundled_helper_path            = $null
+    bundled_helper_sha256          = $null
+    bundled_helper_matches_expected = $null
+    path_error                     = $null
+    any_mismatch                   = $false
+  }
+
+  try {
+    $serviceExePath = Get-MyTunnelServiceExecutablePath
+    $state.service_path = $serviceExePath
+    if (Test-Path -LiteralPath $serviceExePath) {
+      $state.service_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $serviceExePath).Hash.ToLowerInvariant()
+    }
+
+    $helperPath = Join-Path (Split-Path -Parent $serviceExePath) 'scepclient.exe'
+    $state.bundled_helper_path = $helperPath
+    if (Test-Path -LiteralPath $helperPath) {
+      $state.bundled_helper_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $helperPath).Hash.ToLowerInvariant()
+    }
+  } catch {
+    $state.path_error = $_.Exception.Message
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedServiceSha256)) {
+    $state.service_matches_expected = (
+      -not [string]::IsNullOrWhiteSpace([string]$state.service_sha256) -and
+      [string]$state.service_sha256 -eq ([string]$ExpectedServiceSha256).ToLowerInvariant()
+    )
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedBundledHelperSha256)) {
+    $state.bundled_helper_matches_expected = (
+      -not [string]::IsNullOrWhiteSpace([string]$state.bundled_helper_sha256) -and
+      [string]$state.bundled_helper_sha256 -eq ([string]$ExpectedBundledHelperSha256).ToLowerInvariant()
+    )
+  }
+
+  $state.any_mismatch = (
+    ($null -ne $state.service_matches_expected -and (-not [bool]$state.service_matches_expected)) -or
+    ($null -ne $state.bundled_helper_matches_expected -and (-not [bool]$state.bundled_helper_matches_expected))
+  )
+
+  [PSCustomObject]$state
+}
+
+function Resolve-MyTunnelDeviceIdProbeInvocation {
   param(
     [string]$PreferredPath = ""
   )
 
-  $candidates = New-Object System.Collections.Generic.List[string]
-  if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
-    $candidates.Add($PreferredPath)
-  }
-  try {
-    $candidates.Add((Get-MyTunnelBundledHelperPath -replace 'scepclient\.exe$', 'device-id-probe.exe'))
-  } catch {
-  }
-  $candidates.Add('C:\Users\Public\device-id-probe.exe')
-  $candidates.Add('C:\Program Files\MyTunnelApp\device-id-probe.exe')
+  $candidates = New-Object System.Collections.Generic.List[object]
 
-  foreach ($candidate in ($candidates | Select-Object -Unique)) {
-    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
-      return (Resolve-Path -LiteralPath $candidate).Path
+  $addCandidate = {
+    param(
+      [string]$Path,
+      [string[]]$Arguments
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+      return
+    }
+
+    $resolvedArguments = @()
+    if ($null -ne $Arguments) {
+      $resolvedArguments = @($Arguments)
+    }
+
+    $candidates.Add([ordered]@{
+      path      = $Path
+      arguments = $resolvedArguments
+    }) | Out-Null
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
+    $preferredBaseName = [System.IO.Path]::GetFileName($PreferredPath)
+    if ($preferredBaseName -match '^(?i)scepclient(?:\.exe)?$') {
+      & $addCandidate $PreferredPath @('-print-device-id', '-json')
+    } else {
+      & $addCandidate $PreferredPath @('-json')
     }
   }
 
-  throw "device-id-probe.exe was not found in expected paths: $($candidates -join ', ')"
+  & $addCandidate 'C:\Users\Public\device-id-probe.exe' @('-json')
+  & $addCandidate 'C:\Program Files\MyTunnelApp\device-id-probe.exe' @('-json')
+  & $addCandidate 'C:\Program Files\MyTunnelApp\scepclient.exe' @('-print-device-id', '-json')
+
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    $candidatePath = [string]$candidate.path
+    if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path -LiteralPath $candidatePath)) {
+      return [ordered]@{
+        path      = (Resolve-Path -LiteralPath $candidatePath).Path
+        arguments = @($candidate.arguments)
+      }
+    }
+  }
+
+  try {
+    $bundledHelperPath = Get-MyTunnelBundledHelperPath
+    $bundledProbePath = $bundledHelperPath -replace '(?i)scepclient\.exe$', 'device-id-probe.exe'
+    & $addCandidate $bundledProbePath @('-json')
+    & $addCandidate $bundledHelperPath @('-print-device-id', '-json')
+  } catch {
+  }
+
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    $candidatePath = [string]$candidate.path
+    if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path -LiteralPath $candidatePath)) {
+      return [ordered]@{
+        path      = (Resolve-Path -LiteralPath $candidatePath).Path
+        arguments = @($candidate.arguments)
+      }
+    }
+  }
+
+  $candidatePaths = @(
+    $candidates |
+      ForEach-Object { [string]$_.path } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Select-Object -Unique
+  )
+  throw "device identity probe command was not found in expected paths: $($candidatePaths -join ', ')"
 }
 
 function Invoke-MyTunnelDeviceIdProbe {
@@ -162,14 +457,45 @@ function Invoke-MyTunnelDeviceIdProbe {
     [string]$ProbePath = ""
   )
 
-  $resolvedProbePath = Resolve-MyTunnelDeviceIdProbePath -PreferredPath $ProbePath
-  $probeResult = Invoke-MyTunnelCapturedProcess -FilePath $resolvedProbePath -ArgumentList @('-json')
-  if ($probeResult.exit_code -ne 0) {
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=device-id-probe-prepare preferred_probe_path={0}" -f (ConvertTo-MyTunnelCompactText -Value $ProbePath -MaxLength 160))
+  $lockoutInfo = Wait-MyTunnelTpmLockoutClear
+  $probeInvocation = Resolve-MyTunnelDeviceIdProbeInvocation -PreferredPath $ProbePath
+  $resolvedProbePath = [string]$probeInvocation.path
+  $probeArguments = @($probeInvocation.arguments)
+  $attempt = 1
+
+  while ($true) {
+    Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=device-id-probe-start attempt={0} probe_path={1} probe_args={2} locked_out={3} lockout_wait_seconds={4}" -f $attempt, $resolvedProbePath, (($probeArguments | ForEach-Object { [string]$_ }) -join ','), $lockoutInfo.locked_out, $lockoutInfo.wait_seconds)
+    $probeResult = Invoke-MyTunnelCapturedProcess -FilePath $resolvedProbePath -ArgumentList $probeArguments -TimeoutSeconds 300
+
+    if (-not $probeResult.timed_out -and $probeResult.exit_code -eq 0) {
+      break
+    }
+
     $failureText = $probeResult.stderr
     if ([string]::IsNullOrWhiteSpace($failureText)) {
       $failureText = $probeResult.stdout
     }
-    throw "device-id-probe.exe failed with exit code $($probeResult.exit_code): $(ConvertTo-MyTunnelCompactText -Value $failureText)"
+    $failureSummary = ConvertTo-MyTunnelCompactText -Value $failureText -MaxLength 160
+    $retryableFailure = $probeResult.timed_out -or [string]::IsNullOrWhiteSpace($failureSummary) -or ($failureSummary -match '(?i)\btpm\b|\blockout\b')
+    $canRetry = $attempt -lt 2 -and ($retryableFailure -or $lockoutInfo.locked_out -or $lockoutInfo.query_timed_out)
+    if (-not $canRetry) {
+      if ($probeResult.timed_out) {
+        throw "device-id-probe.exe timed out after 300 seconds at $resolvedProbePath"
+      }
+      throw "device-id-probe.exe failed with exit code $($probeResult.exit_code): $failureSummary"
+    }
+
+    $retryWaitSeconds = 180
+    if ($lockoutInfo.wait_seconds -gt 0) {
+      $retryWaitSeconds = [Math]::Min($lockoutInfo.wait_seconds + 30, 1800)
+    } elseif ($lockoutInfo.query_timed_out) {
+      $retryWaitSeconds = 1020
+    }
+    Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=device-id-probe-retry-wait attempt={0} wait_seconds={1} timed_out={2} failure={3}" -f $attempt, $retryWaitSeconds, $probeResult.timed_out, $failureSummary)
+    Start-Sleep -Seconds $retryWaitSeconds
+    $lockoutInfo = Get-MyTunnelTpmLockoutInfo
+    $attempt += 1
   }
 
   $jsonText = [string]$probeResult.stdout
@@ -203,6 +529,8 @@ function Invoke-MyTunnelDeviceIdProbe {
   if ([string]::IsNullOrWhiteSpace($ekPublicB64)) {
     throw 'device-id-probe.exe did not return ek_public_b64'
   }
+
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=device-id-probe-done expected_device_id={0}" -f $resolvedExpectedDeviceId)
 
   [ordered]@{
     probe_path          = $resolvedProbePath
@@ -263,7 +591,8 @@ function Invoke-MyTunnelCapturedProcess {
     [Parameter(Mandatory = $true)]
     [string]$FilePath,
 
-    [string[]]$ArgumentList = @()
+    [string[]]$ArgumentList = @(),
+    [int]$TimeoutSeconds = 0
   )
 
   $argumentString = (
@@ -278,6 +607,7 @@ function Invoke-MyTunnelCapturedProcess {
   $exitCode = $null
   $stdout = ''
   $stderr = ''
+  $timedOut = $false
 
   try {
     $process = Start-Process `
@@ -285,8 +615,20 @@ function Invoke-MyTunnelCapturedProcess {
       -ArgumentList $argumentString `
       -RedirectStandardOutput $stdoutPath `
       -RedirectStandardError $stderrPath `
-      -Wait `
       -PassThru
+
+    if ($TimeoutSeconds -gt 0) {
+      if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $timedOut = $true
+        try {
+          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        } catch {
+        }
+        [void]$process.WaitForExit(5000)
+      }
+    } else {
+      [void]$process.WaitForExit()
+    }
 
     $stdout = if (Test-Path -LiteralPath $stdoutPath) {
       [System.IO.File]::ReadAllText($stdoutPath)
@@ -298,7 +640,7 @@ function Invoke-MyTunnelCapturedProcess {
     } else {
       ''
     }
-    $exitCode = [int]$process.ExitCode
+    $exitCode = if ($timedOut) { -1 } else { [int]$process.ExitCode }
   } finally {
     if ($null -ne $process) {
       $process.Dispose()
@@ -310,6 +652,7 @@ function Invoke-MyTunnelCapturedProcess {
     exit_code = $exitCode
     stdout    = $stdout
     stderr    = $stderr
+    timed_out = $timedOut
   }
 }
 
@@ -352,12 +695,23 @@ function ConvertFrom-MyTunnelPem {
   )
 
   $pemText = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+  ConvertFrom-MyTunnelPemText -PemText $pemText -Label $Path
+}
+
+function ConvertFrom-MyTunnelPemText {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$PemText,
+
+    [string]$Label = 'PEM text'
+  )
+
   $match = [regex]::Match(
     $pemText,
     '-----BEGIN CERTIFICATE-----\s*(?<body>[A-Za-z0-9+/=\r\n]+?)\s*-----END CERTIFICATE-----'
   )
   if (-not $match.Success) {
-    throw "PEM file does not contain a certificate body: $Path"
+    throw "PEM data does not contain a certificate body: $Label"
   }
 
   $pemBody = (
@@ -366,11 +720,115 @@ function ConvertFrom-MyTunnelPem {
   ) -join ''
 
   if ([string]::IsNullOrWhiteSpace($pemBody)) {
-    throw "PEM file does not contain a certificate body: $Path"
+    throw "PEM data does not contain a certificate body: $Label"
   }
 
   $bytes = [Convert]::FromBase64String($pemBody)
   New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(, $bytes)
+}
+
+function Sync-MyTunnelManagedCertificateFromStore {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ClientUid,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ExpectedDeviceId
+  )
+
+  $managedDir = Join-Path 'C:\ProgramData\MyTunnelApp\managed' ("{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $ExpectedDeviceId))
+  $managedCertPath = Join-Path $managedDir 'cert.pem'
+  $managedThumbprint = $null
+
+  if (Test-Path -LiteralPath $managedCertPath) {
+    try {
+      $managedThumbprint = (ConvertFrom-MyTunnelPem -Path $managedCertPath).Thumbprint
+    } catch {
+      $managedThumbprint = $null
+    }
+  }
+
+  $serverState = Get-MyTunnelServerCertificateState -ServerUrl $ServerUrl -ClientUid $ClientUid
+  $serverActiveThumbprint = $null
+  if ($null -ne $serverState -and -not [string]::IsNullOrWhiteSpace([string]$serverState.active_thumbprint)) {
+    $serverActiveThumbprint = [string]$serverState.active_thumbprint
+  }
+
+  $storeCert = $null
+  $selectionSource = $null
+  if (-not [string]::IsNullOrWhiteSpace($serverActiveThumbprint)) {
+    if ($managedThumbprint -eq $serverActiveThumbprint) {
+      Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync skipped=already-current source=server-active thumbprint={0}" -f $serverActiveThumbprint)
+      return
+    }
+
+    $storeCert = Get-ChildItem -Path Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+      Where-Object { $_.Thumbprint -eq $serverActiveThumbprint } |
+      Sort-Object NotAfter -Descending |
+      Select-Object -First 1
+    if ($null -eq $storeCert) {
+      Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync skipped=server-active-cert-missing-in-store server_thumbprint={0}" -f $serverActiveThumbprint)
+      return
+    }
+    $selectionSource = 'server-active'
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$serverState.fetch_error)) {
+    Write-MyTunnelProgress (
+      "MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync mode=fallback reason=server-fetch-error message={0}" -f
+        (ConvertTo-MyTunnelCompactText -Value ([string]$serverState.fetch_error) -MaxLength 600)
+    )
+  } else {
+    Write-MyTunnelProgress 'MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync mode=fallback reason=no-server-active-cert'
+  }
+
+  if (
+    $null -eq $storeCert -and
+    -not [string]::IsNullOrWhiteSpace($managedThumbprint)
+  ) {
+    $storeCert = Get-ChildItem -Path Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+      Where-Object { $_.Thumbprint -eq $managedThumbprint } |
+      Sort-Object NotAfter -Descending |
+      Select-Object -First 1
+    if ($null -ne $storeCert) {
+      $selectionSource = 'managed-thumbprint'
+    }
+  }
+
+  if ($null -eq $storeCert) {
+    $storeCert = Get-ChildItem -Path Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.GetNameInfo(
+          [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+          $false
+        ) -eq $ClientUid
+      } |
+      Sort-Object NotAfter -Descending |
+      Select-Object -First 1
+    if ($null -ne $storeCert) {
+      $selectionSource = 'simple-name-fallback'
+    }
+  }
+
+  if ($null -eq $storeCert) {
+    Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync skipped=no-store-cert client_uid={0}" -f $ClientUid)
+    return
+  }
+
+  if ($managedThumbprint -eq $storeCert.Thumbprint) {
+    Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync skipped=already-current source={0} thumbprint={1}" -f $selectionSource, $storeCert.Thumbprint)
+    return
+  }
+
+  New-Item -ItemType Directory -Path $managedDir -Force | Out-Null
+  $pemBody = [Convert]::ToBase64String(
+    $storeCert.RawData,
+    [System.Base64FormattingOptions]::InsertLineBreaks
+  )
+  $pemText = "-----BEGIN CERTIFICATE-----`r`n$($pemBody)`r`n-----END CERTIFICATE-----`r`n"
+  [System.IO.File]::WriteAllText($managedCertPath, $pemText, [System.Text.Encoding]::ASCII)
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync updated=true source={0} thumbprint={1}" -f $selectionSource, $storeCert.Thumbprint)
 }
 
 function Get-MyTunnelInstallSummary {
@@ -398,6 +856,8 @@ function Get-MyTunnelInstallSummary {
   $logContainsPlatformProvider = $false
   $logContainsManagedFileFallback = $false
   $recentLogLines = @()
+  $latestErrorBackoffLine = $null
+  $latestGeneratingKeyFailureLine = $null
   if ($logFiles.Count -gt 0) {
     $latestLogPath = $logFiles[0].FullName
     $latestLogLastWriteUtc = $logFiles[0].LastWriteTimeUtc.ToString('o')
@@ -405,6 +865,14 @@ function Get-MyTunnelInstallSummary {
     $recentLogText = $recentLogLines -join "`n"
     $logContainsPlatformProvider = $recentLogText -match 'Microsoft Platform Crypto Provider'
     $logContainsManagedFileFallback = $recentLogText -match 'Software RSA Key \(managed file\)|key\.pem'
+    $errorBackoffLines = @($recentLogLines | Where-Object { $_ -match 'service state backoff' })
+    if ($errorBackoffLines.Count -gt 0) {
+      $latestErrorBackoffLine = ConvertTo-MyTunnelCompactText -Value ($errorBackoffLines[-1]) -MaxLength 1000
+    }
+    $generatingKeyFailureLines = @($recentLogLines | Where-Object { $_ -match 'key-management failed while in GeneratingKey' })
+    if ($generatingKeyFailureLines.Count -gt 0) {
+      $latestGeneratingKeyFailureLine = ConvertTo-MyTunnelCompactText -Value ($generatingKeyFailureLines[-1]) -MaxLength 1000
+    }
   }
 
   $managedThumbprint = $null
@@ -480,6 +948,8 @@ function Get-MyTunnelInstallSummary {
       contains_platform_provider      = $logContainsPlatformProvider
       contains_managed_file_fallback  = $logContainsManagedFileFallback
       latest_log_excerpt              = $latestLogExcerpt
+      latest_error_backoff_line       = $latestErrorBackoffLine
+      latest_generating_key_failure   = $latestGeneratingKeyFailureLine
     }
   }
 }
@@ -567,6 +1037,9 @@ function Add-MyTunnelInstallMetadata {
     [object]$PreInstallSummary,
 
     [Parameter(Mandatory = $true)]
+    [object]$PreInstallServerState,
+
+    [Parameter(Mandatory = $true)]
     [bool]$RequireManagedThumbprintChange,
 
     [Parameter(Mandatory = $true)]
@@ -588,7 +1061,9 @@ function Add-MyTunnelInstallMetadata {
     [string]$RenewBefore,
 
     [Parameter(Mandatory = $true)]
-    [string]$LogLevel
+    [string]$LogLevel,
+    [string]$ExpectedServiceSha256 = "",
+    [string]$ExpectedBundledHelperSha256 = ""
   )
 
   $Summary['msi_path'] = $ResolvedMsiPath
@@ -600,6 +1075,7 @@ function Add-MyTunnelInstallMetadata {
   $Summary['msiexec_exit_code'] = $MsiexecExitCode
   $Summary['reboot_required'] = $MsiexecExitCode -in @(1641, 3010)
   $Summary['pre_install_summary'] = $PreInstallSummary
+  $Summary['pre_install_server'] = $PreInstallServerState
   $Summary['prereg_check'] = $PreregCheck
   $Summary['managed_thumbprint_before'] = $PreInstallSummary.managed.managed_thumbprint
   $Summary['managed_thumbprint_after'] = $Summary.managed.managed_thumbprint
@@ -607,6 +1083,42 @@ function Add-MyTunnelInstallMetadata {
     $null -ne $PreInstallSummary.managed.managed_thumbprint -and
     $null -ne $Summary.managed.managed_thumbprint -and
     $PreInstallSummary.managed.managed_thumbprint -ne $Summary.managed.managed_thumbprint
+  )
+  $serverState = Get-MyTunnelServerCertificateState -ServerUrl $ServerUrl -ClientUid $ClientUid
+  $Summary['server'] = $serverState
+  $Summary['server_active_thumbprint_before'] = $PreInstallServerState.active_thumbprint
+  $Summary['server_active_thumbprint_after'] = $serverState.active_thumbprint
+  $Summary['server_active_thumbprint_changed'] = (
+    -not [string]::IsNullOrWhiteSpace([string]$PreInstallServerState.active_thumbprint) -and
+    -not [string]::IsNullOrWhiteSpace([string]$serverState.active_thumbprint) -and
+    [string]$PreInstallServerState.active_thumbprint -ne [string]$serverState.active_thumbprint
+  )
+  $Summary['server_active_serial_before'] = $PreInstallServerState.active_serial
+  $Summary['server_active_serial_after'] = $serverState.active_serial
+  $Summary['server_active_serial_changed'] = (
+    -not [string]::IsNullOrWhiteSpace([string]$PreInstallServerState.active_serial) -and
+    -not [string]::IsNullOrWhiteSpace([string]$serverState.active_serial) -and
+    [string]$PreInstallServerState.active_serial -ne [string]$serverState.active_serial
+  )
+  $programFiles = Get-MyTunnelInstalledBinaryState -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256
+  $expectedServiceSha256Normalized = $null
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedServiceSha256)) {
+    $expectedServiceSha256Normalized = $ExpectedServiceSha256.ToLowerInvariant()
+  }
+  $expectedBundledHelperSha256Normalized = $null
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedBundledHelperSha256)) {
+    $expectedBundledHelperSha256Normalized = $ExpectedBundledHelperSha256.ToLowerInvariant()
+  }
+  $Summary['program_files'] = $programFiles
+  $Summary['expected_binaries'] = [ordered]@{
+    service_sha256        = $expectedServiceSha256Normalized
+    bundled_helper_sha256 = $expectedBundledHelperSha256Normalized
+  }
+  $Summary['program_files_match_expected'] = -not [bool]$programFiles.any_mismatch
+  $Summary['managed_matches_server_active'] = (
+    -not [string]::IsNullOrWhiteSpace([string]$Summary.managed.managed_thumbprint) -and
+    -not [string]::IsNullOrWhiteSpace([string]$serverState.active_thumbprint) -and
+    [string]$Summary.managed.managed_thumbprint -eq [string]$serverState.active_thumbprint
   )
   $Summary['require_managed_thumbprint_change'] = $RequireManagedThumbprintChange
   $Summary['requested_config'] = [ordered]@{
@@ -627,7 +1139,11 @@ function ConvertTo-MyTunnelMarkerSummary {
   )
 
   $activationNegative = $null
-  if ($Summary.PSObject.Properties.Match('activation_negative').Count -gt 0) {
+  if ($Summary -is [System.Collections.IDictionary]) {
+    if ($Summary.Contains('activation_negative')) {
+      $activationNegative = $Summary['activation_negative']
+    }
+  } elseif ($Summary.PSObject.Properties.Match('activation_negative').Count -gt 0) {
     $activationNegative = $Summary.activation_negative
   }
 
@@ -638,12 +1154,18 @@ function ConvertTo-MyTunnelMarkerSummary {
     config                          = $Summary.config
     service                         = $Summary.service
     managed                         = $Summary.managed
+    pre_install_server              = $Summary.pre_install_server
+    server                          = $Summary.server
+    program_files                   = $Summary.program_files
+    expected_binaries               = $Summary.expected_binaries
     logs                            = [ordered]@{
       latest_log_path                = $Summary.logs.latest_log_path
       latest_log_last_write_utc      = $Summary.logs.latest_log_last_write_utc
       contains_platform_provider     = $Summary.logs.contains_platform_provider
       contains_managed_file_fallback = $Summary.logs.contains_managed_file_fallback
       latest_log_excerpt             = $Summary.logs.latest_log_excerpt
+      latest_error_backoff_line      = $Summary.logs.latest_error_backoff_line
+      latest_generating_key_failure  = $Summary.logs.latest_generating_key_failure
     }
     msi_path                        = $Summary.msi_path
     fresh_install_requested         = $Summary.fresh_install_requested
@@ -656,8 +1178,19 @@ function ConvertTo-MyTunnelMarkerSummary {
     managed_thumbprint_before       = $Summary.managed_thumbprint_before
     managed_thumbprint_after        = $Summary.managed_thumbprint_after
     managed_thumbprint_changed      = $Summary.managed_thumbprint_changed
+    server_active_thumbprint_before = $Summary.server_active_thumbprint_before
+    server_active_thumbprint_after  = $Summary.server_active_thumbprint_after
+    server_active_thumbprint_changed = $Summary.server_active_thumbprint_changed
+    server_active_serial_before     = $Summary.server_active_serial_before
+    server_active_serial_after      = $Summary.server_active_serial_after
+    server_active_serial_changed    = $Summary.server_active_serial_changed
+    program_files_match_expected    = $Summary.program_files_match_expected
+    managed_matches_server_active   = $Summary.managed_matches_server_active
     require_managed_thumbprint_change = $Summary.require_managed_thumbprint_change
     requested_config                = $Summary.requested_config
+    binary_refresh_fallback_used    = $Summary.binary_refresh_fallback_used
+    binary_refresh_fallback_reason  = $Summary.binary_refresh_fallback_reason
+    initial_reinstall_binary_state  = $Summary.initial_reinstall_binary_state
     reconfigure_fallback_used       = $Summary.reconfigure_fallback_used
     reconfigure_fallback_reason     = $Summary.reconfigure_fallback_reason
     initial_reinstall_registry      = if ($null -ne $Summary.initial_reinstall_summary) { $Summary.initial_reinstall_summary.registry } else { $null }
@@ -932,7 +1465,7 @@ function Enable-MyTunnelLocalServiceConvergence {
   }
 }
 
-function Apply-MyTunnelRegistryOverrides {
+function Seed-MyTunnelExistingConfigRegistry {
   param(
     [Parameter(Mandatory = $true)]
     [string]$ServerUrl,
@@ -941,6 +1474,50 @@ function Apply-MyTunnelRegistryOverrides {
     [string]$ClientUid,
 
     [Parameter(Mandatory = $true)]
+    [string]$ExpectedDeviceId,
+
+    [Parameter(Mandatory = $true)]
+    [string]$PollInterval,
+
+    [Parameter(Mandatory = $true)]
+    [string]$RenewBefore,
+
+    [Parameter(Mandatory = $true)]
+    [string]$LogLevel
+  )
+
+  $registryPath = 'HKLM:\SOFTWARE\MyTunnelApp'
+  if (-not (Test-Path -LiteralPath $registryPath)) {
+    New-Item -Path $registryPath -Force | Out-Null
+  }
+
+  $overrides = [ordered]@{
+    ConfigURL        = $ServerUrl
+    ServerUrl        = $ServerUrl
+    ClientUid        = $ClientUid
+    ExpectedDeviceId = $ExpectedDeviceId
+    DeviceId         = $ExpectedDeviceId
+    PollInterval     = $PollInterval
+    RenewBefore      = $RenewBefore
+    LogLevel         = $LogLevel
+  }
+
+  foreach ($entry in $overrides.GetEnumerator()) {
+    Set-ItemProperty -LiteralPath $registryPath -Name $entry.Key -Value $entry.Value -Type String
+  }
+
+  Remove-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -ErrorAction SilentlyContinue
+  Remove-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecretProtected' -ErrorAction SilentlyContinue
+}
+
+function Apply-MyTunnelRegistryOverrides {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ClientUid,
+
     [string]$EnrollmentSecret,
 
     [Parameter(Mandatory = $true)]
@@ -978,9 +1555,26 @@ function Apply-MyTunnelRegistryOverrides {
 
   if (-not [string]::IsNullOrWhiteSpace($EnrollmentSecret)) {
     Set-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -Value $EnrollmentSecret -Type String
+  } elseif (Get-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -ErrorAction SilentlyContinue
   }
 
+  Sync-MyTunnelManagedCertificateFromStore -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   Restart-MyTunnelService
+}
+
+function Resolve-MyTunnelServerApiBaseUrl {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl
+  )
+
+  $trimmed = $ServerUrl.TrimEnd('/')
+  if ($trimmed -match '/scep$') {
+    return ($trimmed -replace '/scep$', '')
+  }
+
+  $trimmed
 }
 
 function Resolve-MyTunnelAttestationNonceEndpoint {
@@ -989,12 +1583,8 @@ function Resolve-MyTunnelAttestationNonceEndpoint {
     [string]$ServerUrl
   )
 
-  $trimmed = $ServerUrl.TrimEnd('/')
-  if ($trimmed -match '/scep$') {
-    return ($trimmed -replace '/scep$', '/api/attestation/nonce')
-  }
-
-  "$trimmed/api/attestation/nonce"
+  $base = Resolve-MyTunnelServerApiBaseUrl -ServerUrl $ServerUrl
+  "$base/api/attestation/nonce"
 }
 
 function Resolve-MyTunnelAttestationPreregCheckEndpoint {
@@ -1003,12 +1593,141 @@ function Resolve-MyTunnelAttestationPreregCheckEndpoint {
     [string]$ServerUrl
   )
 
-  $trimmed = $ServerUrl.TrimEnd('/')
-  if ($trimmed -match '/scep$') {
-    return ($trimmed -replace '/scep$', '/api/attestation/prereg-check')
+  $base = Resolve-MyTunnelServerApiBaseUrl -ServerUrl $ServerUrl
+  "$base/api/attestation/prereg-check"
+}
+
+function Resolve-MyTunnelClientInfoEndpoint {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ClientUid
+  )
+
+  $base = Resolve-MyTunnelServerApiBaseUrl -ServerUrl $ServerUrl
+  "{0}/api/client/{1}" -f $base, [System.Uri]::EscapeDataString($ClientUid)
+}
+
+function Resolve-MyTunnelCertListEndpoint {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ClientUid
+  )
+
+  $base = Resolve-MyTunnelServerApiBaseUrl -ServerUrl $ServerUrl
+  "{0}/api/cert/list/{1}" -f $base, [System.Uri]::EscapeDataString($ClientUid)
+}
+
+function Get-MyTunnelServerCertificateState {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ClientUid
+  )
+
+  $state = [ordered]@{
+    client_status      = $null
+    active_thumbprint  = $null
+    active_thumbprints = @()
+    active_serial      = $null
+    cert_count         = 0
+    active_cert_count  = 0
+    fetch_error        = $null
   }
 
-  "$trimmed/api/attestation/prereg-check"
+  try {
+    $clientResponse = Invoke-RestMethod -Method Get -Uri (Resolve-MyTunnelClientInfoEndpoint -ServerUrl $ServerUrl -ClientUid $ClientUid)
+    if ($null -ne $clientResponse -and $clientResponse.PSObject.Properties.Match('status').Count -gt 0) {
+      $state.client_status = [string]$clientResponse.status
+    }
+  } catch {
+    $state.fetch_error = "client info fetch failed: $(ConvertTo-MyTunnelCompactText -Value $_.Exception.Message -MaxLength 600)"
+    return [PSCustomObject]$state
+  }
+
+  try {
+    $certResponse = Invoke-RestMethod -Method Get -Uri (Resolve-MyTunnelCertListEndpoint -ServerUrl $ServerUrl -ClientUid $ClientUid)
+  } catch {
+    $state.fetch_error = "cert list fetch failed: $(ConvertTo-MyTunnelCompactText -Value $_.Exception.Message -MaxLength 600)"
+    return [PSCustomObject]$state
+  }
+
+  $certs = @($certResponse | Where-Object { $null -ne $_ })
+  $state.cert_count = $certs.Count
+
+  $activeCerts = @()
+  foreach ($cert in $certs) {
+    $thumbprint = $null
+    if (
+      $cert.PSObject.Properties.Match('cert_data').Count -gt 0 -and
+      -not [string]::IsNullOrWhiteSpace([string]$cert.cert_data)
+    ) {
+      try {
+        $thumbprint = (ConvertFrom-MyTunnelPemText -PemText ([string]$cert.cert_data) -Label 'server cert list entry').Thumbprint
+      } catch {
+        $thumbprint = $null
+      }
+    }
+
+    if ($cert.PSObject.Properties.Match('status').Count -gt 0 -and [string]$cert.status -eq 'V') {
+      $activeCerts += [PSCustomObject]@{
+        Thumbprint = $thumbprint
+        Serial     = [string]$cert.serial
+        ValidTill  = [string]$cert.valid_till
+      }
+    }
+  }
+
+  $state.active_cert_count = $activeCerts.Count
+  $state.active_thumbprints = @(
+    $activeCerts |
+      ForEach-Object { $_.Thumbprint } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+  )
+
+  if ($activeCerts.Count -gt 0) {
+    $activeCert = @(
+      $activeCerts |
+        Sort-Object -Property @(
+          @{
+            Expression = {
+              if ([string]::IsNullOrWhiteSpace([string]$_.ValidTill)) {
+                [DateTime]::MinValue
+              } else {
+                try {
+                  [DateTime]::Parse([string]$_.ValidTill).ToUniversalTime()
+                } catch {
+                  [DateTime]::MinValue
+                }
+              }
+            }
+          },
+          @{
+            Expression = {
+              try {
+                [bigint]([string]$_.Serial)
+              } catch {
+                [bigint]0
+              }
+            }
+          }
+        ) -Descending |
+        Select-Object -First 1
+    )
+    if ($activeCert.Count -gt 0) {
+      $state.active_thumbprint = $activeCert[0].Thumbprint
+      $state.active_serial = $activeCert[0].Serial
+    }
+  }
+
+  [PSCustomObject]$state
 }
 
 function Invoke-MyTunnelAttestationPreregCheck {
@@ -1201,6 +1920,45 @@ function Invoke-MyTunnelTamperedActivationRenewal {
     $tamperedEncoded
   )
 
+  $renewalStdoutExcerpt = ConvertTo-MyTunnelCompactText -Value $renewalResult.stdout -MaxLength 1000
+  $renewalStderrExcerpt = ConvertTo-MyTunnelCompactText -Value $renewalResult.stderr -MaxLength 1000
+  $renewalClassifierText = @($renewalStdoutExcerpt, $renewalStderrExcerpt) -ne ''
+  $renewalClassifierText = ($renewalClassifierText -join ' ')
+  $renewalFailureExcerpt = $renewalStdoutExcerpt
+  if ([string]::IsNullOrWhiteSpace([string]$renewalFailureExcerpt)) {
+    $renewalFailureExcerpt = $renewalStderrExcerpt
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$renewalStderrExcerpt)) {
+    $renewalFailureExcerpt = ConvertTo-MyTunnelCompactText -Value ("stdout={0} stderr={1}" -f $renewalStdoutExcerpt, $renewalStderrExcerpt) -MaxLength 1000
+  }
+  Write-MyTunnelProgress (
+    "MYTUNNEL_INSTALL_PROGRESS phase=activation-negative-renewal-result helper_path={0} exit_code={1} timed_out={2} stdout={3} stderr={4}" -f
+      (ConvertTo-MyTunnelCompactText -Value $helperPath -MaxLength 200),
+      $renewalResult.exit_code,
+      [bool]$renewalResult.timed_out,
+      $renewalStdoutExcerpt,
+      $renewalStderrExcerpt
+  )
+  $renewalRejected = $renewalResult.exit_code -ne 0
+  if (
+    (-not $renewalRejected) -and
+    (-not [string]::IsNullOrWhiteSpace([string]$renewalClassifierText)) -and
+    (
+      $renewalClassifierText -match '(?i)request failed, failInfo' -or
+      $renewalClassifierText -match '(?i)invalid attestation' -or
+      $renewalClassifierText -match '(?i)invalid renewal signer' -or
+      $renewalClassifierText -match '(?i)PKIOperation for RenewalReq' -or
+      $renewalClassifierText -match '(?i)parsing pkiMessage response RenewalReq' -or
+      $renewalClassifierText -match '(?i)decrypt pkiEnvelope, msgType:\s*RenewalReq'
+    )
+  ) {
+    $renewalRejected = $true
+  }
+  Write-MyTunnelProgress (
+    "MYTUNNEL_INSTALL_PROGRESS phase=activation-negative-renewal-classified renewal_rejected={0} failure_excerpt={1}" -f
+      [bool]$renewalRejected,
+      $renewalFailureExcerpt
+  )
+
   $finalSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   $thumbprintBefore = $baselineSummary.managed.managed_thumbprint
   $thumbprintAfter = $finalSummary.managed.managed_thumbprint
@@ -1210,8 +1968,14 @@ function Invoke-MyTunnelTamperedActivationRenewal {
     $thumbprintBefore -ne $thumbprintAfter
   )
 
-  if ($renewalResult.exit_code -eq 0) {
-    throw 'tampered activation renewal unexpectedly succeeded'
+  if (-not $renewalRejected) {
+    throw (
+      "tampered activation renewal unexpectedly succeeded exit_code={0} stdout={1} stderr={2} failure={3}" -f
+        $renewalResult.exit_code,
+        $renewalStdoutExcerpt,
+        $renewalStderrExcerpt,
+        $renewalFailureExcerpt
+    )
   }
   if (-not $finalSummary.managed.cert_exists) {
     throw "tampered activation renewal removed the managed certificate at $managedCertPath"
@@ -1230,12 +1994,13 @@ function Invoke-MyTunnelTamperedActivationRenewal {
     nonce_endpoint             = $nonceInfo.endpoint
     emit_attestation_exit_code = $emitResult.exit_code
     renewal_exit_code          = $renewalResult.exit_code
-    renewal_rejected           = $renewalResult.exit_code -ne 0
+    renewal_rejected           = $renewalRejected
     managed_thumbprint_before  = $thumbprintBefore
     managed_thumbprint_after   = $thumbprintAfter
     managed_thumbprint_changed = $thumbprintChanged
-    renewal_stdout_excerpt     = ConvertTo-MyTunnelCompactText -Value $renewalResult.stdout
-    renewal_stderr_excerpt     = ConvertTo-MyTunnelCompactText -Value $renewalResult.stderr
+    renewal_stdout_excerpt     = $renewalStdoutExcerpt
+    renewal_stderr_excerpt     = $renewalStderrExcerpt
+    renewal_failure_excerpt    = $renewalFailureExcerpt
   }
 }
 
@@ -1247,7 +2012,6 @@ function Invoke-MyTunnelAppSilentInstall {
     [Parameter(Mandatory = $true)]
     [string]$ClientUid,
 
-    [Parameter(Mandatory = $true)]
     [string]$EnrollmentSecret,
 
     [Parameter(Mandatory = $true)]
@@ -1258,21 +2022,33 @@ function Invoke-MyTunnelAppSilentInstall {
     [string]$RenewBefore = '14d',
     [ValidateSet('trace', 'debug', 'info', 'warn', 'error')]
     [string]$LogLevel = 'info',
+    [string]$ExpectedServiceSha256 = "",
+    [string]$ExpectedBundledHelperSha256 = "",
     [switch]$ForceFreshInstall,
+    [switch]$AllowExistingCertificateReuse,
     [switch]$ApplyRegistryOverrides,
     [switch]$ConvergeToLocalService,
     [switch]$RequireManagedThumbprintChange,
     [int]$WaitSeconds = 90
   )
 
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=silent-install-enter requested_msi_path={0} client_uid={1}" -f (ConvertTo-MyTunnelCompactText -Value $MsiPath -MaxLength 160), $ClientUid)
   $resolvedMsiPath = Resolve-MyTunnelMsiPath -PreferredPath $MsiPath
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=silent-install-path-resolved msi_path={0}" -f $resolvedMsiPath)
   New-Item -ItemType Directory -Path 'C:\ProgramData\MyTunnelApp' -Force | Out-Null
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=prereg-check-start client_uid={0}" -f $ClientUid)
   $preregCheck = Invoke-MyTunnelAttestationPreregCheck -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=prereg-check-done result={0} endpoint={1}" -f $preregCheck.result, $preregCheck.endpoint)
   $removedProducts = @()
   $preInstallSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
+  $preInstallServerState = Get-MyTunnelServerCertificateState -ServerUrl $ServerUrl -ClientUid $ClientUid
+  $canReuseExistingCertificate = [bool]$preInstallSummary.managed.cert_exists
   $existingProductCodes = @()
 
   if ($ForceFreshInstall) {
+    if ([string]::IsNullOrWhiteSpace($EnrollmentSecret) -and ((-not $AllowExistingCertificateReuse) -or (-not $canReuseExistingCertificate))) {
+      throw 'EnrollmentSecret is required for force-fresh-install unless an existing managed certificate is being reused'
+    }
     foreach ($productCode in Get-MyTunnelInstalledProductCodes) {
       $uninstallProcess = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart') -PassThru -Wait -NoNewWindow
       if ($uninstallProcess.ExitCode -notin @(0, 1605, 1614, 1641, 3010)) {
@@ -1288,6 +2064,10 @@ function Invoke-MyTunnelAppSilentInstall {
     if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\MyTunnelApp') {
       Remove-Item -LiteralPath 'HKLM:\SOFTWARE\MyTunnelApp' -Recurse -Force
     }
+    if ([string]::IsNullOrWhiteSpace($EnrollmentSecret) -and $AllowExistingCertificateReuse -and $canReuseExistingCertificate) {
+      Seed-MyTunnelExistingConfigRegistry -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
+      Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=force-fresh-registry-seed client_uid={0} expected_device_id={1}" -f $ClientUid, $ExpectedDeviceId)
+    }
   } else {
     $existingProductCodes = @(Get-MyTunnelInstalledProductCodes)
   }
@@ -1297,7 +2077,6 @@ function Invoke-MyTunnelAppSilentInstall {
     $resolvedMsiPath
     "SERVER_URL=$ServerUrl"
     "CLIENT_UID=$ClientUid"
-    "ENROLLMENT_SECRET=$EnrollmentSecret"
     "EXPECTED_DEVICE_ID=$ExpectedDeviceId"
     "POLL_INTERVAL=$PollInterval"
     "RENEW_BEFORE=$RenewBefore"
@@ -1305,17 +2084,45 @@ function Invoke-MyTunnelAppSilentInstall {
     '/qn'
     '/norestart'
   )
+  if (-not [string]::IsNullOrWhiteSpace($EnrollmentSecret)) {
+    $arguments += "ENROLLMENT_SECRET=$EnrollmentSecret"
+  }
 
   if ($existingProductCodes.Count -gt 0) {
     $arguments += @(
       'REINSTALL=ALL'
-      'REINSTALLMODE=vomus'
+      'REINSTALLMODE=vamus'
     )
   }
 
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=msiexec-start resolved_msi_path={0} reinstall_requested={1} force_fresh_install={2}" -f $resolvedMsiPath, ($existingProductCodes.Count -gt 0), [bool]$ForceFreshInstall)
   $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $arguments -PassThru -Wait -NoNewWindow
   if ($process.ExitCode -notin @(0, 1641, 3010)) {
     throw "msiexec.exe failed with exit code $($process.ExitCode)"
+  }
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=msiexec-done exit_code={0}" -f $process.ExitCode)
+
+  $postMsiexecBinaryState = Get-MyTunnelInstalledBinaryState -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256
+  if ((-not $ForceFreshInstall) -and $existingProductCodes.Count -gt 0 -and [bool]$postMsiexecBinaryState.any_mismatch) {
+    $binaryMismatchList = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $postMsiexecBinaryState.service_matches_expected -and (-not [bool]$postMsiexecBinaryState.service_matches_expected)) {
+      $binaryMismatchList.Add('service.exe') | Out-Null
+    }
+    if ($null -ne $postMsiexecBinaryState.bundled_helper_matches_expected -and (-not [bool]$postMsiexecBinaryState.bundled_helper_matches_expected)) {
+      $binaryMismatchList.Add('scepclient.exe') | Out-Null
+    }
+
+    $binaryFallbackReason = "same-version reinstall left stale Program Files binaries: $($binaryMismatchList -join ', ')"
+    Write-MyTunnelProgress (
+      "MYTUNNEL_INSTALL_PROGRESS phase=binary-refresh-fallback reason={0}" -f
+        (ConvertTo-MyTunnelCompactText -Value $binaryFallbackReason -MaxLength 500)
+    )
+
+    $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256 -ForceFreshInstall -AllowExistingCertificateReuse -ApplyRegistryOverrides:$ApplyRegistryOverrides -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
+    $fallbackSummary['binary_refresh_fallback_used'] = $true
+    $fallbackSummary['binary_refresh_fallback_reason'] = $binaryFallbackReason
+    $fallbackSummary['initial_reinstall_binary_state'] = $postMsiexecBinaryState
+    return $fallbackSummary
   }
 
   if ($ConvergeToLocalService) {
@@ -1328,13 +2135,18 @@ function Invoke-MyTunnelAppSilentInstall {
     Restart-MyTunnelService
   }
 
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=observation-start wait_seconds={0} require_thumbprint_change={1}" -f $WaitSeconds, [bool]$RequireManagedThumbprintChange)
   $summary = Wait-MyTunnelInstallObservation -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -BaselineSummary $preInstallSummary -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
-  $summary = Add-MyTunnelInstallMetadata -Summary $summary -ResolvedMsiPath $resolvedMsiPath -ForceFreshInstall ([bool]$ForceFreshInstall) -RemovedProducts $removedProducts -ApplyRegistryOverrides ([bool]$ApplyRegistryOverrides) -ConvergeToLocalService ([bool]$ConvergeToLocalService) -ReinstallRequested ($existingProductCodes.Count -gt 0) -MsiexecExitCode $process.ExitCode -PreInstallSummary $preInstallSummary -RequireManagedThumbprintChange ([bool]$RequireManagedThumbprintChange) -PreregCheck $preregCheck -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
+  Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=observation-done managed_thumbprint={0} service_state={1}" -f $summary.managed.managed_thumbprint, $summary.service.state)
+  $summary = Add-MyTunnelInstallMetadata -Summary $summary -ResolvedMsiPath $resolvedMsiPath -ForceFreshInstall ([bool]$ForceFreshInstall) -RemovedProducts $removedProducts -ApplyRegistryOverrides ([bool]$ApplyRegistryOverrides) -ConvergeToLocalService ([bool]$ConvergeToLocalService) -ReinstallRequested ($existingProductCodes.Count -gt 0) -MsiexecExitCode $process.ExitCode -PreInstallSummary $preInstallSummary -PreInstallServerState $preInstallServerState -RequireManagedThumbprintChange ([bool]$RequireManagedThumbprintChange) -PreregCheck $preregCheck -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256
+  $summary['binary_refresh_fallback_used'] = $false
+  $summary['binary_refresh_fallback_reason'] = $null
+  $summary['initial_reinstall_binary_state'] = $null
 
   if ((-not $ForceFreshInstall) -and (-not $ApplyRegistryOverrides) -and $existingProductCodes.Count -gt 0) {
     $mismatchList = @(Get-MyTunnelConfigMismatchList -Summary $summary -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel)
     if ($mismatchList.Count -gt 0) {
-      $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ForceFreshInstall -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
+      $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256 -ForceFreshInstall -AllowExistingCertificateReuse -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
       $fallbackSummary['reconfigure_fallback_used'] = $true
       $fallbackSummary['reconfigure_fallback_reason'] = "same-version reinstall left stale config for: $($mismatchList -join ', ')"
       $fallbackSummary['initial_reinstall_summary'] = $summary

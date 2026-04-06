@@ -201,12 +201,12 @@ wait_for_marker() {
   echo "Waiting for preregistration markers"
   while (( $(date +%s) <= deadline )); do
     serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null || true)"
-    if printf '%s\n' "$serial_output" | grep -q "COPILOT_PREREGISTER_DONE id=${action_id}"; then
-      printf '%s\n' "$serial_output" | grep "COPILOT_PREREGISTER_.*id=${action_id}" | tail -n 20
+    if [[ "$serial_output" == *"COPILOT_PREREGISTER_DONE id=${action_id}"* ]]; then
+      grep "COPILOT_PREREGISTER_.*id=${action_id}" <<<"$serial_output" | tail -n 20 || true
       return 0
     fi
-    if printf '%s\n' "$serial_output" | grep -q "COPILOT_PREREGISTER_FAILED id=${action_id}"; then
-      printf '%s\n' "$serial_output" | grep "COPILOT_PREREGISTER_.*id=${action_id}" | tail -n 20 >&2
+    if [[ "$serial_output" == *"COPILOT_PREREGISTER_FAILED id=${action_id}"* ]]; then
+      grep "COPILOT_PREREGISTER_.*id=${action_id}" <<<"$serial_output" | tail -n 20 >&2 || true
       return 1
     fi
     sleep 15

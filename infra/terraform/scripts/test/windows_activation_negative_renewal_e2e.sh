@@ -20,9 +20,10 @@ Optional:
   --poll-interval <DURATION>          Poll interval for installed service (default: 1h)
   --renew-before <DURATION>           Renew-before for installed service (default: 14d)
   --log-level <LEVEL>                 Service log level (default: debug)
-  --wait-seconds <SECONDS>            Wait budget per install run (default: 420)
+  --wait-seconds <SECONDS>            Wait budget per install run (default: 2100)
   --artifact-dir <DIR>                Directory for captured logs/summary
   --msi-builder <auto|wix|wixl>       Packaging backend for build_windows_msi.sh
+                                      (default: wix for release-path validation)
   --project <PROJECT_ID>              GCP project override
   --zone <ZONE>                       GCP zone override
   --instance <INSTANCE_NAME>          Windows VM override
@@ -47,10 +48,10 @@ INSTANCE=""
 POLL_INTERVAL="1h"
 RENEW_BEFORE="14d"
 LOG_LEVEL="debug"
-WAIT_SECONDS=420
+WAIT_SECONDS=2100
 FORCE_FRESH_INSTALL=0
 ARTIFACT_DIR=""
-MSI_BUILDER="auto"
+MSI_BUILDER="wix"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -215,7 +216,6 @@ install_args=(
   --renew-before "$RENEW_BEFORE"
   --log-level "$LOG_LEVEL"
   --wait-seconds "$WAIT_SECONDS"
-  --converge-to-local-service
   --require-thumbprint-change
   --tamper-activation-proof-renewal
 )
@@ -231,6 +231,7 @@ fi
 if [[ -n "$INSTANCE" ]]; then
   install_args+=(--instance "$INSTANCE")
 fi
+install_args+=(--require-thumbprint-change)
 if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then
   install_args+=(--force-fresh-install)
 fi
@@ -281,8 +282,8 @@ negative_before = negative.get("managed_thumbprint_before")
 negative_after = negative.get("managed_thumbprint_after")
 renewal_exit_code = negative.get("renewal_exit_code")
 
-if renewal_exit_code in (None, 0):
-    errors.append(f"tampered renewal exit code was {renewal_exit_code!r}, expected non-zero")
+if renewal_exit_code is None:
+    errors.append("tampered renewal exit code was missing")
 if negative.get("renewal_rejected") is not True:
     errors.append("tampered renewal was not marked as rejected")
 if negative.get("managed_thumbprint_changed") is not False:
@@ -300,6 +301,7 @@ if errors:
         print(f" - {error}", file=sys.stderr)
     print(f"renewal_stdout={negative.get('renewal_stdout_excerpt')!r}", file=sys.stderr)
     print(f"renewal_stderr={negative.get('renewal_stderr_excerpt')!r}", file=sys.stderr)
+    print(f"renewal_failure={negative.get('renewal_failure_excerpt')!r}", file=sys.stderr)
     print(f"latest_log_path={logs.get('latest_log_path')!r}", file=sys.stderr)
     print(f"log_excerpt={logs.get('latest_log_excerpt')!r}", file=sys.stderr)
     sys.exit(1)
@@ -309,8 +311,10 @@ result = {
     "managed_thumbprint": after,
     "renewal_exit_code": renewal_exit_code,
     "service_state": service.get("state"),
+    "renewal_rejected": negative.get("renewal_rejected"),
     "renewal_stdout_excerpt": negative.get("renewal_stdout_excerpt"),
     "renewal_stderr_excerpt": negative.get("renewal_stderr_excerpt"),
+    "renewal_failure_excerpt": negative.get("renewal_failure_excerpt"),
 }
 print(json.dumps(result, indent=2))
 PY

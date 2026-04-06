@@ -8,9 +8,14 @@ Usage: build_windows_msi.sh [options]
 Cross-builds service.exe for Windows, stages installer inputs locally, builds a
 Windows MSI on Linux, and optionally copies the MSI to the Windows client VM.
 
-When WiX v4 (`wix`) is available, the script prefers `installer/main.wxs` as the
-source of truth and builds the converged MSI from that WiX definition. Otherwise
-it falls back to the existing `wixl`-based silent-install package.
+WiX v4 (`wix`) is the supported release packaging path. When it is available,
+the script builds `installer/main.wxs` as the source-of-truth MSI. When it is
+not available, the script can still fall back to the existing `wixl`-based
+silent-install package for development-only comparison.
+
+On Linux hosts, the WiX v4 path runs `wix.dll` under Wine with a cached Windows
+.NET runtime because WiX binds through Windows Installer APIs that are not
+available to the native Linux apphost.
 
 When --windows-user is provided, the script first tries gcloud compute scp to
 <user>:\~/MyTunnelApp.msi and <user>:\~/device-id-probe.exe. If the Windows VM
@@ -32,7 +37,8 @@ Options:
   --output-path <PATH>              Output MSI path
                                      (default: <stage-dir>/installer/dist/MyTunnelApp.msi)
   --msi-builder <auto|wix|wixl>     Packaging backend to use
-                                    (default: auto; prefer WiX v4 when available)
+                                    (default: auto; WiX v4 is the release path,
+                                     wixl is a development-only fallback)
   --skip-rustup-target              Skip rustup target add x86_64-pc-windows-gnu
   -h, --help                        Show this help text
 EOF
@@ -132,6 +138,8 @@ fi
 if [[ -z "$OUTPUT_PATH" ]]; then
   OUTPUT_PATH="${STAGE_DIR}/installer/dist/MyTunnelApp.msi"
 fi
+STAGE_DIR="$(realpath -m "$STAGE_DIR")"
+OUTPUT_PATH="$(realpath -m "$OUTPUT_PATH")"
 
 read_tfvars_value() {
   local key="$1"
@@ -158,10 +166,102 @@ ensure_command() {
   fi
 }
 
+wix_store_root() {
+  local wix_path
+  wix_path="$(command -v wix 2>/dev/null || true)"
+  [[ -n "$wix_path" ]] || return 1
+  printf '%s' "$(dirname "$wix_path")/.store/wix"
+}
+
+wix_version() {
+  local version store_root
+  version="$(wix --version 2>/dev/null | tr -d '\r' | awk 'NF { print $1 }' | tail -n 1 || true)"
+  if [[ -z "$version" ]]; then
+    store_root="$(wix_store_root || true)"
+    if [[ -n "$store_root" && -d "$store_root" ]]; then
+      version="$(find "$store_root" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V | tail -n 1 || true)"
+    fi
+  fi
+  printf '%s' "$version"
+}
+
+wix_major_version() {
+  local version
+  version="$(wix_version)"
+  printf '%s' "${version%%.*}"
+}
+
+wix_extension_version() {
+  local version
+  version="$(wix_version)"
+  printf '%s' "${version%%+*}"
+}
+
+wix_tool_dir() {
+  local store_root version tool_dir
+  store_root="$(wix_store_root || true)"
+  version="$(wix_extension_version)"
+  [[ -n "$store_root" && -n "$version" ]] || return 1
+  tool_dir="${store_root}/${version}/wix/${version}/tools/net6.0/any"
+  [[ -d "$tool_dir" ]] || return 1
+  printf '%s' "$tool_dir"
+}
+
+wix_runtime_channel() {
+  local tool_dir runtimeconfig
+  tool_dir="$(wix_tool_dir)" || return 1
+  runtimeconfig="${tool_dir}/wix.runtimeconfig.json"
+  [[ -f "$runtimeconfig" ]] || return 1
+  python3 - "$runtimeconfig" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = json.load(handle)
+version = data["runtimeOptions"]["framework"]["version"]
+parts = version.split(".")
+print(f"{parts[0]}.{parts[1]}")
+PY
+}
+
+wix_windows_runtime_url() {
+  local channel
+  channel="$(wix_runtime_channel)" || return 1
+  curl -fsSL "https://dotnetcli.blob.core.windows.net/dotnet/release-metadata/${channel}/releases.json" \
+    | jq -r 'first(.releases[] | .runtime.files[]? | select((.rid // "") == "win-x64" and ((.url // "") | endswith(".zip"))) | .url)'
+}
+
+ensure_wix_windows_runtime() {
+  local runtime_url runtime_name cache_root archive_path
+  runtime_url="$(wix_windows_runtime_url)" || {
+    echo "Failed to resolve a Windows .NET runtime download URL for the active WiX tool." >&2
+    exit 1
+  }
+  if [[ -z "$runtime_url" || "$runtime_url" == "null" ]]; then
+    echo "Failed to resolve a Windows .NET runtime download URL for the active WiX tool." >&2
+    exit 1
+  fi
+  runtime_name="${runtime_url##*/}"
+  runtime_name="${runtime_name%.zip}"
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/scep/${runtime_name}"
+  if [[ ! -f "${cache_root}/dotnet.exe" ]]; then
+    mkdir -p "$cache_root"
+    archive_path="$(mktemp)"
+    curl -fsSL "$runtime_url" -o "$archive_path"
+    unzip -q -o "$archive_path" -d "$cache_root"
+    rm -f "$archive_path"
+  fi
+  if [[ ! -f "${cache_root}/dotnet.exe" ]]; then
+    echo "Windows .NET runtime cache did not contain dotnet.exe: ${cache_root}" >&2
+    exit 1
+  fi
+  printf '%s' "$cache_root"
+}
+
 resolve_msi_builder() {
   case "$MSI_BUILDER" in
     auto)
-      if command -v wix >/dev/null 2>&1; then
+      if command -v wix >/dev/null 2>&1 && [[ "$(wix_major_version)" == "4" ]]; then
         MSI_BUILDER="wix"
       else
         MSI_BUILDER="wixl"
@@ -177,10 +277,50 @@ resolve_msi_builder() {
 }
 
 ensure_wix_ui_extension() {
-  if ! wix extension add WixToolset.UI.wixext >/dev/null 2>&1; then
-    echo "Failed to add WixToolset.UI.wixext. Install or pre-cache the WiX UI extension before using --msi-builder wix." >&2
+  local version
+  version="$(wix_extension_version)"
+  if [[ -z "$version" ]]; then
+    echo "Failed to determine the WiX CLI version for WixToolset.UI.wixext." >&2
     exit 1
   fi
+  if ! wix extension add "WixToolset.UI.wixext/${version}" >/dev/null 2>&1; then
+    echo "Failed to add WixToolset.UI.wixext/${version}. Install or pre-cache the matching WiX UI extension before using --msi-builder wix." >&2
+    exit 1
+  fi
+}
+
+build_with_wix_under_wine() {
+  local tool_dir runtime_dir wine_prefix xdg_runtime_dir dotnet_win wix_dll_win output_win
+  ensure_command wine
+  ensure_command winepath
+  ensure_command curl
+  ensure_command unzip
+  ensure_command jq
+  ensure_command python3
+
+  tool_dir="$(wix_tool_dir)" || {
+    echo "Failed to locate wix.dll for WiX v4 under the current wix tool installation." >&2
+    exit 1
+  }
+  runtime_dir="$(ensure_wix_windows_runtime)"
+  wine_prefix="${XDG_CACHE_HOME:-$HOME/.cache}/scep/wine-wix-prefix"
+  xdg_runtime_dir="${TMPDIR:-/tmp}/scep-wix-xdg-runtime"
+  mkdir -p "$wine_prefix" "$xdg_runtime_dir"
+
+  export WINEDEBUG=-all
+  export WINEPREFIX="$wine_prefix"
+  export XDG_RUNTIME_DIR="$xdg_runtime_dir"
+
+  wineboot -u >/dev/null 2>&1 || true
+  dotnet_win="$(winepath -w "${runtime_dir}/dotnet.exe")"
+  wix_dll_win="$(winepath -w "${tool_dir}/wix.dll")"
+  output_win="$(winepath -w "$OUTPUT_PATH")"
+
+  (
+    cd "${STAGE_DIR}/installer"
+    wine "$dotnet_win" "$wix_dll_win" extension add "WixToolset.UI.wixext/$(wix_extension_version)" >/dev/null
+    wine "$dotnet_win" "$wix_dll_win" build -arch x64 -dcl none -ext WixToolset.UI.wixext -o "$output_win" main.wxs
+  )
 }
 
 restore_windows_startup_script() {
@@ -254,13 +394,13 @@ EOF
   echo "Waiting for Windows startup-script transfer to complete"
   for _ in $(seq 1 40); do
     serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null | tr -d '\000' || true)"
-    if printf '%s\n' "$serial_output" | grep -q "COPILOT_MSI_TRANSFER_DONE id=${transfer_id}"; then
-      printf '%s\n' "$serial_output" | grep "COPILOT_MSI_TRANSFER_.*id=${transfer_id}"
-      if ! printf '%s\n' "$serial_output" | grep -q "msi_sha256=${expected_msi_hash}"; then
+    if [[ "$serial_output" == *"COPILOT_MSI_TRANSFER_DONE id=${transfer_id}"* ]]; then
+      grep "COPILOT_MSI_TRANSFER_.*id=${transfer_id}" <<<"$serial_output" || true
+      if [[ "$serial_output" != *"msi_sha256=${expected_msi_hash}"* ]]; then
         echo "Windows transfer completed but MSI SHA-256 verification did not match expected hash ${expected_msi_hash}" >&2
         return 1
       fi
-      if ! printf '%s\n' "$serial_output" | grep -q "probe_sha256=${expected_probe_hash}"; then
+      if [[ "$serial_output" != *"probe_sha256=${expected_probe_hash}"* ]]; then
         echo "Windows transfer completed but device-id-probe SHA-256 verification did not match expected hash ${expected_probe_hash}" >&2
         return 1
       fi
@@ -309,8 +449,13 @@ ensure_command sha256sum
 resolve_msi_builder
 if [[ "$MSI_BUILDER" == "wix" ]]; then
   ensure_command wix
+  if [[ "$(wix_major_version)" != "4" ]]; then
+    echo "WiX v4 is required for --msi-builder wix. Found: $(wix_version)" >&2
+    exit 1
+  fi
 else
   ensure_command wixl
+  echo "WARNING: using wixl fallback packaging. This path is kept for development/debugging and is not the supported release MSI." >&2
 fi
 
 if [[ -n "$WINDOWS_USER" ]]; then
@@ -356,11 +501,15 @@ cp "${REPO_ROOT}/${DEVICE_ID_PROBE_BINARY_RELATIVE}" "${STAGE_DIR}/cmd/scepclien
 
 echo "Building MSI locally with ${MSI_BUILDER}: ${OUTPUT_PATH}"
 if [[ "$MSI_BUILDER" == "wix" ]]; then
-  (
-    cd "$STAGE_DIR"
-    ensure_wix_ui_extension
-    wix build -arch x64 -ext WixToolset.UI.wixext -o "$OUTPUT_PATH" installer/main.wxs
-  )
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    build_with_wix_under_wine
+  else
+    (
+      cd "${STAGE_DIR}/installer"
+      ensure_wix_ui_extension
+      wix build -arch x64 -ext WixToolset.UI.wixext -o "$OUTPUT_PATH" main.wxs
+    )
+  fi
 else
   (
     cd "$STAGE_DIR"

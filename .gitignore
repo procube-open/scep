@@ -16,6 +16,7 @@ gcp_credential.json
 infra/terraform/.terraform/
 infra/terraform/.terraform.lock.hcl
 infra/terraform/tfplan
+infra/terraform/tfplan*
 infra/terraform/terraform.tfvars
 infra/terraform/scripts/test/prereg.out
 infra/terraform/*.tfstate

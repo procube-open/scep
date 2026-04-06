@@ -1,7 +1,7 @@
 Option Explicit
 
 Const CustomActionSuccess = 1
-Const ProbeCommand = "$ErrorActionPreference='Stop'; $ekInfo = Get-TpmEndorsementKeyInfo -HashAlgorithm Sha256; if ($null -eq $ekInfo -or $null -eq $ekInfo.PublicKey -or $null -eq $ekInfo.PublicKey.RawData -or $ekInfo.PublicKey.RawData.Length -eq 0) { throw 'TPM endorsement key public key is unavailable' }; $sha = [System.Security.Cryptography.SHA256]::Create(); try { $hash = $sha.ComputeHash($ekInfo.PublicKey.RawData) } finally { $sha.Dispose() }; $deviceId = (-join ($hash | ForEach-Object { $_.ToString('x2') })); Write-Output $deviceId"
+Const PowerShellProbeCommand = "$ErrorActionPreference='Stop'; $ekInfo = Get-TpmEndorsementKeyInfo -HashAlgorithm Sha256; if ($null -eq $ekInfo -or $null -eq $ekInfo.PublicKey -or $null -eq $ekInfo.PublicKey.RawData -or $ekInfo.PublicKey.RawData.Length -eq 0) { throw 'TPM endorsement key public key is unavailable' }; $sha = [System.Security.Cryptography.SHA256]::Create(); try { $hash = $sha.ComputeHash($ekInfo.PublicKey.RawData) } finally { $sha.Dispose() }; $deviceId = (-join ($hash | ForEach-Object { $_.ToString('x2') })); Write-Output $deviceId"
 
 Function ProbeCurrentDeviceIdentity()
   On Error Resume Next
@@ -10,7 +10,7 @@ Function ProbeCurrentDeviceIdentity()
   deviceId = ResolveCurrentDeviceId()
   If Err.Number <> 0 Then
     Session.Property("CURRENT_DEVICE_ID") = ""
-    Session.Property("PROBE_STATUS_MESSAGE") = "Failed to read the canonical TPM device identity from the local endorsement key: " & Err.Description
+    Session.Property("PROBE_STATUS_MESSAGE") = "Failed to read the canonical TPM device identity on this machine: " & Err.Description
     Session.Property("PREREG_CHECK_RESULT") = ""
     Session.Property("PREREG_STATUS_MESSAGE") = "Fix the TPM probe failure before continuing."
     Session.Log "MyTunnel MSI: device identity probe failed: " & Err.Description
@@ -107,6 +107,31 @@ Sub PerformPreregistrationCheck()
 End Sub
 
 Function ResolveCurrentDeviceId()
+  Dim helperPath
+  Dim helperFailure
+
+  helperPath = ResolveDeviceIdentityProbePath()
+  helperFailure = ""
+
+  If helperPath <> "" Then
+    On Error Resume Next
+    ResolveCurrentDeviceId = ResolveCurrentDeviceIdViaHelper(helperPath)
+    If Err.Number = 0 Then
+      Exit Function
+    End If
+    helperFailure = Err.Description
+    Session.Log "MyTunnel MSI: helper-backed device identity probe failed at " & helperPath & ": " & helperFailure
+    Err.Clear
+  End If
+
+  On Error Resume Next
+  ResolveCurrentDeviceId = ResolveCurrentDeviceIdViaPowerShell()
+  If Err.Number <> 0 And helperFailure <> "" Then
+    Err.Raise vbObjectError + 120, "ResolveCurrentDeviceId", "helper-backed probe failed: " & helperFailure & "; PowerShell fallback failed: " & Err.Description
+  End If
+End Function
+
+Function ResolveCurrentDeviceIdViaPowerShell()
   Dim shell
   Dim exec
   Dim commandLine
@@ -115,7 +140,7 @@ Function ResolveCurrentDeviceId()
   Dim exitCode
 
   Set shell = CreateObject("WScript.Shell")
-  commandLine = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " & QuoteForCommand(ProbeCommand)
+  commandLine = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " & QuoteForCommand(PowerShellProbeCommand)
   Set exec = shell.Exec(commandLine)
 
   stdoutText = TrimValue(exec.StdOut.ReadAll())
@@ -129,10 +154,76 @@ Function ResolveCurrentDeviceId()
     Err.Raise vbObjectError + 100, "ResolveCurrentDeviceId", "PowerShell TPM probe failed: " & stderrText
   End If
   If stdoutText = "" Then
-    Err.Raise vbObjectError + 101, "ResolveCurrentDeviceId", "PowerShell TPM probe returned an empty device identity"
+    Err.Raise vbObjectError + 101, "ResolveCurrentDeviceIdViaPowerShell", "PowerShell TPM probe returned an empty device identity"
   End If
 
-  ResolveCurrentDeviceId = LCase(stdoutText)
+  ResolveCurrentDeviceIdViaPowerShell = LCase(stdoutText)
+End Function
+
+Function ResolveCurrentDeviceIdViaHelper(probePath)
+  Dim shell
+  Dim exec
+  Dim commandLine
+  Dim stdoutText
+  Dim stderrText
+  Dim exitCode
+  Dim deviceId
+
+  Set shell = CreateObject("WScript.Shell")
+  commandLine = QuoteForCommand(probePath) & " -json"
+  Set exec = shell.Exec(commandLine)
+
+  stdoutText = TrimValue(exec.StdOut.ReadAll())
+  stderrText = TrimValue(exec.StdErr.ReadAll())
+  exitCode = exec.ExitCode
+
+  If exitCode <> 0 Then
+    If stderrText = "" Then
+      stderrText = stdoutText
+    End If
+    Err.Raise vbObjectError + 121, "ResolveCurrentDeviceIdViaHelper", "device-id-probe.exe failed: " & stderrText
+  End If
+  If stdoutText = "" Then
+    Err.Raise vbObjectError + 122, "ResolveCurrentDeviceIdViaHelper", "device-id-probe.exe returned an empty JSON payload"
+  End If
+
+  deviceId = ParseJsonStringValue(stdoutText, "expected_device_id")
+  If deviceId = "" Then
+    deviceId = ParseJsonStringValue(stdoutText, "device_id")
+  End If
+  If deviceId = "" Then
+    Err.Raise vbObjectError + 123, "ResolveCurrentDeviceIdViaHelper", "device-id-probe.exe JSON did not contain expected_device_id or device_id: " & stdoutText
+  End If
+
+  ResolveCurrentDeviceIdViaHelper = LCase(deviceId)
+End Function
+
+Function ResolveDeviceIdentityProbePath()
+  Dim fso
+  Dim installerPath
+  Dim installerDir
+  Dim adjacentProbePath
+  Dim installedProbePath
+
+  Set fso = CreateObject("Scripting.FileSystemObject")
+
+  installerPath = TrimValue(Session.Property("OriginalDatabase"))
+  If installerPath <> "" And fso.FileExists(installerPath) Then
+    installerDir = fso.GetParentFolderName(installerPath)
+    adjacentProbePath = fso.BuildPath(installerDir, "device-id-probe.exe")
+    If fso.FileExists(adjacentProbePath) Then
+      ResolveDeviceIdentityProbePath = adjacentProbePath
+      Exit Function
+    End If
+  End If
+
+  installedProbePath = "C:\Program Files\MyTunnelApp\device-id-probe.exe"
+  If fso.FileExists(installedProbePath) Then
+    ResolveDeviceIdentityProbePath = installedProbePath
+    Exit Function
+  End If
+
+  ResolveDeviceIdentityProbePath = ""
 End Function
 
 Function SendPreregCheck(endpoint, clientUid, deviceId)
@@ -157,20 +248,29 @@ Function SendPreregCheck(endpoint, clientUid, deviceId)
 End Function
 
 Function ParseResultValue(responseText)
+  ParseResultValue = ParseJsonStringValue(responseText, "result")
+  If ParseResultValue = "" Then
+    Err.Raise vbObjectError + 103, "ParseResultValue", "prereg-check response did not contain a result field: " & responseText
+  End If
+  ParseResultValue = LCase(ParseResultValue)
+End Function
+
+Function ParseJsonStringValue(responseText, fieldName)
   Dim regex
   Dim matches
 
   Set regex = New RegExp
-  regex.Pattern = """result""\s*:\s*""([^""]+)"""
+  regex.Pattern = """" & fieldName & """\s*:\s*""([^""]+)"""
   regex.IgnoreCase = True
   regex.Global = False
 
   Set matches = regex.Execute(responseText)
   If matches.Count = 0 Then
-    Err.Raise vbObjectError + 103, "ParseResultValue", "prereg-check response did not contain a result field: " & responseText
+    ParseJsonStringValue = ""
+    Exit Function
   End If
 
-  ParseResultValue = LCase(matches.Item(0).SubMatches.Item(0))
+  ParseJsonStringValue = TrimValue(matches.Item(0).SubMatches.Item(0))
 End Function
 
 Function BuildPreregCheckEndpoint(serverUrl)

@@ -1190,7 +1190,11 @@ fn probe_windows_machine_store(
         &plan.client_uid,
         &plan.expected_device_id,
     ));
-    let script = build_windows_machine_store_probe_script(&plan.client_uid, &managed_cert_path);
+    let script = build_windows_machine_store_probe_script(
+        &plan.server_url,
+        &plan.client_uid,
+        &managed_cert_path,
+    );
     let output = run_windows_command(
         "machine-store",
         Command::new("powershell.exe")
@@ -1240,43 +1244,173 @@ fn probe_windows_machine_store(
 }
 
 #[cfg(any(windows, test))]
-fn build_windows_machine_store_probe_script(client_uid: &str, managed_cert_path: &Path) -> String {
+fn build_windows_machine_store_probe_script(
+    server_url: &str,
+    client_uid: &str,
+    managed_cert_path: &Path,
+) -> String {
     format!(
         r#"
 $ErrorActionPreference = 'Stop'
+$serverUrl = '{server_url}'
 $managedCertPath = '{managed_cert_path}'
+$managedCert = $null
+$managedCertThumbprint = $null
+$serverActiveThumbprint = $null
+$serverActivePemText = $null
 $cert = $null
-if (Test-Path $managedCertPath) {{
+function ConvertFrom-MyTunnelPemText {{
+  param([Parameter(Mandatory = $true)][string]$PemText)
+  $match = [regex]::Match($PemText, '-----BEGIN CERTIFICATE-----\s*(?<body>[A-Za-z0-9+/=\r\n]+?)\s*-----END CERTIFICATE-----')
+  if (-not $match.Success) {{
+    throw 'PEM data does not contain a certificate body'
+  }}
+  $body = (($match.Groups['body'].Value -split "`r?`n") | Where-Object {{ $_ }}) -join ''
+  if (-not $body) {{
+    throw 'PEM data does not contain a certificate body'
+  }}
+  $bytes = [Convert]::FromBase64String($body)
+  New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$bytes)
+}}
+function Resolve-MyTunnelServerApiBaseUrl {{
+  param([Parameter(Mandatory = $true)][string]$ServerUrl)
+  $trimmed = $ServerUrl.TrimEnd('/')
+  if ($trimmed -match '/scep$') {{
+    return ($trimmed -replace '/scep$', '')
+  }}
+  $trimmed
+}}
+if (-not [string]::IsNullOrWhiteSpace($serverUrl)) {{
   try {{
-    $pem = Get-Content $managedCertPath -Raw
-    $match = [regex]::Match($pem, '-----BEGIN CERTIFICATE-----\s*(?<body>[A-Za-z0-9+/=\r\n]+?)\s*-----END CERTIFICATE-----')
-    if ($match.Success) {{
-      $body = (($match.Groups['body'].Value -split "`r?`n") | Where-Object {{ $_ }}) -join ''
-      if ($body) {{
-        $managedBytes = [Convert]::FromBase64String($body)
-        $managedCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$managedBytes)
-        $cert = Get-ChildItem Cert:\LocalMachine\My |
-          Where-Object {{ $_.Thumbprint -eq $managedCert.Thumbprint }} |
-          Sort-Object NotAfter -Descending |
-          Select-Object -First 1 Thumbprint,Subject,NotBefore,NotAfter
+    $serverBase = Resolve-MyTunnelServerApiBaseUrl -ServerUrl $serverUrl
+    $certListEndpoint = "{{0}}/api/cert/list/{{1}}" -f $serverBase, [System.Uri]::EscapeDataString('{client_uid}')
+    $serverCerts = Invoke-RestMethod -Method Get -Uri $certListEndpoint
+    $activeCerts = @(
+      $serverCerts |
+        Where-Object {{
+          $null -ne $_ -and
+          $_.PSObject.Properties.Match('status').Count -gt 0 -and
+          [string]$_.status -eq 'V'
+        }}
+    )
+    if ($activeCerts.Count -gt 0) {{
+      $serverActive = @(
+        $activeCerts |
+          Sort-Object -Property @(
+            @{{
+              Expression = {{
+                if ([string]::IsNullOrWhiteSpace([string]$_.valid_till)) {{
+                  [DateTime]::MinValue
+                }} else {{
+                  try {{
+                    [DateTime]::Parse([string]$_.valid_till).ToUniversalTime()
+                  }} catch {{
+                    [DateTime]::MinValue
+                  }}
+                }}
+              }}
+            }},
+            @{{
+              Expression = {{
+                try {{
+                  [bigint]([string]$_.serial)
+                }} catch {{
+                  [bigint]0
+                }}
+              }}
+            }}
+          ) -Descending |
+          Select-Object -First 1
+      )
+      if ($serverActive.Count -gt 0) {{
+        if (
+          $serverActive[0].PSObject.Properties.Match('cert_data').Count -gt 0 -and
+          -not [string]::IsNullOrWhiteSpace([string]$serverActive[0].cert_data)
+        ) {{
+          try {{
+            $serverActiveCert = ConvertFrom-MyTunnelPemText -PemText ([string]$serverActive[0].cert_data)
+            $serverActiveThumbprint = $serverActiveCert.Thumbprint
+            $serverActivePemBody = [Convert]::ToBase64String($serverActiveCert.RawData, [System.Base64FormattingOptions]::InsertLineBreaks)
+            $serverActivePemText = "-----BEGIN CERTIFICATE-----`r`n$($serverActivePemBody)`r`n-----END CERTIFICATE-----`r`n"
+          }} catch {{
+            $serverActiveThumbprint = $null
+            $serverActivePemText = $null
+          }}
+        }}
       }}
     }}
   }} catch {{
-    $cert = $null
+    $serverActiveThumbprint = $null
+    $serverActivePemText = $null
   }}
+}}
+if (Test-Path $managedCertPath) {{
+  try {{
+    $pem = Get-Content $managedCertPath -Raw
+    $managedCert = ConvertFrom-MyTunnelPemText -PemText $pem
+    $managedCertThumbprint = $managedCert.Thumbprint
+  }} catch {{
+    $managedCert = $null
+    $managedCertThumbprint = $null
+  }}
+}}
+if (-not [string]::IsNullOrWhiteSpace($serverActiveThumbprint)) {{
+  $cert = Get-ChildItem Cert:\LocalMachine\My |
+    Where-Object {{ $_.Thumbprint -eq $serverActiveThumbprint }} |
+    Sort-Object NotAfter -Descending |
+    Select-Object -First 1
+  if (
+    $null -eq $cert -and
+    $null -ne $managedCert -and
+    $managedCertThumbprint -eq $serverActiveThumbprint
+  ) {{
+    [Console]::Out.Write(($managedCert | Select-Object @{{n='status';e={{'present'}}}},Thumbprint,Subject,@{{n='NotBeforeUnix';e={{([DateTimeOffset]$_.NotBefore.ToUniversalTime()).ToUnixTimeSeconds()}}}},@{{n='NotAfterUnix';e={{([DateTimeOffset]$_.NotAfter.ToUniversalTime()).ToUnixTimeSeconds()}}}} | ConvertTo-Json -Compress))
+    exit 0
+  }}
+  if ($null -eq $cert) {{
+    if (-not [string]::IsNullOrWhiteSpace($serverActivePemText)) {{
+      $managedCert = ConvertFrom-MyTunnelPemText -PemText $serverActivePemText
+      $managedCertThumbprint = $managedCert.Thumbprint
+      $managedCertDir = [System.IO.Path]::GetDirectoryName($managedCertPath)
+      if (-not [string]::IsNullOrWhiteSpace($managedCertDir)) {{
+        [System.IO.Directory]::CreateDirectory($managedCertDir) | Out-Null
+      }}
+      [System.IO.File]::WriteAllText($managedCertPath, $serverActivePemText, [System.Text.Encoding]::ASCII)
+      [Console]::Out.Write(($managedCert | Select-Object @{{n='status';e={{'present'}}}},Thumbprint,Subject,@{{n='NotBeforeUnix';e={{([DateTimeOffset]$_.NotBefore.ToUniversalTime()).ToUnixTimeSeconds()}}}},@{{n='NotAfterUnix';e={{([DateTimeOffset]$_.NotAfter.ToUniversalTime()).ToUnixTimeSeconds()}}}} | ConvertTo-Json -Compress))
+      exit 0
+    }}
+    [Console]::Out.Write('{{"status":"missing"}}')
+    exit 0
+  }}
+}}
+if ($null -eq $cert -and $null -ne $managedCertThumbprint) {{
+  $cert = Get-ChildItem Cert:\LocalMachine\My |
+    Where-Object {{ $_.Thumbprint -eq $managedCertThumbprint }} |
+    Sort-Object NotAfter -Descending |
+    Select-Object -First 1
 }}
 if ($null -eq $cert) {{
   $cert = Get-ChildItem Cert:\LocalMachine\My |
     Where-Object {{ $_.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -eq '{client_uid}' }} |
     Sort-Object NotAfter -Descending |
-    Select-Object -First 1 Thumbprint,Subject,NotBefore,NotAfter
+    Select-Object -First 1
 }}
 if ($null -eq $cert) {{
   [Console]::Out.Write('{{"status":"missing"}}')
   exit 0
 }}
+if ($managedCertThumbprint -ne $cert.Thumbprint) {{
+  $managedCertDir = [System.IO.Path]::GetDirectoryName($managedCertPath)
+  if (-not [string]::IsNullOrWhiteSpace($managedCertDir)) {{
+    [System.IO.Directory]::CreateDirectory($managedCertDir) | Out-Null
+  }}
+  $pemBody = [Convert]::ToBase64String($cert.RawData, [System.Base64FormattingOptions]::InsertLineBreaks)
+  $pemText = "-----BEGIN CERTIFICATE-----`r`n$($pemBody)`r`n-----END CERTIFICATE-----`r`n"
+  [System.IO.File]::WriteAllText($managedCertPath, $pemText, [System.Text.Encoding]::ASCII)
+}}
 [Console]::Out.Write(($cert | Select-Object @{{n='status';e={{'present'}}}},Thumbprint,Subject,@{{n='NotBeforeUnix';e={{([DateTimeOffset]$_.NotBefore.ToUniversalTime()).ToUnixTimeSeconds()}}}},@{{n='NotAfterUnix';e={{([DateTimeOffset]$_.NotAfter.ToUniversalTime()).ToUnixTimeSeconds()}}}} | ConvertTo-Json -Compress))
 "#,
+        server_url = escape_ps_single_quoted(server_url),
         managed_cert_path = escape_ps_single_quoted(&managed_cert_path.display().to_string()),
         client_uid = escape_ps_single_quoted(client_uid),
     )
@@ -2472,18 +2606,28 @@ mod tests {
     }
 
     #[test]
-    fn machine_store_probe_script_uses_managed_cert_and_simple_name_fallback() {
+    fn machine_store_probe_script_prefers_server_active_certificate() {
         let script = build_windows_machine_store_probe_script(
+            "https://example.invalid/scep",
             "client-001",
             Path::new(r"C:\ProgramData\MyTunnelApp\managed\client-001-device-001\cert.pem"),
         );
 
+        assert!(script.contains("$serverUrl = 'https://example.invalid/scep'"));
         assert!(script.contains("$managedCertPath = 'C:\\ProgramData\\MyTunnelApp\\managed\\client-001-device-001\\cert.pem'"));
-        assert!(script.contains("$_.Thumbprint -eq $managedCert.Thumbprint"));
-        assert!(script.contains("try {"));
-        assert!(script.contains("catch {"));
+        assert!(script.contains("Resolve-MyTunnelServerApiBaseUrl"));
+        assert!(script.contains("/api/cert/list/"));
+        assert!(script.contains("$serverActiveThumbprint = $null"));
+        assert!(script.contains("$serverActivePemText = $null"));
+        assert!(script.contains("$managedCertThumbprint = $null"));
+        assert!(script.contains("$_.Thumbprint -eq $serverActiveThumbprint"));
+        assert!(script.contains("$_.Thumbprint -eq $managedCertThumbprint"));
         assert!(script.contains("X509NameType]::SimpleName"));
         assert!(script.contains("-eq 'client-001'"));
+        assert!(script.contains("$cert.RawData"));
+        assert!(script.contains("WriteAllText($managedCertPath, $serverActivePemText"));
+        assert!(script.contains("status\":\"missing"));
+        assert!(script.contains("WriteAllText($managedCertPath"));
         assert!(script.contains("NotBeforeUnix"));
         assert!(script.contains("NotAfterUnix"));
         assert!(!script.contains("$_.Subject -eq 'CN=client-001'"));

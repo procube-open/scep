@@ -16,7 +16,9 @@ compares the pre/post managed thumbprints emitted by install-mytunnelapp.ps1.
 Required:
   --windows-user <USER>               Windows username for MSI transfer
   --client-uid <UID>                  Registered client UID
-  --enrollment-secret <SECRET>        One-time enrollment secret
+  --enrollment-secret <SECRET>        Optional one-time enrollment secret
+                                      (omit for same-key renewal on an already
+                                      configured machine)
   --expected-device-id <DEVICE_ID>    Registered TPM identity currently used on the VM
 
 Optional:
@@ -24,9 +26,10 @@ Optional:
   --poll-interval <DURATION>          Poll interval for installed service (default: 10s)
   --renew-before <DURATION>           Renew-before for validation (default: 9000h)
   --log-level <LEVEL>                 Service log level (default: debug)
-  --wait-seconds <SECONDS>            Wait budget per install run (default: 420)
+  --wait-seconds <SECONDS>            Wait budget per install run (default: 2100)
   --artifact-dir <DIR>                Directory for captured logs/summary
   --msi-builder <auto|wix|wixl>       Packaging backend for build_windows_msi.sh
+                                      (default: wix for release-path validation)
   --project <PROJECT_ID>              GCP project override
   --zone <ZONE>                       GCP zone override
   --instance <INSTANCE_NAME>          Windows VM override
@@ -51,10 +54,10 @@ INSTANCE=""
 POLL_INTERVAL="10s"
 RENEW_BEFORE="9000h"
 LOG_LEVEL="debug"
-WAIT_SECONDS=420
+WAIT_SECONDS=2100
 FORCE_FRESH_INSTALL=0
 ARTIFACT_DIR=""
-MSI_BUILDER="auto"
+MSI_BUILDER="wix"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -138,8 +141,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$WINDOWS_USER" || -z "$CLIENT_UID" || -z "$ENROLLMENT_SECRET" || -z "$EXPECTED_DEVICE_ID" ]]; then
-  echo "--windows-user, --client-uid, --enrollment-secret, and --expected-device-id are required." >&2
+if [[ -z "$WINDOWS_USER" || -z "$CLIENT_UID" || -z "$EXPECTED_DEVICE_ID" ]]; then
+  echo "--windows-user, --client-uid, and --expected-device-id are required." >&2
+  exit 1
+fi
+
+if [[ "$FORCE_FRESH_INSTALL" -eq 1 && -z "$ENROLLMENT_SECRET" ]]; then
+  echo "--enrollment-secret is required when --force-fresh-install is used." >&2
   exit 1
 fi
 
@@ -213,15 +221,16 @@ install_args=(
   --repo-root "$REPO_ROOT"
   --terraform-dir "$TERRAFORM_DIR"
   --client-uid "$CLIENT_UID"
-  --enrollment-secret "$ENROLLMENT_SECRET"
   --expected-device-id "$EXPECTED_DEVICE_ID"
   --poll-interval "$POLL_INTERVAL"
   --renew-before "$RENEW_BEFORE"
   --log-level "$LOG_LEVEL"
   --wait-seconds "$WAIT_SECONDS"
-  --converge-to-local-service
   --apply-registry-overrides
 )
+if [[ -n "$ENROLLMENT_SECRET" ]]; then
+  install_args+=(--enrollment-secret "$ENROLLMENT_SECRET")
+fi
 if [[ -n "$SERVER_URL" ]]; then
   install_args+=(--server-url "$SERVER_URL")
 fi
@@ -234,10 +243,9 @@ fi
 if [[ -n "$INSTANCE" ]]; then
   install_args+=(--instance "$INSTANCE")
 fi
+install_args+=(--require-thumbprint-change)
 if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then
   install_args+=(--force-fresh-install)
-else
-  install_args+=(--require-thumbprint-change)
 fi
 
 echo "Installing MSI and waiting for observation markers"
@@ -266,6 +274,9 @@ managed = summary.get("managed", {})
 service = summary.get("service", {})
 registry = summary.get("registry", {})
 logs = summary.get("logs", {})
+pre_install_server = summary.get("pre_install_server", {})
+server = summary.get("server", {})
+program_files = summary.get("program_files", {})
 before = summary.get("managed_thumbprint_before")
 after = summary.get("managed_thumbprint_after")
 force_fresh = bool(summary.get("fresh_install_requested"))
@@ -283,6 +294,39 @@ if not after:
     errors.append("post-install managed thumbprint was empty")
 if before and not force_fresh and before == after:
     errors.append("managed thumbprint did not change across the validation run")
+if server.get("fetch_error"):
+    errors.append(f"server state fetch failed: {server.get('fetch_error')}")
+if server.get("client_status") != "ISSUED":
+    errors.append(f"server client status was {server.get('client_status')!r}, expected 'ISSUED'")
+active_cert_count = server.get("active_cert_count")
+if active_cert_count != 1:
+    errors.append(f"server reported {active_cert_count!r} active certificates, expected 1")
+server_active_thumbprint = server.get("active_thumbprint")
+if not server_active_thumbprint:
+    errors.append("server active thumbprint was empty")
+elif after != server_active_thumbprint:
+    errors.append(
+        f"managed thumbprint {after!r} did not match server active thumbprint {server_active_thumbprint!r}"
+    )
+if program_files.get("service_matches_expected") is False:
+    errors.append(
+        f"installed service.exe hash {program_files.get('service_sha256')!r} did not match expected current build"
+    )
+if program_files.get("bundled_helper_matches_expected") is False:
+    errors.append(
+        f"installed scepclient.exe hash {program_files.get('bundled_helper_sha256')!r} did not match expected current build"
+    )
+if not force_fresh:
+    if pre_install_server.get("fetch_error"):
+        errors.append(f"pre-install server state fetch failed: {pre_install_server.get('fetch_error')}")
+    pre_server_active_thumbprint = (
+        summary.get("server_active_thumbprint_before")
+        or pre_install_server.get("active_thumbprint")
+    )
+    if not pre_server_active_thumbprint:
+        errors.append("pre-install server active thumbprint was empty")
+    elif pre_server_active_thumbprint == server_active_thumbprint:
+        errors.append("server active thumbprint did not change across the renewal validation run")
 
 if errors:
     print("windows_canonical_renewal_e2e: validation failed", file=sys.stderr)
@@ -301,9 +345,15 @@ result = {
     "result": "success_thumbprint_rotated" if before and before != after else "success_certificate_present",
     "before_thumbprint": before,
     "after_thumbprint": after,
+    "pre_install_server_active_thumbprint": summary.get("server_active_thumbprint_before"),
+    "server_active_thumbprint": server_active_thumbprint,
+    "service_binary_sha256": program_files.get("service_sha256"),
+    "bundled_helper_sha256": program_files.get("bundled_helper_sha256"),
+    "binary_refresh_fallback_used": summary.get("binary_refresh_fallback_used"),
     "service_state": service.get("state"),
     "managed_cert_path": managed.get("cert_path"),
     "present_in_machine_store": managed.get("present_in_machine_store"),
+    "managed_matches_server_active": summary.get("managed_matches_server_active"),
 }
 print(json.dumps(result, indent=2))
 PY

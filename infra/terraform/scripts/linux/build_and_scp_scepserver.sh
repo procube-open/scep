@@ -228,12 +228,12 @@ EOF
   echo "Waiting for Linux startup-script deployment to complete"
   for _ in $(seq 1 40); do
     serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null || true)"
-    if printf '%s\n' "$serial_output" | grep -q "COPILOT_SCEPSERVER_DEPLOY_DONE id=${transfer_id}"; then
-      printf '%s\n' "$serial_output" | grep "COPILOT_SCEPSERVER_DEPLOY_.*id=${transfer_id}"
+    if [[ "$serial_output" == *"COPILOT_SCEPSERVER_DEPLOY_DONE id=${transfer_id}"* ]]; then
+      grep "COPILOT_SCEPSERVER_DEPLOY_.*id=${transfer_id}" <<<"$serial_output" || true
       return 0
     fi
-    if printf '%s\n' "$serial_output" | grep -q "COPILOT_SCEPSERVER_DEPLOY_FAILED id=${transfer_id}"; then
-      printf '%s\n' "$serial_output" | grep "COPILOT_SCEPSERVER_DEPLOY_.*id=${transfer_id}" >&2
+    if [[ "$serial_output" == *"COPILOT_SCEPSERVER_DEPLOY_FAILED id=${transfer_id}"* ]]; then
+      grep "COPILOT_SCEPSERVER_DEPLOY_.*id=${transfer_id}" <<<"$serial_output" >&2 || true
       return 1
     fi
     sleep 15

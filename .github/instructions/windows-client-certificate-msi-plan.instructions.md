@@ -242,14 +242,14 @@ nonce 方針:
 
 ### 7. Windows Service Account
 
-第一候補は `LocalService`。TPM-backed key と機械スコープの秘密保存に必要な権限が不足する場合のみ `LocalSystem` を検討する。
+長期方針としての第一候補は `LocalService` だが、2026-04-02 時点の live GCP Windows / `vTPM` 検証では `LocalService` での初回 TPM-backed persisted-key bootstrap が `NCryptFinalizeKey` `0x80090010` (`NTE_PERM`) で失敗する。このため、current WiX v4-authored MSI の validated default は `LocalSystem` であり、`LocalService` は `install_windows_msi.sh --converge-to-local-service` を使った post-install convergence target として扱う。
 
 用語補足:
 
 - `LocalService`: 権限の弱い組み込みアカウント
 - `LocalSystem`: 権限の非常に強い組み込みアカウント
 
-初期段階から `LocalSystem` に寄せると検証は楽だが、運用リスクが増えるため避ける。
+`LocalSystem` は運用リスクが高いため常用の第一希望ではないが、current GCP bootstrap constraint が解消されるまでは WiX v4 の live validation 既定として維持する。
 
 ## Workstreams
 
@@ -495,24 +495,24 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ### Functional Cases
 
-- 正常系: 登録済み `device_id` + 正しい attestation で初回発行成功
-- 異常系: 未登録 `device_id`
-- 異常系: 改ざんされた attestation JSON
-- 異常系: attestation の公開鍵と CSR 公開鍵が不一致
-- 正常系: `ISSUED` state の Windows MSI client が、新しい admin secret なしで期限前に自動更新成功
-- 正常系: 証明書 expiry 後に管理者が新しい初回用 secret を発行し、`INACTIVE -> ISSUABLE -> ISSUED` で recovery できる
-- 正常系: TPM / vTPM replacement 後に管理者が `device_id` を更新し、再 enrollment できる
+- release blocker 正常系: GCP Windows VM 上の GUI MSI で `page 1 probe -> prereg-check -> ENROLLMENT_SECRET -> issuance` が成功する
+- release blocker 正常系: `ISSUED` state の Windows MSI client が、新しい admin secret なしで期限前に same-key 自動更新成功
+- release blocker 異常系: tampered activation proof renewal をサーバーが拒否し、managed thumbprint が変化しない
+- release blocker 異常系: prereg-check mismatch が fail-fast で install / bootstrap を止める
+- release blocker 正常系: internal-only topology で Windows client から server の internal endpoint に到達でき、外向き HTTPS egress も維持される
+- 後続 runbook 正常系: 証明書 expiry 後に管理者が新しい初回用 secret を発行し、`INACTIVE -> ISSUABLE -> ISSUED` で recovery できる
+- 後続 runbook 正常系: TPM / vTPM replacement 後に管理者が `device_id` を更新し、再 enrollment できる
 
 ### Installer Cases
 
-- GUI MSI の 1 ページ目が canonical `device_id` を表示できる
-- 別配布の `device-id-probe` が canonical `device_id` を human-readable / `--json` の両方で表示できる
-- GUI で必須項目だけ入力してインストール成功
-- GUI prereg-check が `Retry` を持ち、`not_issuable_yet` から ready まで進める
-- `msiexec` サイレントインストール成功
-- silent install が prereg-check 不一致で fail-fast に止まる
-- Upgrade install 成功
-- Uninstall 成功
+- release blocker: GUI MSI の 1 ページ目が canonical `device_id` を表示できる
+- release blocker: GUI prereg-check が `Retry` を持ち、`not_issuable_yet` から ready まで進める
+- release blocker: GUI で必須項目だけ入力してインストール成功
+- supported but non-blocking: 別配布の `device-id-probe` が canonical `device_id` を human-readable / `--json` の両方で表示できる
+- supported but non-blocking: `msiexec` サイレントインストール成功
+- release blocker for silent helper semantics: silent install が prereg-check 不一致で fail-fast に止まる
+- supported but non-blocking: Upgrade install 成功
+- supported but non-blocking: Uninstall 成功
 
 ### Operational Cases
 
@@ -621,9 +621,9 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ## Current Implementation Status
 
-最終更新日: 2026-03-30
+最終更新日: 2026-04-02
 
-この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。今回の更新では、2026-03-27 までの credential activation / renewal validation に加え、**VM を再作成した fresh `scep-client-vm` / `scep-server-vm` 上での再検証**を統合している。具体的には、Linux-host の `build_windows_msi.sh --msi-builder wix` による WiX v4 build verification、fresh Windows TPM identity の再採取、server-side preregistration、`install_windows_msi.sh` による fresh issuance までを取り直した。本更新時点では検証環境そのものは引き続き Terraform 管理下にあり、`scep-server-vm` と `scep-client-vm` は **RUNNING** のままである。
+この節は、直近の source code と GCP 検証環境の実測結果をまとめた引き継ぎ用スナップショットである。今回の更新では、2026-03-30 までの fresh reset validation に加え、Linux-host の `build_windows_msi.sh --msi-builder wix` 復旧、WiX v4-authored MSI による fresh issuance (`copilot-install-20260401T083450Z-7118`)、および tampered activation renewal negative rerun (`copilot-install-20260402T020037Z-12035`) を統合している。本更新時点では検証環境そのものは引き続き Terraform 管理下にあり、`scep-server-vm` と `scep-client-vm` は **RUNNING**、current IP は server=`10.42.0.5`、client=`10.42.0.6` であり、どちらも external IP を持たない internal-only topology で運用している。
 
 ### Overall Verdict
 
@@ -635,12 +635,19 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - Rust service は Windows attestation build phase で helper `-emit-attestation` を呼び出し、返却 payload の nonce / `device_id` / public key / quote fields を検証するところまで source に寄せた。actual TPM quote generation backend 自体は引き続き Go helper に依存するが、helper / Rust / server decode は credential activation 用に `aik_tpm_public_b64`, `ek_public_b64`, `ek_certificate_url`, `activation_id`, `activation_proof_b64` を扱えるよう更新済みである
 - server / helper / Rust の 3 者で credential activation round-trip を source に実装済みである。server は `/api/attestation/activation/start` で one-time challenge を払い出し、helper は Windows TPM 上で `ActivateCredential` を実行し、final attestation verifier は `activation_id` / `activation_proof_b64` を nonce consume 前に one-time verify する
 - live GCP では managed Windows client `msi-neg-20260325050312` を `preregister_client.sh --managed-client-type windows-msi` で登録し、Windows MSI install probes 後の external `GET /api/client/msi-neg-20260325050312` が `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返すことを確認した。既存 activation client `msi-activation-20260325014801` についても managed thumbprint=`539779D92B8EB0E463C0CC547E8819B7E6E0E212`, `service_state=Running` を継続確認した
-- live negative では `POST /api/attestation/activation/start` の endpoint-layer rejection (`403 nonce mismatch`, `400 ek_public_b64 is not a valid SubjectPublicKeyInfo`) に加え、clean rerun `copilot-install-20260325T053507Z-2543` が `activation_negative.renewal_exit_code=1`, `managed_thumbprint_before=managed_thumbprint_after=24E1087234C045FBEB6DC3E2A65646908AD9024A`, `service_state=Running` を返した。live `scep-server-vm` journal でも `2026-03-25T05:35:49Z` に `invalid attestation: invalid_activation_proof` を確認し、tampered `activation_proof_b64` renewal の negative semantics を committed helper path で回収できた
+- 2026-04-01 の WiX v4 positive validation run `copilot-install-20260401T083450Z-7118` では、Linux-host `build_windows_msi.sh --msi-builder wix` で生成した current MSI を current helper flow で転送し、fresh client `wc_20260401T082921Z_009340a2103e` が `service.start_name=LocalSystem`, `managed_thumbprint=102D4FFFB0B660C2FAD3EFB21CBE09A5B36BFF8B`, `present_in_machine_store=true` で `ISSUED` になった
+- 2026-04-02 の secretless same-key renewal rerun `copilot-install-20260402T084540Z-30130` は、当初は same-version reinstall と helper-side managed cert sync により thumbprint `931A82AA17DFD462E80F56A7B5646B18D4CBDF93 -> 03EF969DD79E377E59EB34DDC447BAC0C2814B76`, `present_in_machine_store=true`, `service_state=Running` を返したため成功に見えたが、後続の server-side truth probe で false positive と判明した。server の active cert は `4E8AFDAFA7829D4886702D1548A9B19CAA5BEE5F` のままで、local の `03EF969DD79E377E59EB34DDC447BAC0C2814B76` は server 上では revoked だったため、current helper / harness / Rust probe は server-active cert を authority とし、`after_thumbprint == server.active_thumbprint` を renewal success 条件にした
+- 2026-04-06 の stale-binary rerun `copilot-install-20260406T044911Z-16810` では、same-version reinstall 後の `Program Files\\MyTunnelApp\\service.exe` hash mismatch を helper が検出し、`phase=binary-refresh-fallback reason=same-version reinstall left stale Program Files binaries: service.exe` を出して force-fresh path へ切り替えることを live GCP で確認した。ここで blank secret + uninstall 後の MSI launch condition が `1603` を返したため、validation helper 側へ existing-cert reuse recovery を追加した
+- 2026-04-06 の recovery run `copilot-install-20260406T052948Z-24195` では、new helper path `install_windows_msi.sh --force-fresh-install --reuse-existing-certificate` により managed / server thumbprint を `03EF969DD79E377E59EB34DDC447BAC0C2814B76 -> 6AD16FAC53787DFECEDF712DFD3887D1AB725E72` へ回転させ、`program_files_match_expected=true`, `service_sha256=f76f99ff79ece806a4128ee4a4d4ec4d6dd765f8543218a1581a1b029ed3dfb7`, `bundled_helper_matches_expected=true`, `managed_matches_server_active=true` を確認した
+- 続く same-version renewal rerun `copilot-install-20260406T054903Z-30507` では blank secret / `reinstall_requested=true` のまま managed / server thumbprint を `DE4A40AC4C236316FE0D08899CD1F62441D56176 -> 36D1A895AC0C3F69FD300E5A0C45EC76CA66D8BA` へ回転させ、`fresh_install_requested=false`, `program_files_match_expected=true`, `managed_matches_server_active=true`, `server_active_thumbprint_changed=true` を current-run summary で再確認した
+- current GCP Windows / `vTPM` image では `LocalService` での初回 TPM-backed persisted-key bootstrap が `NCryptFinalizeKey` `0x80090010` (`NTE_PERM`) で失敗するため、current `installer/main.wxs` の validated path は `LocalSystem` bootstrap を既定にしている
+- 2026-04-01 / 2026-04-02 の initial negative reruns (`copilot-install-20260401T092402Z-15496`, `copilot-install-20260402T010623Z-2411`) では server journal が `invalid attestation: invalid_activation_proof` を返していた一方、Windows helper は `scepclient.exe` の stdout に出た `RenewalReq (17) request failed, failInfo: badRequest (2)` を見落とし、`renewal_exit_code=0` を success 扱いしていた
+- `infra/terraform/scripts/windows/install-mytunnelapp.ps1` の negative classifier と marker summary export を修正した結果、2026-04-02 の clean rerun `copilot-install-20260402T020037Z-12035` では `activation_negative.renewal_exit_code=0`, `renewal_rejected=true`, `managed_thumbprint_before=managed_thumbprint_after=35BC281F065042D8CABE40750555370AF332E6EC`, `service_state=Running` を current-run summary で確認し、live `scep-server-vm` journal でも `invalid attestation: invalid_activation_proof` を再確認した
 - 2026-03-30 の fresh reset validation では、`scep-server-vm` / `scep-client-vm` を再作成し、server 側 IP が `10.42.0.5` / `34.134.179.59`、client 側 IP が `10.42.0.6` / `136.119.232.42` で再起動した状態から再検証した
-- 同日の Linux-host WiX v4 verification では、`DOTNET_ROOT=/home/vscode/.dotnet` と `/home/vscode/.dotnet/tools` を通したうえで `build_windows_msi.sh --msi-builder wix` の実 path まで到達したが、`installer/main.wxs` に対して `WIX0005`（`Package` に unexpected child `Condition`）と `WIX0400`（`Custom` / `Publish` の illegal inner text）を返して exit し、MSI artifact は生成されなかった
+- Linux-host WiX v4 verification は current devcontainer で復旧済みであり、`build_windows_msi.sh --msi-builder wix` は `build/windows-msi/installer/dist/MyTunnelApp.msi` を生成し、live GCP positive / negative validation の両方でその artifact を current helper flow に載せられている
 - fresh Windows VM 側の TPM diagnostic では、boot 直後の `Get-Tpm` が `LockedOut=True`, `LockoutCount=3/3`, `LockoutHealTime=16 minutes 40 seconds` を返し、GCE guest agent の MDS bootstrap でも `TPM is in DA lockout mode` warning が出ることを再確認した。一方で `device-id-probe.exe` 自体は captured-process path で canonical TPM identity を返し、live `device_id=89907dc0857e0eac03068a96a01f2b8dd0ece7d048d550bd1d774999576f5471` を採取できた
 - `preregister_client_via_startup.sh --managed-client-type windows-msi` を使った server-local preregistration run `copilot-preregister-20260330T071358Z-6486` では、fresh client `wc_20260330T071358Z_3150aa764ea5` を canonical `device_id` とともに登録し、initial enrollment secret 発行まで成功した
-- 続く fresh install run `copilot-install-20260330T071516Z-16875` では `install_windows_msi.sh --server-url http://10.42.0.5:3000/scep --converge-to-local-service --apply-registry-overrides --wait-seconds 1800` が成功し、`prereg-check=result=ready`、`service.state=Running`、`service.start_name=NT AUTHORITY\\LocalService`、`managed_thumbprint=84853AC8126A77CF7BE28E29D0F5ABC786E38718`、`present_in_machine_store=true`、`has_enrollment_secret=false`、`has_enrollment_secret_protected=true` を current-run summary で確認した
+- 続く fresh install run `copilot-install-20260330T071516Z-16875` では `install_windows_msi.sh --server-url http://10.42.0.5:3000/scep --converge-to-local-service --apply-registry-overrides --wait-seconds 1800` が成功し、`prereg-check=result=ready`、`service.state=Running`、`service.start_name=NT AUTHORITY\\LocalService`、`managed_thumbprint=84853AC8126A77CF7BE28E29D0F5ABC786E38718`、`present_in_machine_store=true`、`has_enrollment_secret=false` を current-run summary で確認した
 
 ### Implemented In Source
 
@@ -676,7 +683,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 #### Rust Windows Service
 
 - 設定モデルを `server_url`, `client_uid`, `enrollment_secret`, `device_id`, `poll_interval`, `renew_before`, `log_level` に整理済み
-- レジストリ値から `EnrollmentSecretProtected` を読み、DPAPI Machine Scope へ移行する処理を実装済み
+- レジストリ値から `EnrollmentSecretProtected` を読み、必要に応じて DPAPI Machine Scope へ移行しつつ、successful initial issuance 後は `EnrollmentSecret` / `EnrollmentSecretProtected` の両方を削除する処理を実装済み
 - サービス状態機械を実装済み
 - server nonce API を使う initial / renewal 用 nonce fetch を実装済み
 - Windows CNG / NCrypt を使う persisted key path を source に実装済み
@@ -704,18 +711,18 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 - Terraform provider は ADC 限定へ移行済み
 - Linux 側の MSI build / copy 手順を README に追記済み
-- `installer/main.wxs` には GUI / silent install 方針と `LocalService` 前提を反映済み
+- `installer/main.wxs` には GUI / silent install 方針と、current GCP Windows / `vTPM` validation で成立した `LocalSystem` bootstrap path を反映済みである
 - `installer/main.wixl.wxs` は `scepclient.exe` を含む silent-install 向け source として更新済み
 - `build_windows_msi.sh` の既定 stage dir は `build/windows-msi` へ移行済みで、generated installer 入力を source tree の installer 定義と分離済みである。さらに `--msi-builder auto|wix|wixl` を追加し、`wix` が存在する環境では `installer/main.wxs` + `WixToolset.UI.wixext` を優先し、無い環境では `installer/main.wixl.wxs` へ fallback するよう更新済み
 - `installer/main.wxs` は `scepclient.exe` を同梱し、GUI MSI でも service helper を欠かさない状態へ修正済み
 - `wixl` の表現力制約で registry ACL 付与を silent MSI に同等実装できないため、`installer/main.wixl.wxs` の service account は authored state では引き続き `LocalSystem` を採用している。2026-03-25 の local probe でも `RegistryKey/Permission` と `Component/RemoveRegistryKey` が `unhandled child` として reject され、silent MSI の uninstall cleanup semantics も GUI MSI とまだ揃えられないことを再確認した
-- `infra/terraform/scripts/windows/install-mytunnelapp.ps1` は compact summary marker、thumbprint-change wait、post-install registry override、service restart wait、same-version reinstall 後の stale config を検出して fresh-install へ retry する reconfiguration fallback に加え、`--converge-to-local-service` で `C:\\ProgramData\\MyTunnelApp` への filesystem ACL 付与、`HKLM:\\SOFTWARE\\MyTunnelApp` への registry ACL 付与、`MyTunnelService` の `NT AUTHORITY\\LocalService` への runtime reconfiguration を行えるよう更新済み
+- `infra/terraform/scripts/windows/install-mytunnelapp.ps1` は compact summary marker、thumbprint-change wait、post-install registry override、service restart wait、same-version reinstall 後の stale config を検出して fresh-install へ retry する reconfiguration fallback に加え、Program Files 上の `service.exe` / `scepclient.exe` hash を expected current build と比較し、stale binary が残る場合は force-fresh path へ切り替える validation helper fallback を持つ。existing managed certificate を再利用する recovery 用に minimal registry を seed する `Seed-MyTunnelExistingConfigRegistry` も追加済みであり、`install_windows_msi.sh --reuse-existing-certificate` から blank secret recovery を呼べる。さらに `--converge-to-local-service` で `C:\\ProgramData\\MyTunnelApp` への filesystem ACL 付与、`HKLM:\\SOFTWARE\\MyTunnelApp` への registry ACL 付与、`MyTunnelService` の `NT AUTHORITY\\LocalService` への runtime reconfiguration を行えるよう更新済みである。2026-04-02 時点では tampered renewal 用に combined stdout/stderr classifier、diagnostic progress marker、hashtable-carried `activation_negative` を保持する marker summary export も追加済みである
 - `infra/terraform/scripts/linux/install_windows_msi.sh` は serial wait grace、`--require-thumbprint-change`、`--apply-registry-overrides`、`--converge-to-local-service` を備え、`--server-url` 省略時は Terraform 出力の `server_internal_ip` を優先し、reconfiguration 用には stale-config detection 後の auto fresh-install fallback を利用できる
-- `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` と `windows_activation_negative_renewal_e2e.sh` は `--msi-builder auto|wix|wixl` を `build_windows_msi.sh` へ forward でき、さらに `install_windows_msi.sh --converge-to-local-service` を通すため、将来の WiX v4 path 検証と current `wixl` fallback の LocalService runtime validation を wrapper script の編集なしで行える
+- `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` と `windows_activation_negative_renewal_e2e.sh` は `--msi-builder auto|wix|wixl` を `build_windows_msi.sh` へ forward でき、current WiX v4-authored bootstrap を raw に検証できる。`LocalService` runtime validation は必要に応じて lower-level `install_windows_msi.sh --converge-to-local-service` で別途実施する
 - `installer/main.wxs` / `installer/main.wixl.wxs` では registry-searched existing values と public input properties を分離し、default / existing / explicit input の precedence を custom action で表現する slice を追加した
 - `infra/terraform/scripts/linux/preregister_client_via_startup.sh` は 2026-03-30 時点で `--managed-client-type windows-msi` を受け付け、external admin API が安定していない環境でも server VM localhost 経由で Windows managed client の preregistration を作成できる
 - `infra/terraform/scripts/linux/probe_windows_device_id.sh` は 2026-03-30 時点で PowerShell の raw `& device-id-probe.exe -json` ではなく `Start-Process` で stdout / stderr を capture するよう更新済みであり、`install-mytunnelapp.ps1` の live-success path と probe helper の起動方法を揃えた
-- Linux-host `build_windows_msi.sh --msi-builder wix` はもはや missing tooling ではなく `installer/main.wxs` の WiX v4 authoring errors (`WIX0005`, `WIX0400`) で止まることが確認済みであり、current blocker は tool installation ではなく MSI authoring 側に移っている
+- Linux-host `build_windows_msi.sh --msi-builder wix` は current devcontainer で再び通る状態に戻っており、`installer/main.wxs` の prior WiX v4 authoring errors (`WIX0005`, `WIX0400`) は解消済みである。current focus は authoring bring-up ではなく、validated bootstrap account と runbook の整合を詰めることに移っている
 
 注意:
 
@@ -729,13 +736,13 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - local `infra/terraform` には当初 `terraform.tfstate` が存在しなかったため、network / subnet / firewall / VM を import して state を再構築し、`terraform apply -refresh-only` で output を復元した
 - Terraform は `scep-server-vm` と `scep-client-vm` を作成する構成である
 - Windows VM は `enable_vtpm = true`, `enable_secure_boot = true`, `enable_integrity_monitoring = true`
-- live GCP 側では両 VM が一度 `TERMINATED` になっていたため、起動後に `RUNNING` を確認し、作業終了時に再び `TERMINATED` へ戻した
+- live GCP 側では reset 後の restore / validation を経て、2026-04-02 時点では `scep-server-vm` と `scep-client-vm` がともに `RUNNING` のままである。current IP は server=`10.42.0.5`、client=`10.42.0.6` であり、両 VM とも external IP なしで Cloud NAT 配下にある
 - imported firewall rules は古い operator IP を向いていたため、current source IP に合わせて Terraform の targeted apply で `scep` / `ssh` / `rdp` rule を同期した
-- 現時点では検証環境は破棄しておらず、そのまま追加検証を継続できる。ただし次回は `scep-server-vm` / `scep-client-vm` を起動してから検証に入ること
+- 現時点では検証環境は破棄しておらず、そのまま追加検証を継続できる
 
 #### Server VM Runtime
 
-- `http://<server_external_ip>:3000/admin/api/ping` は `pong` を返す
+- `http://<server_internal_ip>:3000/admin/api/ping` は internal-only 構成で `pong` を返す
 - `GetCACaps` は `Renewal`, `SHA-1`, `SHA-256`, `AES`, `DES3`, `SCEPStandard`, `POSTPKIOperation` を返す
 - `POST /api/attestation/nonce` は live 環境で動作している。unknown client に対しては `404 client not found`、preregister 済み client に対しては nonce 払い出しまで確認した
 - SSH / `systemctl` / `ss` で `mariadb.service` active、`scep-server.service` active、`scepserver-opt` が `*:3000` listen を確認した
@@ -770,15 +777,20 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - `copilot-ek-probe-20260325T011838Z-7222` では updated helper を単体実行し、`format=tpm2-windows-v1`, `has_aik=true`, `has_quote=true`, `has_quote_signature=true`, `ek_certificate.present=false` を確認した。current GCP Windows vTPM path では `ek_cert_b64` は取得できない
 - `copilot-activation-probe-20260325T012444Z-1288` では同 helper の credential-activation precursor fields を確認し、`has_aik_tpm_public=true`, `has_ek_public=true`, `has_ek_cert=false`, `ek_certificate_url=null` を取得した。GCP Windows vTPM では `EK certificate` は absent だが、activation に必要な `AIK TPM public` / `EK public` は取得できる
 - activation-managed install validation では `CLIENT_UID=msi-neg-20260325050312`, `DEVICE_ID_OVERRIDE=device-neg-20260325050312`, internal `SERVER_URL=http://10.42.0.4:3000/scep` を使い、external `GET /api/client/msi-neg-20260325050312` が `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返すことを確認した
-- clean negative rerun `copilot-install-20260325T053507Z-2543` では new client `msi-neg-20260325-runner-a` に対して `activation_negative.renewal_exit_code=1`, `managed_thumbprint_before=managed_thumbprint_after=24E1087234C045FBEB6DC3E2A65646908AD9024A`, `present_in_machine_store=true`, `service_state=Running` を current-run summary から確認した
-- 既存 credential activation client `msi-activation-20260325014801` については managed thumbprint=`539779D92B8EB0E463C0CC547E8819B7E6E0E212`, `service_state=Running`, `has_enrollment_secret=false`, `has_enrollment_secret_protected=true` を継続確認した
+- clean negative rerun `copilot-install-20260402T020037Z-12035` では new client `wcneg_20260402T015627Z_f4c83785f8cf` に対して `activation_negative.renewal_exit_code=0`, `renewal_rejected=true`, `managed_thumbprint_before=managed_thumbprint_after=35BC281F065042D8CABE40750555370AF332E6EC`, `present_in_machine_store=true`, `service_state=Running` を current-run summary から確認した
+- 既存 credential activation client `msi-activation-20260325014801` については managed thumbprint=`539779D92B8EB0E463C0CC547E8819B7E6E0E212`, `service_state=Running`, `has_enrollment_secret=false` を継続確認した
 - external `POST /api/attestation/activation/start` に対する live negative check では、bogus nonce が `403 nonce mismatch`、valid nonce に対する invalid `ek_public_b64` が `400 ek_public_b64 is not a valid SubjectPublicKeyInfo` を返した
 - `install_windows_msi.sh` の lower-level validation では external IP default が nonce fetch failure を起こすことを再確認したため、helper の既定 `SERVER_URL` を `server_internal_ip` 優先へ変更した
-- fresh LocalService convergence run `copilot-install-20260325T070546Z-17570` では new client `msi-localsvc-ok-20260325070516` を `service.start_name=NT AUTHORITY\\LocalService`, `present_in_machine_store=true`, `managed_thumbprint=29FF8482FBAEC855CAAC49B67F2ECF632295FC0E`, `has_enrollment_secret=false`, `has_enrollment_secret_protected=true` で収束させ、external `GET /api/client/msi-localsvc-ok-20260325070516` が `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返すことを確認した
+- fresh LocalService convergence run `copilot-install-20260325T070546Z-17570` では new client `msi-localsvc-ok-20260325070516` を `service.start_name=NT AUTHORITY\\LocalService`, `present_in_machine_store=true`, `managed_thumbprint=29FF8482FBAEC855CAAC49B67F2ECF632295FC0E`, `has_enrollment_secret=false` で収束させ、external `GET /api/client/msi-localsvc-ok-20260325070516` が `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返すことを確認した
 - same-version reinstall LocalService renewal run `copilot-install-20260325T070729Z-4061` では同 client を `NT AUTHORITY\\LocalService` のまま `29FF8482FBAEC855CAAC49B67F2ECF632295FC0E` から `CA46C3C29159BB0F8E9C6127705449814B819B3D` へ回転させ、`managed_thumbprint_changed=true`, `present_in_machine_store=true`, `reinstall_requested=true` を確認した
 - probe / validation output に含まれる `badRequest (2)` は pre-rollout attempts 由来の historical service log tail であり、current validation id が prefix されるだけなので current-run failure とみなさない
 - current reboot-time grep では `Microsoft Platform Crypto Provider` 文字列も managed-file fallback 文字列も latest log からは再検出できなかった
 - probe 中に GCE CorePlugin の MDS bootstrap が `TPM is in DA lockout mode` warning を出した
+- 2026-04-01 の WiX v4 positive run `copilot-install-20260401T083450Z-7118` では fresh client `wc_20260401T082921Z_009340a2103e` が `service.start_name=LocalSystem`, `managed_thumbprint=102D4FFFB0B660C2FAD3EFB21CBE09A5B36BFF8B`, `present_in_machine_store=true` で `ISSUED` になり、Linux-host WiX v4 build output をそのまま live issuance に流せることを確認した
+- 同 WiX v4 positive run `copilot-install-20260401T083450Z-7118` の summary では `has_enrollment_secret=false`, `has_enrollment_secret_protected=false` も確認しており、bootstrap secret は successful initial issuance 後に Windows 側へ残らない
+- 2026-04-01 / 2026-04-02 の intermediate negative reruns (`copilot-install-20260401T092402Z-15496`, `copilot-install-20260402T010623Z-2411`) では server journal が `invalid attestation: invalid_activation_proof` を返していた一方、helper 側は `renewal_exit_code=0` と stderr の info log を優先して `tampered activation renewal unexpectedly succeeded` へ落ちた。これは verifier regression ではなく、stdout/stderr classification と marker summary export の bug だった
+- clean negative rerun `copilot-install-20260402T020037Z-12035` では new client `wcneg_20260402T015627Z_f4c83785f8cf` に対し `activation_negative.renewal_exit_code=0`, `renewal_rejected=true`, `managed_thumbprint_before=managed_thumbprint_after=35BC281F065042D8CABE40750555370AF332E6EC`, `present_in_machine_store=true`, `service_state=Running` を current-run summary から取得した
+- same rerun の live server journal では `2026-04-02T02:18:31Z` に `invalid attestation: invalid_activation_proof` を確認した。current negative harness は `renewal_exit_code` ではなく `renewal_rejected` と `renewal_failure_excerpt` を authoritative に扱う
 
 判断:
 
@@ -786,10 +798,11 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - active client の `key.pem` 不在は引き続き TPM / CNG persisted-key path と整合的である
 - committed validation harness で post-renewal の managed / Machine Store thumbprint を current-run marker 付きで採取できる positive path は維持されている
 - `managed_client_type=windows-msi` client の fresh install issuance が live GCP で `ISSUED` まで到達したため、managed-client model + credential activation 自体は server / helper / Rust / MSI wiring を含めて end-to-end で成立している
-- tampered `activation_proof_b64` renewal の committed helper path (`install_windows_msi.sh --tamper-activation-proof-renewal`) は live GCP で clean summary 付きに成功した。repeated reset に伴う TPM DA lockout warning は運用上の注意点として残るが、Phase 2 negative semantics 自体は live で確認済みである
+- tampered `activation_proof_b64` renewal の committed helper path (`install_windows_msi.sh --tamper-activation-proof-renewal`) は live GCP で clean summary 付きに成功した。`scepclient.exe` 自体は failInfo を stdout に出しつつ `exit_code=0` を返しうるため、current helper / wrapper では `renewal_rejected` を authoritative field として扱う
 - `wixl` fallback MSI は authored state ではなお `LocalSystem` だが、runtime convergence helper (`install_windows_msi.sh --converge-to-local-service`) を通した live GCP validation では fresh install issuance と same-key renewal の両方が `NT AUTHORITY\\LocalService` で成立した
 - current GCP Windows vTPM path では `EK certificate` chain validation は成立しない。`EK certificate` は取得できない一方、`AIK TPM public` と `EK public` は取得できるため、trust hardening は credential activation path へ pivot するのが妥当である
 - repeated reboot / probe による TPM DA lockout warning があるため、Windows 側の追加実験では reset を短時間に繰り返しすぎないこと
+- current WiX v4-authored positive path は `LocalSystem` bootstrap で live GCP まで通っており、2026-03-30 時点の authoring blocker は解消済みである
 
 #### Reset revalidation on 2026-03-30
 
@@ -797,13 +810,13 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - fresh server VM では `preregister_client_via_startup.sh` を使って `managed_client_type=windows-msi` つきの preregistration を localhost 経由で作成し、external admin API へ依存せずに `INACTIVE -> ISSUABLE` を成立させた
 - fresh client VM では boot 直後の TPM DA lockout を serial 上で再現確認したが、captured-process path では `device-id-probe.exe` が canonical TPM identity を返せることを確認した
 - fresh issuance は `install_windows_msi.sh` の helper path で成功し、registry・service・managed cert・`LocalMachine\\My`・DPAPI-protected secret cleanup を current-run summary で取り切れた
-- 2026-03-30 の positive path は **WiX-built MSI ではなく、当該時点で Windows VM に転送済みだった current MSI artifact** を使っている。したがって、fresh prereg / issuance 自体は確認できたが、**Linux-host WiX v4 build output と issuance path の結合検証**はまだ残っている
+- 2026-03-30 の positive path は **WiX-built MSI ではなく、当該時点で Windows VM に転送済みだった current MSI artifact** を使っている。したがって、この時点では fresh prereg / issuance 自体は確認できたが、**Linux-host WiX v4 build output と issuance path の結合検証**はまだ残っていた（この gap は 2026-04-01 の WiX v4 positive validation で後続解消）
 
 判断:
 
 - 2026-03-30 時点で、helper-backed preregistration + fresh issuance の正常系は、**VM を作り直した clean 環境でも**成立している
 - current Windows TPM identity / prereg-check / LocalService convergence / Machine Store install の一連の wiring は live GCP で再確認できた
-- Linux-host WiX v4 path の blocker は、もはや `dotnet` / `wix` 未導入ではなく、`installer/main.wxs` の current authoring が WiX v4 schema / UI authoring ルールに適合していない点である
+- 2026-03-30 時点では Linux-host WiX v4 path に authoring blocker が残っていたが、この blocker は後続の `installer/main.wxs` 修正と 2026-04-01 / 2026-04-02 の live validation で解消済みである
 - probe helper の previous stall は TPM identity そのものの欠落ではなく、PowerShell からの process 起動方法の差異に強く結び付いていた。captured-process path は live TPM identity probe と install helper の双方で成立している
 
 ### Remaining Gaps Against This Plan
@@ -811,7 +824,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 #### Phase 1 Gaps
 
 - Windows startup script が placeholder のままで、Terraform だけで MSI / service 実装が再現される状態ではない
-- Linux-host の workspace にはすでに `dotnet` / `wix` / `WixToolset.UI.wixext` を入れてあるが、`build_windows_msi.sh --msi-builder wix` は `installer/main.wxs` の `WIX0005` / `WIX0400` で失敗する。したがって現時点の live issuance validation path はなお `wixl` / transferred MSI artifact ベースであり、**Linux-host WiX v4 build output をそのまま VM issuance に使う検証**は未完了である
+- Linux-host の `build_windows_msi.sh --msi-builder wix` は current devcontainer で成功しており、live GCP positive / negative validation でもその build output を current helper flow に載せられている。Phase 1 側の残課題は、same-key renewal を exact current `LocalSystem`-authored WiX path で取り直すかどうかと、service-account policy を明文化することに寄った
 - `wixl` fallback は raw MSI authoring 上はなお `LocalSystem` + uninstall cleanup gap を残すが、supported helper path (`install_windows_msi.sh --converge-to-local-service`) では live GCP で `LocalService` runtime へ収束できる
 
 #### Phase 2 Gaps
@@ -819,7 +832,7 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - Rust service は attestation assembly の entry point を service 側へ寄せ済みで、Windows TPM quote generation backend は当面 Go helper 実装を正式構成として扱う方針に合意した。Rust-native backend への移行判断は後続フェーズへ送る
 - committed GCP validation artifact は `infra/terraform/scripts/test/windows_canonical_renewal_e2e.sh` として追加済みであり、reconfiguration 用の lower-level helper には stale-config detection + auto fresh-install fallback を追加済みである。raw same-version `msiexec` semantics 自体はなお旧 registry 値に負けるが、supported helper path では requested config を最終的に反映できる
 - managed-client model (`managed_client_type=windows-msi`, `device_id` 必須, deprecated `attestation_activation_required` reject) と preregistration / frontend create-list / client info edit surfaces は source に反映済みである。frontend の admin mode では InfoPage から `managed_client_type`, `device_id`, 追加属性を更新できる
-- `windows_activation_negative_renewal_e2e.sh` と lower-level `--tamper-activation-proof-renewal` wiring は source に追加済みで、live helper rerun `copilot-install-20260325T053507Z-2543` まで current-run summary 付きで成功した。remaining concern は runbook の存在ではなく、GCP guest agent の TPM DA lockout warning を避けるため rerun 間隔に注意が必要な点である
+- `windows_activation_negative_renewal_e2e.sh` と lower-level `--tamper-activation-proof-renewal` wiring は、2026-04-02 の clean rerun `copilot-install-20260402T020037Z-12035` まで current-run summary 付きで成功した。remaining concern は verifier semantics ではなく、`scepclient.exe` が failInfo を stdout に出しつつ `exit_code=0` を返しうる点と、GCP guest agent の TPM DA lockout warning を避けるため rerun 間隔に注意が必要な点である
 - fresh reboot 直後の Windows VM では `Get-Tpm.LockedOut=True`, `LockoutCount=3/3`, `LockoutHealTime=16 minutes 40 seconds` を live で観測したため、TPM-facing helper の retry / wait budget と runbook をこの現実に合わせて整理しきる余地がまだある
 
 #### Phase 3 Gaps
@@ -831,29 +844,28 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 次セッションは以下の順で進めること。
 
-1. **`installer/main.wxs` を current WiX v4 schema に合わせて直す**  
-   - `Package` 配下の `Condition`
-   - `InstallUISequence` / `InstallExecuteSequence` の `Custom` 条件記法
-   - dialog 内 `Publish` の条件 / 値の authoring  
-   まずは 2026-03-30 に実際に出た `WIX0005` / `WIX0400` を潰し、`build_windows_msi.sh --msi-builder wix` が Linux-host で MSI artifact を出せる状態にする。
-2. **WiX v4 で Linux-host build した MSI をそのまま fresh VM issuance に流し、build path と issuance path を結合検証する**  
-   2026-03-30 の fresh issuance 自体は成功したが、使ったのは transferred MSI artifact であり、Linux-host WiX v4 build output ではない。
-3. **Windows startup script placeholder 依存を縮める**  
-   Terraform だけで GUI / silent install の bootstrap を再現できる状態に近づけ、手動の startup-script 差し替えや metadata-driven helper への依存を減らす。
-4. **fresh VM の TPM DA lockout 観測を helper / runbook に落とし切る**  
-   reboot-heavy probe の cadence、wait budget、captured-process path 優先、`LockoutHealTime` 観測時の扱いを文書化する。
-5. 既存 Windows 管理対象 client の migration runbook と certificate cleanup / retention policy を docs に落とし切る
+1. **GCP Windows VM 上の実 GUI issuance evidence を取る**  
+   release blocker の primary issuance evidence は `page 1 probe -> prereg-check -> ENROLLMENT_SECRET -> install` を GCP `scep-client-vm` 上で実 GUI 操作した結果に固定する。
+2. **Windows startup script placeholder 依存を runbook 上で縮める**  
+   Terraform の Windows startup script は準備用に限定し、正式 install path が MSI / helper / GUI であることを docs / helper に落とし切る。
+3. **TPM DA lockout 観測と `scepclient` exit-code nuance を helper / runbook に落とし切る**  
+   reboot-heavy probe の cadence、wait budget、captured-process path 優先、`LockoutHealTime` 観測時の扱いに加え、tampered renewal の negative semantics は `renewal_exit_code` ではなく `renewal_rejected` / `renewal_failure_excerpt` を見るべきことを文書化する。
+4. 既存 Windows 管理対象 client の migration runbook と certificate cleanup / retention policy を docs に落とし切る
 
 ### Session Handoff Notes
 
-- 2026-03-30 の latest rerun では `scep-server-vm` / `scep-client-vm` を再作成し、現時点では **どちらも RUNNING**。current IP は server=`10.42.0.5` / `34.134.179.59`, client=`10.42.0.6` / `136.119.232.42` である
-- latest positive path は server-local preregistration run `copilot-preregister-20260330T071358Z-6486` と fresh install run `copilot-install-20260330T071516Z-16875` であり、managed thumbprint は `84853AC8126A77CF7BE28E29D0F5ABC786E38718`、service account は `NT AUTHORITY\\LocalService` である。enrollment secret 自体は本メモには残さない
-- latest Linux-host WiX verification では `build_windows_msi.sh --msi-builder wix` が `installer/main.wxs` の `WIX0005` / `WIX0400` で失敗しており、tool installation ではなく authoring fix が次の blocker である
+- 2026-04-02 時点で `scep-server-vm` / `scep-client-vm` は **どちらも RUNNING**。current IP は server=`10.42.0.5`, client=`10.42.0.6` であり、どちらも external IP なしで internal-only topology に収束済みである
+- latest positive WiX v4 path は fresh client `wc_20260401T082921Z_009340a2103e` と install run `copilot-install-20260401T083450Z-7118` であり、managed thumbprint は `102D4FFFB0B660C2FAD3EFB21CBE09A5B36BFF8B`、service account は `LocalSystem`、`present_in_machine_store=true` である。enrollment secret 自体は本メモには残さない
+- latest negative WiX v4 path は fresh client `wcneg_20260402T015627Z_f4c83785f8cf` と install run `copilot-install-20260402T020037Z-12035` であり、`activation_negative.renewal_exit_code=0`, `renewal_rejected=true`, `managed_thumbprint_before=managed_thumbprint_after=35BC281F065042D8CABE40750555370AF332E6EC`, `service_state=Running` を current-run summary から確認した。live server journal でも `invalid attestation: invalid_activation_proof` を確認した
+- latest recovery run は `copilot-install-20260406T052948Z-24195` であり、`install_windows_msi.sh --force-fresh-install --reuse-existing-certificate` を用いて managed / server thumbprint を `03EF969DD79E377E59EB34DDC447BAC0C2814B76 -> 6AD16FAC53787DFECEDF712DFD3887D1AB725E72` へ回転させつつ、`program_files_match_expected=true`, `managed_matches_server_active=true`, `service.start_name=LocalSystem` を確認した
+- latest same-version renewal evidence は `copilot-install-20260406T054903Z-30507` であり、blank secret / `reinstall_requested=true` のまま managed / server thumbprint を `DE4A40AC4C236316FE0D08899CD1F62441D56176 -> 36D1A895AC0C3F69FD300E5A0C45EC76CA66D8BA` へ回転させ、`fresh_install_requested=false`, `program_files_match_expected=true`, `managed_matches_server_active=true` を current-run summary から確認した
+- latest Linux-host WiX verification では `build_windows_msi.sh --msi-builder wix` が current devcontainer 上で成功し、generated MSI を live GCP positive / negative validation にそのまま利用できている。old `WIX0005` / `WIX0400` blocker は解消済みである
+- intermediate failed negative reruns `copilot-install-20260401T092402Z-15496` と `copilot-install-20260402T010623Z-2411` は verifier regression ではなく harness-classification failure だった。`scepclient.exe` が SCEP failInfo を stdout に出し、stderr には info log だけが残り、pre-fix marker summary では hashtable-carried `activation_negative` が落ちていた
 - latest probe helper behavior として、`probe_windows_device_id.sh` は raw PowerShell `&` ではなく captured-process path へ更新済みである。fresh VM では `Get-Tpm.LockedOut=True` / `LockoutCount=3/3` / `LockoutHealTime=16 minutes 40 seconds` を観測したため、連続 reboot を詰めすぎないこと
 - `infra/terraform` の local state は import により再構築済みで、`terraform output` は live GCP 状況と再同期済みである
 - `terraform.tfvars` には placeholder source range が残っているため、接続不能時は current operator IP に合わせた firewall 更新が必要になる
 - validation 中に一時的に `scep-vpc-allow-scep-3000` を `0.0.0.0/0` へ広げたが、作業終了前に `35.233.235.22/32` へ戻してある
-- 現時点の Terraform state は live で、`scep-server-vm` / `scep-client-vm` は残っている。今回の validation では一度起動して `copilot-ek-probe-20260325T011838Z-7222` / `copilot-activation-probe-20260325T012444Z-1288` / `copilot-install-20260325T015247Z-21208` を実行し、作業終了時点では再び両方とも停止済みである
+- 現時点の Terraform state は live で、`scep-server-vm` / `scep-client-vm` は残っている。current validation runs (`copilot-install-20260401T083450Z-7118`, `copilot-install-20260402T020037Z-12035`) の後も両方とも `RUNNING` のままである
 - `scep-server-vm` は local server ではなく GCP 上の remote server を前提に検証すること
 - `infra/terraform/scripts/linux/build_and_scp_scepserver.sh` で current local `scepserver-opt` を live `scep-server-vm` に再配備済みである
 - `attestation_e2e.sh` は legacy `test-nonce-key-binding-v1` helper、`attestation_e2e_canonical.sh` は canonical `tpm2-windows-v1` helper であり、後者は synthetic OpenSSL-generated quote/signature を使って server semantics を検証する
@@ -871,9 +883,9 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 - `copilot-activation-probe-20260325T012444Z-1288` は `has_aik_tpm_public=true`, `has_ek_public=true`, `has_ek_cert=false`, `ek_certificate_url=null` を返した。current slice ではこの material を使う credential activation endpoint / verifier を source に実装済みである
 - activation-managed live validation client `msi-neg-20260325050312` は `preregister_client.sh --managed-client-type windows-msi` で登録済みであり、external `GET /api/client/msi-neg-20260325050312` は `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返した
 - live negative endpoint checks では `POST /api/attestation/activation/start` に対し bogus nonce が `403 nonce mismatch`、valid nonce + invalid `ek_public_b64` が `400 ek_public_b64 is not a valid SubjectPublicKeyInfo` を返した
-- clean helper rerun `copilot-install-20260325T053507Z-2543` では new client `msi-neg-20260325-runner-a` に対し `activation_negative.renewal_exit_code=1`, `managed_thumbprint_before=managed_thumbprint_after=24E1087234C045FBEB6DC3E2A65646908AD9024A`, `present_in_machine_store=true`, `service_state=Running` を current-run summary から取得した。external `GET /api/client/msi-neg-20260325-runner-a` は `status=ISSUED`, `attributes.managed_client_type=windows-msi` を返した
+- clean helper rerun `copilot-install-20260402T020037Z-12035` では new client `wcneg_20260402T015627Z_f4c83785f8cf` に対し `activation_negative.renewal_exit_code=0`, `renewal_rejected=true`, `managed_thumbprint_before=managed_thumbprint_after=35BC281F065042D8CABE40750555370AF332E6EC`, `present_in_machine_store=true`, `service_state=Running` を current-run summary から取得した。negative semantics は `renewal_exit_code` ではなく `renewal_rejected` / `renewal_failure_excerpt` を authoritative に扱う
 - live server journal では 2026-03-25T05:12:37Z, 05:14:29Z, 05:22:31Z に加え、clean rerun 時刻 05:35:49Z にも `invalid attestation: invalid_activation_proof` を確認した。repeated reboot に伴う TPM DA lockout warning は引き続き運用上の注意点である
-- fresh LocalService helper run `copilot-install-20260325T070546Z-17570` では new client `msi-localsvc-ok-20260325070516` が `service.start_name=NT AUTHORITY\\LocalService`, `managed_thumbprint=29FF8482FBAEC855CAAC49B67F2ECF632295FC0E`, `present_in_machine_store=true`, `has_enrollment_secret=false`, `has_enrollment_secret_protected=true` で `ISSUED` になった
+- fresh LocalService helper run `copilot-install-20260325T070546Z-17570` では new client `msi-localsvc-ok-20260325070516` が `service.start_name=NT AUTHORITY\\LocalService`, `managed_thumbprint=29FF8482FBAEC855CAAC49B67F2ECF632295FC0E`, `present_in_machine_store=true`, `has_enrollment_secret=false` で `ISSUED` になった
 - follow-up same-key renewal run `copilot-install-20260325T070729Z-4061` では同 client が `NT AUTHORITY\\LocalService` を維持したまま thumbprint `29FF8482FBAEC855CAAC49B67F2ECF632295FC0E` から `CA46C3C29159BB0F8E9C6127705449814B819B3D` へ回転した。live `scep-server-vm` journal でも `2026-03-25T07:06:43Z` と `07:08:01Z` に host `10.42.0.2` から canonical `PKIOperation error=null` を確認した
 - shared understanding として、current server/admin model は `managed_client_type=windows-msi` による Windows 管理対象識別、`device_id` 必須化、activation 必須化、既存 client の明示 migration を前提にする。helper-backed TPM path は当面の正式構成として扱い、Rust-native backend は後続フェーズで再判断する
 - temporary metadata probe は検証後に `infra/terraform/scripts/windows/windows-client-startup.ps1` へ戻してある
@@ -886,9 +898,10 @@ Terraform provider 認証は ADC のみをサポート対象とし、既存の `
 
 ## Definition of Done
 
-- GUI / サイレント install の両方で Windows Service を導入できる
-- TPM-backed key を用いた初回発行が成功する
-- SCEP サーバーが登録済み `device_id` と attestation を検証する
-- 不正な attestation を拒否できる
-- 自動更新が期限前に成功する
+- GCP Windows VM 上の GUI MSI で `page 1 probe -> prereg-check -> ENROLLMENT_SECRET -> install` が成功する
+- WiX v4 release path の `LocalSystem` bootstrap で TPM-backed key を用いた初回発行が成功する
+- same-key 自動更新が期限前に成功する
+- tampered activation proof renewal と prereg-check mismatch をサーバー / helper が拒否できる
+- Windows client は `LocalMachine\\My` を正式格納先として利用する
+- internal-only GCP topology で server internal endpoint 到達と外向き HTTPS egress を維持できる
 - GCP + Terraform の検証手順が README だけで再現できる

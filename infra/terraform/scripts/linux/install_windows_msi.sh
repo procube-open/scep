@@ -10,17 +10,22 @@ temporarily replacing the instance startup script, rebooting the VM, and
 waiting for serial-port markers from the install/verification script.
 
 Options:
-  --server-url <URL>                  Full SCEP URL. Defaults to http://<server_internal_ip>:3000/scep when available, otherwise external IP
+  --server-url <URL>                  Full SCEP URL. Defaults to http://<server_internal_ip>:3000/scep
   --client-uid <UID>                  Required client UID
-  --enrollment-secret <SECRET>        Required one-time enrollment secret
+  --enrollment-secret <SECRET>        Optional one-time enrollment secret
+                                      (required for fresh issuance, omitted for
+                                      same-key renewal on an already configured machine)
   --expected-device-id <DEVICE_ID>    Required preregistered TPM identity for the VM
   --poll-interval <DURATION>          Optional MSI property (default: 1h)
   --renew-before <DURATION>           Optional MSI property (default: 14d)
   --log-level <LEVEL>                 Optional MSI property (default: info)
   --msi-path <WINDOWS_PATH>           MSI path on the Windows VM (default: C:\Users\Public\MyTunnelApp.msi)
-  --wait-seconds <SECONDS>            Wait budget for serial markers (default: 300)
+  --wait-seconds <SECONDS>            Observation-phase wait budget for the Windows helper
+                                      (default: 300; outer script also adds TPM lockout grace)
   --force-fresh-install               Uninstall existing MSI-managed config before reinstalling
                                       (the helper also auto-falls back to this path if same-version reinstall leaves stale config)
+  --reuse-existing-certificate        Allow force-fresh-install without ENROLLMENT_SECRET when
+                                      an existing managed certificate should be reused
   --apply-registry-overrides          Rewrite HKLM config after msiexec and restart the service
   --converge-to-local-service         Grant HKLM config access to LocalService and reconfigure
                                       MyTunnelService to run as NT AUTHORITY\LocalService
@@ -52,11 +57,13 @@ LOG_LEVEL="info"
 MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
 WAIT_SECONDS=300
 FORCE_FRESH_INSTALL=0
+REUSE_EXISTING_CERTIFICATE=0
 APPLY_REGISTRY_OVERRIDES=0
 CONVERGE_TO_LOCAL_SERVICE=0
 REQUIRE_THUMBPRINT_CHANGE=0
 TAMPER_ACTIVATION_PROOF_RENEWAL=0
 SERIAL_WAIT_GRACE_SECONDS=180
+TPM_LOCKOUT_WAIT_GRACE_SECONDS=1800
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -98,6 +105,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force-fresh-install)
       FORCE_FRESH_INSTALL=1
+      shift
+      ;;
+    --reuse-existing-certificate)
+      REUSE_EXISTING_CERTIFICATE=1
       shift
       ;;
     --apply-registry-overrides)
@@ -148,8 +159,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$CLIENT_UID" || -z "$ENROLLMENT_SECRET" || -z "$EXPECTED_DEVICE_ID" ]]; then
-  echo "--client-uid, --enrollment-secret, and --expected-device-id are required." >&2
+if [[ -z "$CLIENT_UID" || -z "$EXPECTED_DEVICE_ID" ]]; then
+  echo "--client-uid and --expected-device-id are required." >&2
+  exit 1
+fi
+
+if [[ "$FORCE_FRESH_INSTALL" -eq 1 && -z "$ENROLLMENT_SECRET" && "$REUSE_EXISTING_CERTIFICATE" -ne 1 ]]; then
+  echo "--enrollment-secret is required when --force-fresh-install is used unless --reuse-existing-certificate is set." >&2
   exit 1
 fi
 
@@ -188,17 +204,17 @@ restore_windows_startup_script() {
 wait_for_install_result() {
   local install_id="$1"
   local deadline serial_output
-  deadline=$(( $(date +%s) + WAIT_SECONDS + SERIAL_WAIT_GRACE_SECONDS ))
+  deadline=$(( $(date +%s) + WAIT_SECONDS + SERIAL_WAIT_GRACE_SECONDS + TPM_LOCKOUT_WAIT_GRACE_SECONDS ))
 
   echo "Waiting for Windows MSI install markers"
   while (( $(date +%s) <= deadline )); do
     serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null | tr -d '\000' || true)"
-    if printf '%s\n' "$serial_output" | grep -q "MYTUNNEL_MSI_INSTALL_DONE id=${install_id}"; then
-      printf '%s\n' "$serial_output" | grep "MYTUNNEL_MSI_INSTALL_.*id=${install_id}" | tail -n 20
+    if [[ "$serial_output" == *"MYTUNNEL_MSI_INSTALL_DONE id=${install_id}"* ]]; then
+      grep "MYTUNNEL_MSI_INSTALL_.*id=${install_id}" <<<"$serial_output" | tail -n 20 || true
       return 0
     fi
-    if printf '%s\n' "$serial_output" | grep -q "MYTUNNEL_MSI_INSTALL_FAILED id=${install_id}"; then
-      printf '%s\n' "$serial_output" | grep "MYTUNNEL_MSI_INSTALL_.*id=${install_id}" | tail -n 20 >&2
+    if [[ "$serial_output" == *"MYTUNNEL_MSI_INSTALL_FAILED id=${install_id}"* ]]; then
+      grep "MYTUNNEL_MSI_INSTALL_.*id=${install_id}" <<<"$serial_output" | tail -n 20 >&2 || true
       return 1
     fi
     sleep 15
@@ -235,10 +251,7 @@ fi
 if [[ -z "$SERVER_URL" ]]; then
   server_ip="$(terraform_output_raw server_internal_ip)"
   if [[ -z "$server_ip" ]]; then
-    server_ip="$(terraform_output_raw server_external_ip)"
-  fi
-  if [[ -z "$server_ip" ]]; then
-    echo "Unable to resolve server_internal_ip or server_external_ip from Terraform output; provide --server-url." >&2
+    echo "Unable to resolve server_internal_ip from Terraform output; provide --server-url." >&2
     exit 1
   fi
   SERVER_URL="http://${server_ip}:3000/scep"
@@ -262,6 +275,23 @@ install_id="copilot-install-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 temp_script="$(mktemp)"
 trap 'restore_windows_startup_script; rm -f "$temp_script"' EXIT
 
+enrollment_secret_argument=""
+if [[ -n "$ENROLLMENT_SECRET" ]]; then
+  enrollment_secret_argument="-EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' "
+fi
+
+expected_service_sha256_argument=""
+if [[ -f "${REPO_ROOT}/rust-client/target/x86_64-pc-windows-gnu/release/service.exe" ]]; then
+  expected_service_sha256="$(sha256sum "${REPO_ROOT}/rust-client/target/x86_64-pc-windows-gnu/release/service.exe" | awk '{print $1}')"
+  expected_service_sha256_argument="-ExpectedServiceSha256 '$(escape_ps_single_quoted "$expected_service_sha256")' "
+fi
+
+expected_bundled_helper_sha256_argument=""
+if [[ -f "${REPO_ROOT}/cmd/scepclient/scepclient.exe" ]]; then
+  expected_bundled_helper_sha256="$(sha256sum "${REPO_ROOT}/cmd/scepclient/scepclient.exe" | awk '{print $1}')"
+  expected_bundled_helper_sha256_argument="-ExpectedBundledHelperSha256 '$(escape_ps_single_quoted "$expected_bundled_helper_sha256")' "
+fi
+
 cat "$WINDOWS_STARTUP_SCRIPT" > "$temp_script"
 printf '\n' >> "$temp_script"
 cat "$WINDOWS_INSTALL_SCRIPT" >> "$temp_script"
@@ -270,7 +300,7 @@ cat >> "$temp_script" <<EOF
 \$copilotInstallId = '$(escape_ps_single_quoted "$install_id")'
 try {
   Write-Output "MYTUNNEL_MSI_INSTALL_START id=\$copilotInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") expected_device_id=$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")"
-  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
+  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' ${enrollment_secret_argument}${expected_service_sha256_argument}${expected_bundled_helper_sha256_argument}-ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$REUSE_EXISTING_CERTIFICATE" -eq 1 ]]; then printf -- "-AllowExistingCertificateReuse "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
 $(if [[ "$TAMPER_ACTIVATION_PROOF_RENEWAL" -eq 1 ]]; then cat <<PS
   \$copilotActivationNegative = Invoke-MyTunnelTamperedActivationRenewal -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")'
   \$copilotInstallSummary['activation_negative'] = \$copilotActivationNegative

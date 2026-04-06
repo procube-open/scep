@@ -25,7 +25,7 @@ output "server_internal_ip" {
 
 output "server_external_ip" {
   description = "External IP for Linux SCEP server VM."
-  value       = google_compute_instance.scep_server.network_interface[0].access_config[0].nat_ip
+  value       = try(google_compute_instance.scep_server.network_interface[0].access_config[0].nat_ip, "")
 }
 
 output "client_internal_ip" {
@@ -35,5 +35,5 @@ output "client_internal_ip" {
 
 output "client_external_ip" {
   description = "External IP for Windows SCEP client VM."
-  value       = google_compute_instance.scep_client_windows.network_interface[0].access_config[0].nat_ip
+  value       = try(google_compute_instance.scep_client_windows.network_interface[0].access_config[0].nat_ip, "")
 }

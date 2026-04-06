@@ -91,6 +91,7 @@ if [[ -z "$TERRAFORM_DIR" ]]; then
 fi
 
 WINDOWS_STARTUP_SCRIPT="${REPO_ROOT}/infra/terraform/scripts/windows/windows-client-startup.ps1"
+WINDOWS_INSTALL_SCRIPT="${REPO_ROOT}/infra/terraform/scripts/windows/install-mytunnelapp.ps1"
 
 ensure_command() {
   local command_name="$1"
@@ -129,8 +130,8 @@ wait_for_probe_result() {
       printf '%s\n' "${probe_line#*json=}"
       return 0
     fi
-    if printf '%s\n' "$serial_output" | grep -q "MYTUNNEL_DEVICE_ID_PROBE_FAILED id=${probe_id}"; then
-      printf '%s\n' "$serial_output" | grep "MYTUNNEL_DEVICE_ID_PROBE_.*id=${probe_id}" | tail -n 20 >&2
+    if [[ "$serial_output" == *"MYTUNNEL_DEVICE_ID_PROBE_FAILED id=${probe_id}"* ]]; then
+      grep "MYTUNNEL_DEVICE_ID_PROBE_.*id=${probe_id}" <<<"$serial_output" | tail -n 20 >&2 || true
       return 1
     fi
     sleep 15
@@ -174,6 +175,10 @@ if [[ ! -f "$WINDOWS_STARTUP_SCRIPT" ]]; then
   echo "Windows startup script not found: $WINDOWS_STARTUP_SCRIPT" >&2
   exit 1
 fi
+if [[ ! -f "$WINDOWS_INSTALL_SCRIPT" ]]; then
+  echo "Windows install helper script not found: $WINDOWS_INSTALL_SCRIPT" >&2
+  exit 1
+fi
 
 if [[ -z "$PROBE_PATH" ]]; then
   PROBE_PATH="C:\\Users\\${WINDOWS_USER}\\device-id-probe.exe"
@@ -184,44 +189,19 @@ temp_script="$(mktemp)"
 trap 'restore_windows_startup_script; rm -f "$temp_script"' EXIT
 
 cat "$WINDOWS_STARTUP_SCRIPT" > "$temp_script"
+printf '\n' >> "$temp_script"
+cat "$WINDOWS_INSTALL_SCRIPT" >> "$temp_script"
 cat >> "$temp_script" <<EOF
 
 \$copilotProbeId = '$(escape_ps_single_quoted "$probe_id")'
 \$copilotProbePath = '$(escape_ps_single_quoted "$PROBE_PATH")'
 try {
-  if (-not (Test-Path -LiteralPath \$copilotProbePath)) {
-    \$copilotFallbackProbePath = 'C:\Users\Public\device-id-probe.exe'
-    if (Test-Path -LiteralPath \$copilotFallbackProbePath) {
-      \$copilotProbePath = \$copilotFallbackProbePath
-    } else {
-      throw "device-id-probe.exe was not found at \$copilotProbePath or \$copilotFallbackProbePath"
-    }
-  }
-  \$copilotProbeStdout = Join-Path \$env:TEMP ("copilot-probe-{0}.out" -f \$copilotProbeId)
-  \$copilotProbeStderr = Join-Path \$env:TEMP ("copilot-probe-{0}.err" -f \$copilotProbeId)
-  \$copilotProbeProcess = Start-Process -FilePath \$copilotProbePath -ArgumentList @('-json') -PassThru -NoNewWindow -RedirectStandardOutput \$copilotProbeStdout -RedirectStandardError \$copilotProbeStderr
-  [void]\$copilotProbeProcess.WaitForExit()
-  \$copilotProbeJson = ''
-  if (Test-Path -LiteralPath \$copilotProbeStdout) {
-    \$copilotProbeJson = (Get-Content -LiteralPath \$copilotProbeStdout -Raw).Trim()
-  }
-  if (\$copilotProbeProcess.ExitCode -ne 0) {
-    \$copilotProbeErrorText = ''
-    if (Test-Path -LiteralPath \$copilotProbeStderr) {
-      \$copilotProbeErrorText = ((Get-Content -LiteralPath \$copilotProbeStderr -Raw) -replace '[\\r\\n]+', ' ').Trim()
-    }
-    if ([string]::IsNullOrWhiteSpace(\$copilotProbeErrorText)) {
-      \$copilotProbeErrorText = "device-id-probe.exe exited with code \$($copilotProbeProcess.ExitCode)"
-    }
-    throw \$copilotProbeErrorText
-  }
-  if ([string]::IsNullOrWhiteSpace(\$copilotProbeJson)) {
-    throw 'device-id-probe.exe returned an empty payload'
-  }
-  Write-Output ("MYTUNNEL_DEVICE_ID_PROBE_DONE id=\$copilotProbeId json={0}" -f \$copilotProbeJson)
+  \$copilotProbeIdentity = Invoke-MyTunnelDeviceIdProbe -ProbePath \$copilotProbePath
+  \$copilotProbeJson = (\$copilotProbeIdentity | ConvertTo-Json -Depth 5 -Compress)
+  Write-Host ("MYTUNNEL_DEVICE_ID_PROBE_DONE id=\$copilotProbeId json={0}" -f \$copilotProbeJson)
 } catch {
   \$copilotProbeMessage = \$_.Exception.Message -replace '[\\r\\n]+', ' '
-  Write-Output ("MYTUNNEL_DEVICE_ID_PROBE_FAILED id=\$copilotProbeId message={0}" -f \$copilotProbeMessage)
+  Write-Host ("MYTUNNEL_DEVICE_ID_PROBE_FAILED id=\$copilotProbeId message={0}" -f \$copilotProbeMessage)
   throw
 }
 EOF
