@@ -175,6 +175,8 @@ resource "google_compute_instance" "scep_client_windows" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.scep.id
+    # Keep the server private, but allow direct operator access to the Windows client.
+    access_config {}
   }
 
   metadata = {
