@@ -8,7 +8,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -499,11 +498,11 @@ func TestMySQLDeviceIDAttestationVerifierAllowsRenewalSignerIdentity(t *testing.
 		t.Fatal(err)
 	}
 
-	attestation := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
-		`{"device_id":"device-001","key":{"public_key_spki_b64":"%s"},"attestation":{"format":"tpm2-windows-v1-placeholder-renewal","nonce":"%s"}}`,
-		base64.RawURLEncoding.EncodeToString(publicKey),
-		nonce,
-	)))
+	claims := newCanonicalTPMAttestationClaimsWithNonce(t, "device-001", nonce, publicKey)
+	attestation, err := marshalAttestationClaims(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := ContextWithSCEPMessageType(context.Background(), scep.RenewalReq)
 	ctx = ContextWithSignerCertificate(ctx, &x509.Certificate{

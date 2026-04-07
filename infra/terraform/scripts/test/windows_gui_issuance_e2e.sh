@@ -33,8 +33,6 @@ Optional:
   --wait-seconds <SECONDS>            Wait budget for the GUI install run
                                       (default: 2100)
   --artifact-dir <DIR>                Directory for build/probe/install artifacts
-  --msi-builder <auto|wix|wixl>       Packaging backend for local build
-                                      (default: wix)
   --project <PROJECT_ID>              GCP project override
   --zone <ZONE>                       GCP zone override
   --instance <INSTANCE_NAME>          Windows VM override
@@ -63,7 +61,6 @@ RENEW_BEFORE="9000h"
 LOG_LEVEL="debug"
 WAIT_SECONDS=2100
 ARTIFACT_DIR=""
-MSI_BUILDER="wix"
 SKIP_BUILD=0
 
 while [[ $# -gt 0 ]]; do
@@ -114,10 +111,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact-dir)
       ARTIFACT_DIR="${2:?missing value for --artifact-dir}"
-      shift 2
-      ;;
-    --msi-builder)
-      MSI_BUILDER="${2:?missing value for --msi-builder}"
       shift 2
       ;;
     --project)
@@ -306,7 +299,6 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   build_args=(
     --repo-root "$REPO_ROOT"
     --terraform-dir "$TERRAFORM_DIR"
-    --msi-builder "$MSI_BUILDER"
   )
   if [[ -n "$WINDOWS_USER" ]]; then
     build_args+=(--windows-user "$WINDOWS_USER")

@@ -181,6 +181,7 @@ impl ServiceEngine {
         }
     }
 
+    #[cfg(test)]
     pub fn state(&self) -> &ServiceState {
         &self.state
     }

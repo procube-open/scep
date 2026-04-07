@@ -8,10 +8,8 @@ Usage: build_windows_msi.sh [options]
 Cross-builds service.exe for Windows, stages installer inputs locally, builds a
 Windows MSI on Linux, and optionally copies the MSI to the Windows client VM.
 
-WiX v4 (`wix`) is the supported release packaging path. When it is available,
-the script builds `installer/main.wxs` as the source-of-truth MSI. When it is
-not available, the script can still fall back to the existing `wixl`-based
-silent-install package for development-only comparison.
+WiX v4 (`wix`) is the only supported packaging path. The script always builds
+`installer/main.wxs` as the source-of-truth MSI.
 
 On Linux hosts, the WiX v4 path runs `wix.dll` under Wine with a cached Windows
 .NET runtime because WiX binds through Windows Installer APIs that are not
@@ -36,9 +34,6 @@ Options:
                                      (default: <repo-root>/build/windows-msi)
   --output-path <PATH>              Output MSI path
                                      (default: <stage-dir>/installer/dist/MyTunnelApp.msi)
-  --msi-builder <auto|wix|wixl>     Packaging backend to use
-                                    (default: auto; WiX v4 is the release path,
-                                     wixl is a development-only fallback)
   --skip-rustup-target              Skip rustup target add x86_64-pc-windows-gnu
   -h, --help                        Show this help text
 EOF
@@ -59,13 +54,10 @@ WINDOWS_BINARY_RELATIVE="rust-client/target/${WINDOWS_TARGET}/release/service.ex
 SCEPCLIENT_BINARY_RELATIVE="cmd/scepclient/scepclient.exe"
 DEVICE_ID_PROBE_BINARY_RELATIVE="cmd/scepclient/device-id-probe.exe"
 WIX_SOURCE_RELATIVE="installer/main.wxs"
-WIXL_SOURCE_RELATIVE="installer/main.wixl.wxs"
 WINDOWS_STARTUP_SCRIPT_RELATIVE="infra/terraform/scripts/windows/windows-client-startup.ps1"
 WINDOWS_PUBLIC_MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
 WINDOWS_PUBLIC_PROBE_PATH='C:\Users\Public\device-id-probe.exe'
 SSH_COPY_TIMEOUT_SECONDS=45
-MSI_BUILDER="auto"
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --windows-user)
@@ -106,11 +98,6 @@ while [[ $# -gt 0 ]]; do
     --output-path)
       [[ $# -ge 2 ]] || { echo "Missing value for --output-path" >&2; usage; exit 1; }
       OUTPUT_PATH="$2"
-      shift 2
-      ;;
-    --msi-builder)
-      [[ $# -ge 2 ]] || { echo "Missing value for --msi-builder" >&2; usage; exit 1; }
-      MSI_BUILDER="$2"
       shift 2
       ;;
     --skip-rustup-target)
@@ -258,24 +245,6 @@ ensure_wix_windows_runtime() {
   printf '%s' "$cache_root"
 }
 
-resolve_msi_builder() {
-  case "$MSI_BUILDER" in
-    auto)
-      if command -v wix >/dev/null 2>&1 && [[ "$(wix_major_version)" == "4" ]]; then
-        MSI_BUILDER="wix"
-      else
-        MSI_BUILDER="wixl"
-      fi
-      ;;
-    wix|wixl)
-      ;;
-    *)
-      echo "Unsupported --msi-builder value: ${MSI_BUILDER}" >&2
-      exit 1
-      ;;
-  esac
-}
-
 ensure_wix_ui_extension() {
   local version
   version="$(wix_extension_version)"
@@ -284,7 +253,7 @@ ensure_wix_ui_extension() {
     exit 1
   fi
   if ! wix extension add "WixToolset.UI.wixext/${version}" >/dev/null 2>&1; then
-    echo "Failed to add WixToolset.UI.wixext/${version}. Install or pre-cache the matching WiX UI extension before using --msi-builder wix." >&2
+    echo "Failed to add WixToolset.UI.wixext/${version}. Install or pre-cache the matching WiX UI extension before running this build script." >&2
     exit 1
   fi
 }
@@ -446,16 +415,10 @@ ensure_command cargo
 ensure_command rustup
 ensure_command x86_64-w64-mingw32-gcc
 ensure_command sha256sum
-resolve_msi_builder
-if [[ "$MSI_BUILDER" == "wix" ]]; then
-  ensure_command wix
-  if [[ "$(wix_major_version)" != "4" ]]; then
-    echo "WiX v4 is required for --msi-builder wix. Found: $(wix_version)" >&2
-    exit 1
-  fi
-else
-  ensure_command wixl
-  echo "WARNING: using wixl fallback packaging. This path is kept for development/debugging and is not the supported release MSI." >&2
+ensure_command wix
+if [[ "$(wix_major_version)" != "4" ]]; then
+  echo "WiX v4 is required. Found: $(wix_version)" >&2
+  exit 1
 fi
 
 if [[ -n "$WINDOWS_USER" ]]; then
@@ -492,28 +455,20 @@ mkdir -p \
   "${STAGE_DIR}/cmd/scepclient" \
   "$(dirname "$OUTPUT_PATH")"
 cp "${REPO_ROOT}/${WIX_SOURCE_RELATIVE}" "${STAGE_DIR}/installer/main.wxs"
-cp "${REPO_ROOT}/${WIXL_SOURCE_RELATIVE}" "${STAGE_DIR}/installer/main.wixl.wxs"
 cp "${REPO_ROOT}/installer/device_identity_prereg.vbs" "${STAGE_DIR}/installer/device_identity_prereg.vbs"
 cp "${REPO_ROOT}/${WINDOWS_BINARY_RELATIVE}" "${STAGE_DIR}/rust-client/service/target/release/service.exe"
 cp "${REPO_ROOT}/${WINDOWS_BINARY_RELATIVE}" "${STAGE_DIR}/rust-client/target/release/service.exe"
 cp "${REPO_ROOT}/${SCEPCLIENT_BINARY_RELATIVE}" "${STAGE_DIR}/cmd/scepclient/scepclient.exe"
 cp "${REPO_ROOT}/${DEVICE_ID_PROBE_BINARY_RELATIVE}" "${STAGE_DIR}/cmd/scepclient/device-id-probe.exe"
 
-echo "Building MSI locally with ${MSI_BUILDER}: ${OUTPUT_PATH}"
-if [[ "$MSI_BUILDER" == "wix" ]]; then
-  if [[ "$(uname -s)" == "Linux" ]]; then
-    build_with_wix_under_wine
-  else
-    (
-      cd "${STAGE_DIR}/installer"
-      ensure_wix_ui_extension
-      wix build -arch x64 -ext WixToolset.UI.wixext -o "$OUTPUT_PATH" main.wxs
-    )
-  fi
+echo "Building MSI locally with WiX v4: ${OUTPUT_PATH}"
+if [[ "$(uname -s)" == "Linux" ]]; then
+  build_with_wix_under_wine
 else
   (
-    cd "$STAGE_DIR"
-    wixl -a x64 -o "$OUTPUT_PATH" installer/main.wixl.wxs
+    cd "${STAGE_DIR}/installer"
+    ensure_wix_ui_extension
+    wix build -arch x64 -ext WixToolset.UI.wixext -o "$OUTPUT_PATH" main.wxs
   )
 fi
 

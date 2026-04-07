@@ -65,7 +65,10 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
 }
 
 fn service_main() -> Result<(), String> {
+    #[cfg(windows)]
     let mut current_config = config::ServiceConfig::load();
+    #[cfg(not(windows))]
+    let current_config = config::ServiceConfig::load();
     log_config_snapshot("startup", &current_config);
 
     let mut engine = state::ServiceEngine::new(platform::ServicePlatform::default());

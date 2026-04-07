@@ -13,13 +13,10 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"strings"
 )
 
 const (
 	canonicalWindowsTPMAttestationFormat = "tpm2-windows-v1"
-	placeholderWindowsTPMAttestationFmt  = "tpm2-windows-v1-placeholder-"
-	legacyNonceKeyBindingAttestationFmt  = "test-nonce-key-binding-v1"
 
 	tpmGeneratedValue = 0xff544347
 	tpmSTAttestQuote  = 0x8018
@@ -115,10 +112,7 @@ func requiresTPMQuoteVerification(bundle attestationBundle) bool {
 }
 
 func validateTPMAttestationFormat(bundle attestationBundle) error {
-	if bundle.Format == canonicalWindowsTPMAttestationFormat || bundle.Format == legacyNonceKeyBindingAttestationFmt || strings.HasPrefix(bundle.Format, placeholderWindowsTPMAttestationFmt) {
-		if bundle.Format != canonicalWindowsTPMAttestationFormat && hasTPMQuoteFields(bundle) {
-			return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)
-		}
+	if bundle.Format == canonicalWindowsTPMAttestationFormat {
 		return nil
 	}
 	return fmt.Errorf("%w: invalid_attestation_format", ErrInvalidAttestation)

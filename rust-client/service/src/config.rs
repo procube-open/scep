@@ -9,7 +9,7 @@ use std::time::Duration;
 #[cfg(windows)]
 const REGISTRY_PATH: &str = r"SOFTWARE\MyTunnelApp";
 #[cfg(windows)]
-const REGISTRY_SERVER_URL_VALUES: &[&str] = &["ServerUrl", "ConfigURL"];
+const REGISTRY_SERVER_URL_VALUES: &[&str] = &["ServerUrl"];
 #[cfg(windows)]
 const REGISTRY_CLIENT_UID_VALUE: &str = "ClientUid";
 #[cfg(windows)]
@@ -17,8 +17,7 @@ const REGISTRY_ENROLLMENT_SECRET_VALUE: &str = "EnrollmentSecret";
 #[cfg(windows)]
 const REGISTRY_ENROLLMENT_SECRET_PROTECTED_VALUE: &str = "EnrollmentSecretProtected";
 #[cfg(windows)]
-const REGISTRY_EXPECTED_DEVICE_ID_VALUES: &[&str] =
-    &["ExpectedDeviceId", "ExpectedDeviceID", "DeviceId"];
+const REGISTRY_EXPECTED_DEVICE_ID_VALUES: &[&str] = &["ExpectedDeviceId"];
 #[cfg(windows)]
 const REGISTRY_POLL_INTERVAL_VALUE: &str = "PollInterval";
 #[cfg(windows)]
@@ -141,7 +140,6 @@ pub struct RenewalSettings {
 #[derive(Debug, Clone, Default, Deserialize)]
 struct RawServiceConfig {
     #[serde(
-        alias = "ConfigURL",
         alias = "SERVICE_URL",
         alias = "SERVER_URL",
         alias = "service_url",

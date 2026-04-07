@@ -7,8 +7,7 @@ Usage: attestation_e2e_canonical.sh [options]
 
 Execute canonical TPM attestation E2E issuance checks against a deployed SCEP endpoint.
 
-This script intentionally validates the canonical `tpm2-windows-v1` path and keeps
-legacy `test-nonce-key-binding-v1` coverage in attestation_e2e.sh unchanged.
+This script intentionally validates only the canonical `tpm2-windows-v1` path.
 
 Preconditions:
   1) preregister_client.sh has already run for the target uid/secret/device_id

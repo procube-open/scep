@@ -914,8 +914,7 @@ function Get-MyTunnelInstallSummary {
     registry        = [ordered]@{
       server_url                        = if ($null -ne $registry) { $registry.ServerUrl } else { $null }
       client_uid                        = if ($null -ne $registry) { $registry.ClientUid } else { $null }
-      expected_device_id                = if ($null -ne $registry -and $registryPropertyNames -contains 'ExpectedDeviceId') { $registry.ExpectedDeviceId } elseif ($null -ne $registry) { $registry.DeviceId } else { $null }
-      device_id                         = if ($null -ne $registry) { $registry.DeviceId } else { $null }
+      expected_device_id                = if ($null -ne $registry) { $registry.ExpectedDeviceId } else { $null }
       poll_interval                     = if ($null -ne $registry) { $registry.PollInterval } else { $null }
       renew_before                      = if ($null -ne $registry) { $registry.RenewBefore } else { $null }
       log_level                         = if ($null -ne $registry) { $registry.LogLevel } else { $null }
@@ -989,9 +988,6 @@ function Get-MyTunnelConfigMismatchList {
   }
   if ($registry.expected_device_id -ne $ExpectedDeviceId) {
     $mismatches.Add('expected_device_id')
-  }
-  if ($registry.device_id -ne $ExpectedDeviceId) {
-    $mismatches.Add('device_id')
   }
   if ($registry.poll_interval -ne $PollInterval) {
     $mismatches.Add('poll_interval')
@@ -1247,7 +1243,10 @@ function Wait-MyTunnelInstallObservation {
       )
 
       if ($RequireManagedThumbprintChange) {
-        if ($managedThumbprintChanged) {
+        if (
+          $managedThumbprintChanged -and
+          $summary.managed.present_in_machine_store
+        ) {
           return $summary
         }
 
@@ -1492,11 +1491,9 @@ function Seed-MyTunnelExistingConfigRegistry {
   }
 
   $overrides = [ordered]@{
-    ConfigURL        = $ServerUrl
     ServerUrl        = $ServerUrl
     ClientUid        = $ClientUid
     ExpectedDeviceId = $ExpectedDeviceId
-    DeviceId         = $ExpectedDeviceId
     PollInterval     = $PollInterval
     RenewBefore      = $RenewBefore
     LogLevel         = $LogLevel
@@ -1539,11 +1536,9 @@ function Apply-MyTunnelRegistryOverrides {
   }
 
   $overrides = [ordered]@{
-    ConfigURL        = $ServerUrl
     ServerUrl        = $ServerUrl
     ClientUid        = $ClientUid
     ExpectedDeviceId = $ExpectedDeviceId
-    DeviceId         = $ExpectedDeviceId
     PollInterval     = $PollInterval
     RenewBefore      = $RenewBefore
     LogLevel         = $LogLevel

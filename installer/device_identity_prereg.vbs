@@ -189,10 +189,7 @@ Function ResolveCurrentDeviceIdViaHelper(probePath)
 
   deviceId = ParseJsonStringValue(stdoutText, "expected_device_id")
   If deviceId = "" Then
-    deviceId = ParseJsonStringValue(stdoutText, "device_id")
-  End If
-  If deviceId = "" Then
-    Err.Raise vbObjectError + 123, "ResolveCurrentDeviceIdViaHelper", "device-id-probe.exe JSON did not contain expected_device_id or device_id: " & stdoutText
+    Err.Raise vbObjectError + 123, "ResolveCurrentDeviceIdViaHelper", "device-id-probe.exe JSON did not contain expected_device_id: " & stdoutText
   End If
 
   ResolveCurrentDeviceIdViaHelper = LCase(deviceId)

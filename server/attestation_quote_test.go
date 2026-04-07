@@ -54,34 +54,6 @@ func TestVerifyTPMQuoteAttestationAcceptsCompactExtraData(t *testing.T) {
 	}
 }
 
-func TestVerifyTPMQuoteAttestationAllowsPlaceholderWithoutQuote(t *testing.T) {
-	claims := &attestationClaims{
-		DeviceID: "device-001",
-		Attestation: attestationBundle{
-			Format: "tpm2-windows-v1-placeholder-initial",
-			Nonce:  "placeholder-nonce",
-		},
-	}
-
-	if err := verifyTPMQuoteAttestation(claims); err != nil {
-		t.Fatalf("expected placeholder attestation without quote material to pass, got %v", err)
-	}
-}
-
-func TestVerifyTPMQuoteAttestationAllowsLegacyNonceKeyBindingFormat(t *testing.T) {
-	claims := &attestationClaims{
-		DeviceID: "device-001",
-		Attestation: attestationBundle{
-			Format: legacyNonceKeyBindingAttestationFmt,
-			Nonce:  base64.RawURLEncoding.EncodeToString([]byte("nonce")),
-		},
-	}
-
-	if err := verifyTPMQuoteAttestation(claims); err != nil {
-		t.Fatalf("expected legacy nonce/key binding attestation to pass, got %v", err)
-	}
-}
-
 func TestVerifyTPMQuoteAttestationRejectsBlankFormat(t *testing.T) {
 	claims := &attestationClaims{
 		DeviceID: "device-001",

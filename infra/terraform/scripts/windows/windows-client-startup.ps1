@@ -36,10 +36,6 @@ $binaryPlaceholders = @(
   @{
     path = Join-Path $binDir "scep-service.exe.placeholder"
     text = "TODO: replace with provisioned service binary."
-  },
-  @{
-    path = Join-Path $binDir "scep-agent.exe.placeholder"
-    text = "TODO: replace with provisioned attestation agent binary."
   }
 )
 
@@ -50,7 +46,6 @@ foreach ($placeholder in $binaryPlaceholders) {
 $artifactAcquisitionTodo = @'
 # TODO: Acquire signed artifacts from your release channel and place them in C:\scep-client\bin.
 # Invoke-WebRequest -Uri "<service-binary-url>" -OutFile "C:\scep-client\bin\scep-service.exe"
-# Invoke-WebRequest -Uri "<agent-binary-url>" -OutFile "C:\scep-client\bin\scep-agent.exe"
 # TODO: Validate checksums/signatures before removing *.placeholder files.
 '@
 Set-Content -Path (Join-Path $runtimeDir "artifact-acquisition.todo.ps1") -Encoding UTF8 -Value $artifactAcquisitionTodo
@@ -58,7 +53,6 @@ Set-Content -Path (Join-Path $runtimeDir "artifact-acquisition.todo.ps1") -Encod
 $invocationTodo = @'
 # TODO: Replace with production invocation commands once binaries/config are available.
 # & "C:\scep-client\bin\scep-service.exe" --config "C:\scep-client\config\service.yaml"
-# & "C:\scep-client\bin\scep-agent.exe" --attestation "C:\scep-client\state\attestation\attestation-payload.json"
 '@
 Set-Content -Path (Join-Path $runtimeDir "invoke-client.todo.ps1") -Encoding UTF8 -Value $invocationTodo
 
@@ -116,7 +110,6 @@ $payload = [ordered]@{
   }
   execution        = [ordered]@{
     service_binary_path = "C:\scep-client\bin\scep-service.exe"
-    agent_binary_path   = "C:\scep-client\bin\scep-agent.exe"
     invoke_todo_script  = "C:\scep-client\runtime\invoke-client.todo.ps1"
   }
 }

@@ -10,13 +10,6 @@
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
 
-    <Property Id="EXISTING_LEGACY_CONFIG_URL" Secure="yes">
-      <RegistrySearch Id="SearchLegacyConfigUrl"
-                      Root="HKLM"
-                      Key="SOFTWARE\MyTunnelApp"
-                      Name="ConfigURL"
-                      Type="raw" />
-    </Property>
     <Property Id="EXISTING_SERVER_URL" Secure="yes">
       <RegistrySearch Id="SearchServerUrl"
                       Root="HKLM"
@@ -48,13 +41,6 @@
                       Name="ExpectedDeviceId"
                       Type="raw" />
     </Property>
-    <Property Id="EXISTING_LEGACY_DEVICE_ID" Secure="yes">
-      <RegistrySearch Id="SearchLegacyDeviceId"
-                      Root="HKLM"
-                      Key="SOFTWARE\MyTunnelApp"
-                      Name="DeviceId"
-                      Type="raw" />
-    </Property>
     <Property Id="CURRENT_DEVICE_ID" Secure="yes" />
     <Property Id="EXPECTED_DEVICE_ID" Secure="yes" />
     <Property Id="PROBE_STATUS_MESSAGE" Secure="yes" />
@@ -84,27 +70,11 @@
                       Type="raw" />
     </Property>
     <Property Id="LOG_LEVEL" Secure="yes" />
-    <Property Id="EXISTING_ENROLLMENT_SECRET_PROTECTED" Hidden="yes" Secure="yes">
-      <RegistrySearch Id="SearchProtectedEnrollmentSecret"
-                      Root="HKLM"
-                      Key="SOFTWARE\MyTunnelApp"
-                      Name="EnrollmentSecretProtected"
-                      Type="raw" />
-    </Property>
-    <Property Id="EXISTING_ENROLLMENT_SECRET_LEGACY" Hidden="yes" Secure="yes">
-      <RegistrySearch Id="SearchLegacyEnrollmentSecret"
-                      Root="HKLM"
-                      Key="SOFTWARE\MyTunnelApp"
-                      Name="EnrollmentSecret"
-                      Type="raw" />
-    </Property>
     <CustomAction Id="SetServerUrlFromExisting" Property="SERVER_URL" Value="[EXISTING_SERVER_URL]" Execute="firstSequence" />
-    <CustomAction Id="SetServerUrlFromLegacy" Property="SERVER_URL" Value="[EXISTING_LEGACY_CONFIG_URL]" Execute="firstSequence" />
     <CustomAction Id="SetServerUrlDefault" Property="SERVER_URL" Value="https://example.invalid/scep" Execute="firstSequence" />
     <CustomAction Id="SetClientUidFromExisting" Property="CLIENT_UID" Value="[EXISTING_CLIENT_UID]" Execute="firstSequence" />
     <CustomAction Id="SetEnrollmentSecretFromExisting" Property="ENROLLMENT_SECRET" Value="[EXISTING_ENROLLMENT_SECRET]" Execute="firstSequence" />
     <CustomAction Id="SetExpectedDeviceIdFromExisting" Property="EXPECTED_DEVICE_ID" Value="[EXISTING_EXPECTED_DEVICE_ID]" Execute="firstSequence" />
-    <CustomAction Id="SetExpectedDeviceIdFromLegacyRegistry" Property="EXPECTED_DEVICE_ID" Value="[EXISTING_LEGACY_DEVICE_ID]" Execute="firstSequence" />
     <CustomAction Id="SetPollIntervalFromExisting" Property="POLL_INTERVAL" Value="[EXISTING_POLL_INTERVAL]" Execute="firstSequence" />
     <CustomAction Id="SetPollIntervalDefault" Property="POLL_INTERVAL" Value="1h" Execute="firstSequence" />
     <CustomAction Id="SetRenewBeforeFromExisting" Property="RENEW_BEFORE" Value="[EXISTING_RENEW_BEFORE]" Execute="firstSequence" />
@@ -140,13 +110,11 @@
 
     <InstallUISequence>
       <Custom Action="SetServerUrlFromExisting" After="AppSearch" Condition="NOT SERVER_URL AND EXISTING_SERVER_URL" />
-      <Custom Action="SetServerUrlFromLegacy" After="SetServerUrlFromExisting" Condition="NOT SERVER_URL AND EXISTING_LEGACY_CONFIG_URL" />
-      <Custom Action="SetServerUrlDefault" After="SetServerUrlFromLegacy" Condition="NOT SERVER_URL" />
+      <Custom Action="SetServerUrlDefault" After="SetServerUrlFromExisting" Condition="NOT SERVER_URL" />
       <Custom Action="SetClientUidFromExisting" After="SetServerUrlDefault" Condition="NOT CLIENT_UID AND EXISTING_CLIENT_UID" />
       <Custom Action="SetEnrollmentSecretFromExisting" After="SetClientUidFromExisting" Condition="NOT ENROLLMENT_SECRET AND EXISTING_ENROLLMENT_SECRET" />
       <Custom Action="SetExpectedDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting" Condition="NOT EXPECTED_DEVICE_ID AND EXISTING_EXPECTED_DEVICE_ID" />
-      <Custom Action="SetExpectedDeviceIdFromLegacyRegistry" After="SetExpectedDeviceIdFromExisting" Condition="NOT EXPECTED_DEVICE_ID AND EXISTING_LEGACY_DEVICE_ID" />
-      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromLegacyRegistry" Condition="NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL" />
+      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromExisting" Condition="NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL" />
       <Custom Action="SetPollIntervalDefault" After="SetPollIntervalFromExisting" Condition="NOT POLL_INTERVAL" />
       <Custom Action="SetRenewBeforeFromExisting" After="SetPollIntervalDefault" Condition="NOT RENEW_BEFORE AND EXISTING_RENEW_BEFORE" />
       <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting" Condition="NOT RENEW_BEFORE" />
@@ -159,13 +127,11 @@
 
     <InstallExecuteSequence>
       <Custom Action="SetServerUrlFromExisting" After="AppSearch" Condition="NOT SERVER_URL AND EXISTING_SERVER_URL" />
-      <Custom Action="SetServerUrlFromLegacy" After="SetServerUrlFromExisting" Condition="NOT SERVER_URL AND EXISTING_LEGACY_CONFIG_URL" />
-      <Custom Action="SetServerUrlDefault" After="SetServerUrlFromLegacy" Condition="NOT SERVER_URL" />
+      <Custom Action="SetServerUrlDefault" After="SetServerUrlFromExisting" Condition="NOT SERVER_URL" />
       <Custom Action="SetClientUidFromExisting" After="SetServerUrlDefault" Condition="NOT CLIENT_UID AND EXISTING_CLIENT_UID" />
       <Custom Action="SetEnrollmentSecretFromExisting" After="SetClientUidFromExisting" Condition="NOT ENROLLMENT_SECRET AND EXISTING_ENROLLMENT_SECRET" />
       <Custom Action="SetExpectedDeviceIdFromExisting" After="SetEnrollmentSecretFromExisting" Condition="NOT EXPECTED_DEVICE_ID AND EXISTING_EXPECTED_DEVICE_ID" />
-      <Custom Action="SetExpectedDeviceIdFromLegacyRegistry" After="SetExpectedDeviceIdFromExisting" Condition="NOT EXPECTED_DEVICE_ID AND EXISTING_LEGACY_DEVICE_ID" />
-      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromLegacyRegistry" Condition="NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL" />
+      <Custom Action="SetPollIntervalFromExisting" After="SetExpectedDeviceIdFromExisting" Condition="NOT POLL_INTERVAL AND EXISTING_POLL_INTERVAL" />
       <Custom Action="SetPollIntervalDefault" After="SetPollIntervalFromExisting" Condition="NOT POLL_INTERVAL" />
       <Custom Action="SetRenewBeforeFromExisting" After="SetPollIntervalDefault" Condition="NOT RENEW_BEFORE AND EXISTING_RENEW_BEFORE" />
       <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting" Condition="NOT RENEW_BEFORE" />
@@ -765,9 +731,6 @@
                         CreateSubkeys="yes"
                         Delete="yes"
                         EnumerateSubkeys="yes" />
-            <RegistryValue Name="ConfigURL"
-                           Type="string"
-                           Value="[SERVER_URL]" />
             <RegistryValue Name="ServerUrl"
                            Type="string"
                            Value="[SERVER_URL]"
@@ -781,9 +744,6 @@
                            Type="string"
                            Value="[ENROLLMENT_SECRET]" />
             <RegistryValue Name="ExpectedDeviceId"
-                           Type="string"
-                           Value="[EXPECTED_DEVICE_ID]" />
-            <RegistryValue Name="DeviceId"
                            Type="string"
                            Value="[EXPECTED_DEVICE_ID]" />
             <RegistryValue Name="PollInterval"

@@ -110,6 +110,7 @@ pub struct PlatformError {
 }
 
 impl PlatformError {
+    #[cfg(not(windows))]
     pub fn not_implemented(component: &'static str, message: impl Into<String>) -> Self {
         Self {
             kind: PlatformErrorKind::NotImplemented,
@@ -172,14 +173,12 @@ impl PlatformError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnrollmentSecretSource {
     InlineConfig,
-    DpapiMachineScope,
 }
 
 impl EnrollmentSecretSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::InlineConfig => "inline-config",
-            Self::DpapiMachineScope => "dpapi-machine-scope",
         }
     }
 }
@@ -267,6 +266,7 @@ pub struct RenewalContext {
     pub certificate: InstalledCertificate,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CertificateInventory {
     Missing,
@@ -343,6 +343,7 @@ impl PlatformClock {
             .unwrap_or_else(SystemTime::now)
     }
 
+    #[cfg(test)]
     pub fn with_now<F>(mut self, now: F) -> Self
     where
         F: Fn() -> SystemTime + Send + Sync + 'static,
@@ -381,17 +382,7 @@ impl SecretLifecycle {
         default_clear_after_success(secret)
     }
 
-    pub fn with_stage_enrollment_secret<F>(mut self, stage: F) -> Self
-    where
-        F: Fn(&EnrollmentSettings) -> Result<StagedEnrollmentSecret, PlatformError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.stage_override = Some(Arc::new(stage));
-        self
-    }
-
+    #[cfg(test)]
     pub fn with_clear_after_success<F>(mut self, clear: F) -> Self
     where
         F: Fn(&StagedEnrollmentSecret) -> Result<(), PlatformError> + Send + Sync + 'static,
@@ -417,17 +408,6 @@ impl TpmKeyManager {
         }
 
         default_ensure_machine_key(plan, secret)
-    }
-
-    pub fn with_ensure_machine_key<F>(mut self, ensure: F) -> Self
-    where
-        F: Fn(&EnrollmentSettings, &StagedEnrollmentSecret) -> Result<TpmKeyHandle, PlatformError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.ensure_override = Some(Arc::new(ensure));
-        self
     }
 }
 
@@ -455,6 +435,7 @@ impl DeviceIdentityProbe {
         resolve_expected_device_identity(expected_device_id)
     }
 
+    #[cfg(test)]
     pub fn with_resolve_expected_device_identity<F>(mut self, resolve: F) -> Self
     where
         F: Fn(&str) -> Result<ResolvedDeviceIdentity, PlatformError> + Send + Sync + 'static,
@@ -502,6 +483,7 @@ impl MachineCertificateStore {
         default_install_renewed_certificate(context, certificate_der)
     }
 
+    #[cfg(test)]
     pub fn with_probe_current_certificate<F>(mut self, probe: F) -> Self
     where
         F: Fn(&RenewalSettings, Duration, Duration) -> Result<CertificateInventory, PlatformError>
@@ -513,6 +495,7 @@ impl MachineCertificateStore {
         self
     }
 
+    #[cfg(test)]
     pub fn with_install_issued_certificate<F>(mut self, install: F) -> Self
     where
         F: Fn(&PendingEnrollment, &[u8]) -> Result<InstalledCertificate, PlatformError>
@@ -524,6 +507,7 @@ impl MachineCertificateStore {
         self
     }
 
+    #[cfg(test)]
     pub fn with_install_renewed_certificate<F>(mut self, install: F) -> Self
     where
         F: Fn(&RenewalContext, &[u8]) -> Result<InstalledCertificate, PlatformError>
@@ -612,6 +596,7 @@ impl RenewalProcessor {
         default_submit_renewal_scep(request)
     }
 
+    #[cfg(test)]
     pub fn with_fetch_initial_nonce<F>(mut self, fetch: F) -> Self
     where
         F: Fn(&EnrollmentSettings) -> Result<AttestationNonce, PlatformError>
@@ -623,6 +608,7 @@ impl RenewalProcessor {
         self
     }
 
+    #[cfg(test)]
     pub fn with_build_initial_attestation<F>(mut self, build: F) -> Self
     where
         F: Fn(&PendingEnrollment, &AttestationNonce) -> Result<AttestationPayload, PlatformError>
@@ -634,6 +620,7 @@ impl RenewalProcessor {
         self
     }
 
+    #[cfg(test)]
     pub fn with_submit_initial_scep<F>(mut self, submit: F) -> Self
     where
         F: Fn(PreparedInitialEnrollment) -> Result<IssuedCertificateArtifact, PlatformError>
@@ -645,6 +632,7 @@ impl RenewalProcessor {
         self
     }
 
+    #[cfg(test)]
     pub fn with_fetch_renewal_nonce<F>(mut self, fetch: F) -> Self
     where
         F: Fn(&RenewalContext) -> Result<AttestationNonce, PlatformError> + Send + Sync + 'static,
@@ -653,6 +641,7 @@ impl RenewalProcessor {
         self
     }
 
+    #[cfg(test)]
     pub fn with_build_renewal_attestation<F>(mut self, build: F) -> Self
     where
         F: Fn(
@@ -668,6 +657,7 @@ impl RenewalProcessor {
         self
     }
 
+    #[cfg(test)]
     pub fn with_submit_renewal_scep<F>(mut self, submit: F) -> Self
     where
         F: Fn(PreparedRenewal) -> Result<IssuedCertificateArtifact, PlatformError>

@@ -22,8 +22,6 @@ Optional:
   --log-level <LEVEL>                 Service log level (default: debug)
   --wait-seconds <SECONDS>            Wait budget per install run (default: 2100)
   --artifact-dir <DIR>                Directory for captured logs/summary
-  --msi-builder <auto|wix|wixl>       Packaging backend for build_windows_msi.sh
-                                      (default: wix for release-path validation)
   --project <PROJECT_ID>              GCP project override
   --zone <ZONE>                       GCP zone override
   --instance <INSTANCE_NAME>          Windows VM override
@@ -51,8 +49,6 @@ LOG_LEVEL="debug"
 WAIT_SECONDS=2100
 FORCE_FRESH_INSTALL=0
 ARTIFACT_DIR=""
-MSI_BUILDER="wix"
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --windows-user)
@@ -93,10 +89,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact-dir)
       ARTIFACT_DIR="${2:?missing value for --artifact-dir}"
-      shift 2
-      ;;
-    --msi-builder)
-      MSI_BUILDER="${2:?missing value for --msi-builder}"
       shift 2
       ;;
     --project)
@@ -191,7 +183,6 @@ build_args=(
   --repo-root "$REPO_ROOT"
   --terraform-dir "$TERRAFORM_DIR"
   --windows-user "$WINDOWS_USER"
-  --msi-builder "$MSI_BUILDER"
 )
 if [[ -n "$PROJECT_ID" ]]; then
   build_args+=(--project "$PROJECT_ID")
