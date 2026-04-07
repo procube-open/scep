@@ -54,9 +54,6 @@ func TestDepot_Serial(t *testing.T) {
 
 func TestDepot_writeSerial(t *testing.T) {
 	db := createDB(0666, nil)
-	type args struct {
-		s *big.Int
-	}
 	tests := []struct {
 		name    string
 		args    *big.Int
@@ -78,9 +75,6 @@ func TestDepot_writeSerial(t *testing.T) {
 
 func TestDepot_incrementSerial(t *testing.T) {
 	db := createDB(0666, nil)
-	type args struct {
-		s *big.Int
-	}
 	tests := []struct {
 		name    string
 		args    *big.Int

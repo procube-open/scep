@@ -10,8 +10,10 @@ const english = {
     empty: "No clients found.",
     create: "Register",
     created: "Client created.",
+    updated: "Client updated.",
     revoke: "Revoke",
     revoked: "Client revoked.",
+    updateTitle: "Manage Client Attributes",
     dialog: {
       title: "New Client",
     },
@@ -26,8 +28,16 @@ const english = {
       uid: "Client ID",
       status: "Status",
       secret: "Secret",
+      managed_client_type: "Managed Client Type",
+      device_id: "Device ID",
+      device_id_helper: "Required for Windows MSI managed clients.",
+      additional_attributes: "Additional Attributes (JSON)",
       attributes: "Attributes",
-    }
+    },
+    managedClientType: {
+      none: "Not managed",
+      windows_msi: "Windows MSI 管理対象",
+    },
   },
   cert: {
     listTitle: "Certificate List",
@@ -79,9 +89,13 @@ const english = {
     requiredError: "Required field.",
     parseError: "Input in JSON format.",
     createError: "Creation failed.",
+    updateError: "Update failed.",
   },
   other: {
     changeMode: "Admin Mode",
+    serviceStatusLoading: "Service: Checking...",
+    serviceStatusRunning: "Service: Running",
+    serviceStatusStopped: "Service: Stopped",
   }
 }
 
@@ -94,8 +108,10 @@ const japanese = {
     empty: "クライアントが見つかりません。",
     create: "登録",
     created: "クライアントを作成しました。",
+    updated: "クライアントを更新しました。",
     revoke: "失効",
     revoked: "クライアントを失効しました。",
+    updateTitle: "クライアント属性の管理",
     dialog: {
       title: "新規クライアント",
     },
@@ -110,8 +126,16 @@ const japanese = {
       uid: "クライアントID",
       status: "ステータス",
       secret: "シークレット",
+      managed_client_type: "管理対象種別",
+      device_id: "デバイスID",
+      device_id_helper: "Windows MSI 管理対象では必須です。",
+      additional_attributes: "追加属性 (JSON)",
       attributes: "属性",
-    }
+    },
+    managedClientType: {
+      none: "通常クライアント",
+      windows_msi: "Windows MSI 管理対象",
+    },
   },
   cert :{
     listTitle: "証明書一覧",
@@ -163,9 +187,13 @@ const japanese = {
     requiredError: "必須項目です。",
     parseError: "JSON形式で入力して下さい。",
     createError: "作成に失敗しました。",
+    updateError: "更新に失敗しました。",
   },
   other:{
     changeMode: "管理モード",
+    serviceStatusLoading: "サービス状態: 確認中...",
+    serviceStatusRunning: "サービス状態: 稼働中",
+    serviceStatusStopped: "サービス状態: 停止中",
   }
 }
 

@@ -1,0 +1,25 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "scep": "0.2.2"
+  },
+  "changesets": [
+    "brave-llamas-kiss",
+    "dry-days-flash",
+    "early-memes-carry",
+    "fiery-papers-enter",
+    "gold-forks-serve",
+    "lazy-squids-feel",
+    "metal-teeth-write",
+    "new-taxis-hear",
+    "rich-suits-design",
+    "silent-cups-joke",
+    "silver-parks-doubt",
+    "slimy-baboons-trade",
+    "soft-pens-bow",
+    "some-snakes-act",
+    "strong-lamps-pump",
+    "twenty-colts-search"
+  ]
+}

@@ -18,6 +18,7 @@ import (
 
 	scepclient "github.com/procube-open/scep/client"
 	"github.com/procube-open/scep/scep"
+	scepserver "github.com/procube-open/scep/server"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -39,6 +40,7 @@ var (
 	flCountry       = "JP"
 	flCACertMessage = ""
 	flDNSName       = ""
+	flAttestation   = ""
 
 	// in case of multiple certificate authorities, we need to figure out who the recipient of the encrypted
 	// data is.
@@ -54,6 +56,9 @@ type runCfg struct {
 	dir             string
 	csrPath         string
 	keyPath         string
+	keyProvider     string
+	keyName         string
+	publicKeySPKI   string
 	keyBits         int
 	selfSignPath    string
 	certPath        string
@@ -70,6 +75,7 @@ type runCfg struct {
 	logfmt          string
 	caCertMsg       string
 	dnsName         string
+	attestation     string
 }
 
 func run(cfg runCfg) error {
@@ -94,10 +100,11 @@ func run(cfg runCfg) error {
 		return err
 	}
 
-	key, err := loadOrMakeKey(cfg.keyPath, cfg.keyBits)
+	key, cleanup, err := loadKeyMaterial(cfg)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 
 	opts := &csrOptions{
 		cn:        cfg.cn,
@@ -111,7 +118,12 @@ func run(cfg runCfg) error {
 		dnsName:   cfg.dnsName,
 	}
 
-	csr, err := loadOrMakeCSR(cfg.csrPath, opts)
+	var csr *x509.CertificateRequest
+	if cfg.keyProvider != "" {
+		csr, err = makeCSR(opts)
+	} else {
+		csr, err = loadOrMakeCSR(cfg.csrPath, opts)
+	}
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -123,7 +135,12 @@ func run(cfg runCfg) error {
 		if !os.IsNotExist(err) {
 			return err
 		}
-		s, err := loadOrSign(cfg.selfSignPath, key, csr)
+		var s *x509.Certificate
+		if cfg.keyProvider != "" {
+			s, err = selfSign(key, csr)
+		} else {
+			s, err = loadOrSign(cfg.selfSignPath, key, csr)
+		}
 		if err != nil {
 			return err
 		}
@@ -190,13 +207,31 @@ func run(cfg runCfg) error {
 		return errors.Wrap(err, "creating csr pkiMessage")
 	}
 
+	if cfg.attestation != "" {
+		cfg.attestation, err = maybeUpgradeAttestation(
+			cfg.attestation,
+			cfg.keyProvider,
+			cfg.keyName,
+			cfg.publicKeySPKI,
+			cfg.serverURL,
+			cfg.cn,
+		)
+		if err != nil {
+			return errors.Wrap(err, "prepare attestation")
+		}
+	}
+
 	var respMsg *scep.PKIMessage
 
 	for {
 		// loop in case we get a PENDING response which requires
 		// a manual approval.
+		reqCtx := ctx
+		if cfg.attestation != "" {
+			reqCtx = scepserver.ContextWithAttestation(reqCtx, cfg.attestation)
+		}
 
-		respBytes, err := client.PKIOperation(ctx, msg.Raw)
+		respBytes, err := client.PKIOperation(reqCtx, msg.Raw)
 		if err != nil {
 			return errors.Wrapf(err, "PKIOperation for %s", msgType)
 		}
@@ -228,7 +263,7 @@ func run(cfg runCfg) error {
 	}
 
 	// remove self signer if used
-	if self != nil {
+	if self != nil && cfg.keyProvider == "" {
 		if err := os.Remove(cfg.selfSignPath); err != nil {
 			return err
 		}
@@ -272,10 +307,7 @@ func validateFingerprint(fingerprint string) (hash []byte, err error) {
 	return
 }
 
-func validateFlags(keyPath, serverURL string) error {
-	if keyPath == "" {
-		return errors.New("must specify private key path")
-	}
+func validateFlags(serverURL string) error {
 	if serverURL == "" {
 		return errors.New("must specify server-url flag parameter")
 	}
@@ -286,13 +318,56 @@ func validateFlags(keyPath, serverURL string) error {
 	return nil
 }
 
+func validateFileKeyFlags(keyPath string) error {
+	if keyPath == "" {
+		return errors.New("must specify private key path")
+	}
+	return nil
+}
+
+func buildChallenge(uid, secret, certPath string) (string, error) {
+	uid = strings.TrimSpace(uid)
+	secret = strings.TrimSpace(secret)
+	if uid == "" {
+		return "", errors.New("please set -uid option")
+	}
+	if secret != "" {
+		return uid + "\\" + secret, nil
+	}
+	if certPath == "" {
+		return "", errors.New("please set -secret option for initial enrollment")
+	}
+	if _, err := loadPEMCertFromFile(certPath); err == nil {
+		return "", nil
+	} else if os.IsNotExist(err) {
+		return "", errors.New("please set -secret option for initial enrollment")
+	} else {
+		return "", fmt.Errorf("renewal without -secret requires a readable existing certificate at %s: %w", certPath, err)
+	}
+}
+
+func invokedAsDeviceIDProbe(programPath string) bool {
+	programPath = strings.ReplaceAll(strings.TrimSpace(programPath), `\`, `/`)
+	base := strings.ToLower(filepath.Base(programPath))
+	return base == "device-id-probe" || base == "device-id-probe.exe"
+}
+
 func main() {
 	var (
-		flUid     = flag.String("uid", "", "uid of user")
-		flSecret  = flag.String("secret", "", "password of user")
-		flWorkDir = flag.String("out", ".", "create certificates under this directory")
+		flUid             = flag.String("uid", "", "uid of user")
+		flSecret          = flag.String("secret", "", "password of user")
+		flWorkDir         = flag.String("out", ".", "create certificates under this directory")
+		flServerURLFlag   = flag.String("server-url", flServerURL, "SCEP server URL")
+		flAttestationFlag = flag.String("attestation", flAttestation, "base64url-encoded attestation payload")
+		flEmitAttestation = flag.Bool("emit-attestation", false, "upgrade and print the final attestation payload, then exit")
+		flPrintDeviceID   = flag.Bool("print-device-id", false, "print the canonical device_id derived from the Windows EK public key, then exit")
+		flJSONOutput      = flag.Bool("json", false, "print command output as JSON when supported")
+		flKeyProvider     = flag.String("key-provider", "", "Windows key storage provider name")
+		flKeyName         = flag.String("key-name", "", "Windows persisted key name")
+		flPublicKeySPKI   = flag.String("public-key-spki-b64", "", "optional base64url-encoded SubjectPublicKeyInfo for a Windows persisted key")
 	)
 	flag.Parse()
+	defaultProbeMode := invokedAsDeviceIDProbe(os.Args[0])
 
 	// print version information
 	if flVersion {
@@ -300,18 +375,49 @@ func main() {
 		os.Exit(0)
 	}
 
-	var challenge string
-	if *flUid == "" || *flSecret == "" {
-		fmt.Fprintln(os.Stderr, "please set -uid and -secret option")
-		os.Exit(1)
+	if *flPrintDeviceID || (defaultProbeMode && !*flEmitAttestation) {
+		if err := printCurrentDeviceIdentity(*flJSONOutput); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
-	challenge = *flUid + "\\" + *flSecret
+	if *flEmitAttestation {
+		if *flAttestationFlag == "" {
+			fmt.Fprintln(os.Stderr, "please set -attestation when using -emit-attestation")
+			os.Exit(1)
+		}
+		if *flKeyProvider == "" || *flKeyName == "" {
+			fmt.Fprintln(os.Stderr, "please set -key-provider and -key-name when using -emit-attestation")
+			os.Exit(1)
+		}
+		attestation, err := maybeUpgradeAttestation(
+			*flAttestationFlag,
+			*flKeyProvider,
+			*flKeyName,
+			*flPublicKeySPKI,
+			*flServerURLFlag,
+			*flUid,
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(attestation)
+		os.Exit(0)
+	}
+
 	dir := filepath.Dir(*flWorkDir)
 	keyPath := filepath.Join(dir, flPKeyFileName)
 	certPath := filepath.Join(dir, flCertFileName)
 	csrPath := filepath.Join(dir, "csr.pem")
 	selfSignPath := filepath.Join(dir, "self.pem")
+	challenge, err := buildChallenge(*flUid, *flSecret, certPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	var logfmt string
 	if flLogJSON {
@@ -320,7 +426,16 @@ func main() {
 
 	keySize, _ := strconv.Atoi(flKeySize)
 
-	if err := validateFlags(keyPath, flServerURL); err != nil {
+	if err := validateFlags(*flServerURLFlag); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if *flKeyProvider != "" || *flKeyName != "" || *flPublicKeySPKI != "" {
+		if *flKeyProvider == "" || *flKeyName == "" {
+			fmt.Println("please set -key-provider and -key-name together")
+			os.Exit(1)
+		}
+	} else if err := validateFileKeyFlags(keyPath); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
@@ -339,6 +454,9 @@ func main() {
 		dir:             dir,
 		csrPath:         csrPath,
 		keyPath:         keyPath,
+		keyProvider:     *flKeyProvider,
+		keyName:         *flKeyName,
+		publicKeySPKI:   *flPublicKeySPKI,
 		keyBits:         keySize,
 		selfSignPath:    selfSignPath,
 		certPath:        certPath,
@@ -349,16 +467,38 @@ func main() {
 		ou:              flOU,
 		province:        flProvince,
 		challenge:       challenge,
-		serverURL:       flServerURL,
+		serverURL:       *flServerURLFlag,
 		caCertsSelector: caCertsSelector,
 		debug:           flDebugLogging,
 		logfmt:          logfmt,
 		caCertMsg:       flCACertMessage,
 		dnsName:         flDNSName,
+		attestation:     *flAttestationFlag,
 	}
 
 	if err := run(cfg); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+}
+
+type keyMaterial interface {
+	crypto.Signer
+	crypto.Decrypter
+}
+
+func loadKeyMaterial(cfg runCfg) (keyMaterial, func(), error) {
+	if cfg.keyProvider != "" {
+		key, err := openWindowsNCryptKey(cfg.keyProvider, cfg.keyName, cfg.publicKeySPKI)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return key, func() { _ = key.Close() }, nil
+	}
+
+	key, err := loadOrMakeKey(cfg.keyPath, cfg.keyBits)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return key, func() {}, nil
 }

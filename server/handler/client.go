@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/hook"
+	"github.com/procube-open/scep/utils"
 )
 
 type ResClient struct {
@@ -93,6 +96,13 @@ func AddClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		if c.Attributes == nil {
 			c.Attributes = make(map[string]interface{})
 		}
+		if err := normalizeClientAttributes(c.Attributes); err != nil {
+			res := ErrResp{Message: err.Error()}
+			w.WriteHeader(http.StatusBadRequest)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
 		initialStatus := "INACTIVE"
 		err = depot.AddClient(c, initialStatus)
 		if err != nil {
@@ -125,12 +135,164 @@ func UpdateClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 		if c.Attributes == nil {
 			c.Attributes = make(map[string]interface{})
 		}
+		if err := normalizeClientAttributes(c.Attributes); err != nil {
+			res := ErrResp{Message: err.Error()}
+			w.WriteHeader(http.StatusBadRequest)
+			b, _ := json.Marshal(res)
+			w.Write(b)
+			return
+		}
 		err = depot.UpdateAttributesClient(c)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
+}
+
+func normalizeClientAttributes(attributes map[string]interface{}) error {
+	if err := rejectDeprecatedClientAttributes(attributes); err != nil {
+		return err
+	}
+	if err := normalizeManagedClientTypeAttribute(attributes); err != nil {
+		return err
+	}
+	if err := normalizeDeviceIDAttribute(attributes); err != nil {
+		return err
+	}
+	if err := normalizeSHA256FingerprintAttribute(attributes, utils.ClientAttributeAttestationAIKSPKISHA256); err != nil {
+		return err
+	}
+	if err := normalizeSHA256FingerprintAttribute(attributes, utils.ClientAttributeAttestationEKCertSHA256); err != nil {
+		return err
+	}
+	if err := validateManagedClientAttributes(attributes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func rejectDeprecatedClientAttributes(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+	if _, ok := attributes[utils.ClientAttributeAttestationActivationReq]; ok {
+		return fmt.Errorf("%s has been replaced by %s", utils.ClientAttributeAttestationActivationReq, utils.ClientAttributeManagedClientType)
+	}
+	return nil
+}
+
+func normalizeManagedClientTypeAttribute(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+
+	value, ok := attributes[utils.ClientAttributeManagedClientType]
+	if !ok {
+		return nil
+	}
+
+	managedClientType, ok := value.(string)
+	if !ok {
+		return errors.New("managed_client_type must be a string")
+	}
+
+	managedClientType = utils.NormalizeManagedClientType(managedClientType)
+	if managedClientType == "" {
+		return fmt.Errorf("managed_client_type must be %q", utils.ManagedClientTypeWindowsMSI)
+	}
+
+	attributes[utils.ClientAttributeManagedClientType] = managedClientType
+	return nil
+}
+
+func normalizeDeviceIDAttribute(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+
+	value, ok := attributes[utils.ClientAttributeDeviceID]
+	if !ok {
+		return nil
+	}
+
+	deviceID, ok := value.(string)
+	if !ok {
+		return errors.New("device_id must be a string")
+	}
+
+	deviceID = utils.NormalizeDeviceID(deviceID)
+	if deviceID == "" {
+		return errors.New("device_id must not be empty")
+	}
+
+	attributes[utils.ClientAttributeDeviceID] = deviceID
+	return nil
+}
+
+func validateManagedClientAttributes(attributes map[string]interface{}) error {
+	if attributes == nil {
+		return nil
+	}
+
+	managedClientType, ok := attributes[utils.ClientAttributeManagedClientType].(string)
+	if !ok || managedClientType == "" {
+		return nil
+	}
+
+	if managedClientType == utils.ManagedClientTypeWindowsMSI {
+		deviceID, ok := lookupNormalizedDeviceIDAttribute(attributes)
+		if !ok {
+			return fmt.Errorf("device_id is required when managed_client_type=%s", utils.ManagedClientTypeWindowsMSI)
+		}
+		if utils.NormalizeSHA256Fingerprint(deviceID) != deviceID {
+			return errors.New("device_id must be a lowercase 64-character SHA-256 fingerprint when managed_client_type=windows-msi")
+		}
+	}
+
+	return nil
+}
+
+func lookupNormalizedDeviceIDAttribute(attributes map[string]interface{}) (string, bool) {
+	if attributes == nil {
+		return "", false
+	}
+
+	deviceID, ok := attributes[utils.ClientAttributeDeviceID].(string)
+	if !ok {
+		return "", false
+	}
+
+	deviceID = utils.NormalizeDeviceID(deviceID)
+	if deviceID == "" {
+		return "", false
+	}
+
+	return deviceID, true
+}
+
+func normalizeSHA256FingerprintAttribute(attributes map[string]interface{}, key string) error {
+	if attributes == nil {
+		return nil
+	}
+
+	value, ok := attributes[key]
+	if !ok {
+		return nil
+	}
+
+	fingerprint, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("%s must be a string", key)
+	}
+
+	fingerprint = utils.NormalizeSHA256Fingerprint(fingerprint)
+	if fingerprint == "" {
+		return fmt.Errorf("%s must be a 64-character SHA-256 fingerprint", key)
+	}
+
+	attributes[key] = fingerprint
+	return nil
 }
 
 func RevokeClientHandler(depot *mysql.MySQLDepot) http.HandlerFunc {

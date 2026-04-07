@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
-	"strings"
 
 	"github.com/procube-open/scep/depot/mysql"
 	"github.com/procube-open/scep/scep"
@@ -63,26 +62,68 @@ func StaticChallengeMiddleware(challenge string, next CSRSignerContext) CSRSigne
 }
 
 // IDMChallengeMiddleware
-func MySQLChallengeMiddleWare(depot *mysql.MySQLDepot, next CSRSignerContext) CSRSignerContextFunc {
+type mysqlChallengeStore interface {
+	requestClientStore
+	GetSecret(target string) (mysql.GetSecretInfo, error)
+}
+
+func MySQLChallengeMiddleWare(depot mysqlChallengeStore, next CSRSignerContext) CSRSignerContextFunc {
 	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
-		arr := strings.Split(m.ChallengePassword, "\\")
-		if len(arr) != 2 {
+		identity, err := resolveRequestIdentity(ctx, depot)
+		if err != nil {
+			return nil, err
+		}
+
+		switch identity.authMethod {
+		case requestIdentityByChallenge:
+			if isWindowsManagedClient(identity.client.Attributes) && identity.client.Status != "ISSUABLE" {
+				return nil, errors.New("windows-msi client is not issuable")
+			}
+			if !(identity.client.Status == "ISSUABLE" || identity.client.Status == "UPDATABLE") {
+				return nil, errors.New("client is not issuable or updatable")
+			}
+			secret, err := depot.GetSecret(identity.client.Uid)
+			if err != nil {
+				return nil, err
+			}
+			if secret.Secret != identity.secret {
+				return nil, errors.New("invalid secret")
+			}
+		case requestIdentityBySignerCertificate:
+			if isWindowsManagedClient(identity.client.Attributes) && identity.client.Status != "ISSUED" {
+				return nil, errors.New("windows-msi client is not issued")
+			}
+			if !(identity.client.Status == "ISSUED" || identity.client.Status == "UPDATABLE") {
+				return nil, errors.New("client is not issued or updatable")
+			}
+		default:
 			return nil, errors.New("invalid challenge")
 		}
-		client, err := depot.GetClient(arr[0])
-		if err != nil {
+
+		return next.SignCSRContext(ctx, m)
+	}
+}
+
+func AttestationMiddleware(verifier AttestationVerifier, next CSRSignerContext) CSRSignerContextFunc {
+	return func(ctx context.Context, m *scep.CSRReqMessage) (*x509.Certificate, error) {
+		if verifier == nil {
+			return nil, errors.New("attestation verifier is nil")
+		}
+		attestation, _ := AttestationFromContext(ctx)
+
+		if m.CSR != nil && m.CSR.PublicKey != nil {
+			publicKey, err := x509.MarshalPKIXPublicKey(m.CSR.PublicKey)
+			if err != nil {
+				return nil, err
+			}
+			ctx = ContextWithCSRPublicKey(ctx, publicKey)
+		}
+
+		ctx = ContextWithChallengePassword(ctx, m.ChallengePassword)
+		if err := verifier.VerifyAttestation(ctx, attestation); err != nil {
 			return nil, err
 		}
-		if !(client.Status == "ISSUABLE" || client.Status == "UPDATABLE") {
-			return nil, errors.New("client is not issuable or updatable")
-		}
-		secret, err := depot.GetSecret(arr[0])
-		if err != nil {
-			return nil, err
-		}
-		if secret.Secret != arr[1] {
-			return nil, errors.New("invalid secret")
-		}
+
 		return next.SignCSRContext(ctx, m)
 	}
 }

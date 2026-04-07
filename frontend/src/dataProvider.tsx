@@ -5,16 +5,17 @@ import {
 } from 'react-admin';
 
 const fetchJson = (url: string, options: any) => fetchUtils.fetchJson(url, options)
+const unsupportedProviderMethod = (): any => Promise
 export const baseDataProvider = {
-  getList: (resource: string, params: any): any => Promise,
-  getOne: (resource: string, params: any): any => Promise,
-  getMany: (resource: string, params: any): any => Promise,
-  getManyReference: (resource: string, params: any): any => Promise,
-  create: (resource: string, params: any): any => Promise,
-  update: (resource: string, params: any): any => Promise,
-  updateMany: (resource: string, params: any): any => Promise,
-  delete: (resource: string, params: any): any => Promise,
-  deleteMany: (resource: string, params: any): any => Promise,
+  getList: unsupportedProviderMethod,
+  getOne: unsupportedProviderMethod,
+  getMany: unsupportedProviderMethod,
+  getManyReference: unsupportedProviderMethod,
+  create: unsupportedProviderMethod,
+  update: unsupportedProviderMethod,
+  updateMany: unsupportedProviderMethod,
+  delete: unsupportedProviderMethod,
+  deleteMany: unsupportedProviderMethod,
 }
 
 export const ClientProvider = {
@@ -70,6 +71,22 @@ export const ClientProvider = {
     if (!parsed) throw new Error("Invalid JSON");
     return fetchJson(`/admin/api/${resource}/add`, {
       method: 'POST',
+      headers: new Headers({
+        'Content-Type': 'application/json'
+      }),
+      body: JSON.stringify({
+        "uid": uid,
+        "attributes": parsed
+      })
+    });
+  },
+
+  updateOne: async (resource: string, params: { uid: string, attributes: string }) => {
+    const { uid, attributes } = params;
+    const parsed = JSON.parse(attributes);
+    if (!parsed) throw new Error("Invalid JSON");
+    return fetchJson(`/admin/api/${resource}/update`, {
+      method: 'PUT',
       headers: new Headers({
         'Content-Type': 'application/json'
       }),

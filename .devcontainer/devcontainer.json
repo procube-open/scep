@@ -9,10 +9,10 @@
 			"moby": false
 		},
 		//npm feature
-		"ghcr.io/devcontainers/features/node:1": {}
-	},
-	"remoteEnv": {
-		"DOCKER_API_VERSION": "1.43"
+		"ghcr.io/devcontainers/features/node:1": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers/features/rust:1.5.0": {},
+		"ghcr.io/devcontainers/features/terraform:1": {}
 	}
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
