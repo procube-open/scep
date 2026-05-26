@@ -6,7 +6,7 @@ Terraform による `scep-server` 側のプロビジョニングを前提とし�
 ## この環境での検証範囲
 
 - **このワークスペースで確認済み:** ドキュメント内のパス・リンク、スクリプト引数、手順フロー、主要コマンドの整合性。
-- **実環境 GCP で要確認:** `terraform plan/apply/destroy`、VM 起動スクリプト実行結果、ネットワーク到達性、SSH/RDP 接続、実インフラ上での証明書発行 E2E。
+- **実環境 GCP で要確認:** `terraform plan/apply/destroy`、VM 起動スクリプト実行結果、private routing / serial-port 経路、実インフラ上での証明書発行 E2E。
 
 ## 前提条件
 
@@ -44,8 +44,9 @@ Terraform による `scep-server` 側のプロビジョニングを前提とし�
 2. 少なくとも以下を更新します。
    - `project_id`, `region`, `zone`
    - `mysql_password`（必要に応じて `scep_ca_pass`）
-   - `ssh_source_ranges`, `rdp_source_ranges`, `scep_source_ranges` を最小 CIDR に絞る
-   - current Terraform default は `scep-server-vm` を internal-only のままにし、`scep-client-vm` にだけ external IP を付けて operator RDP / CRD access に使います。`rdp_source_ranges` は必ず最小 CIDR に絞ってください
+   - `ssh_source_ranges`, `rdp_source_ranges`, `scep_source_ranges` を、`coder-vm` 以外から直接入れたい送信元だけに絞る
+   - current Terraform default は `scep-vpc` を既存の `coder-network` / `coder-subnet` に VPC peering し、`coder-vm` から `scep-server-vm` / `scep-client-vm` の private IP へ到達できるようにします。`coder-vm` からの private access に必要な CIDR は Terraform が `coder-subnet` から自動導出して firewall に追加します
+   - `coder-vm` が別 VPC / 別 subnet にいる場合は `operator_network_project_id`, `operator_network_name`, `operator_subnet_name`, `operator_subnet_region` をその環境に合わせて更新し、peering が不要なら `enable_operator_network_peering = false` にします
 3. `scep_dsn` は手動上書きが必要な場合のみ設定し、通常は空のままにします。
 
 > 注意: `mysql_password` は起動時 SQL に展開されるため、単一引用符 `'` を含める場合はブートストラップロジックの調整が必要です。
@@ -75,12 +76,13 @@ Terraform による `scep-server` 側のプロビジョニングを前提とし�
    SERVER_IP="$(terraform output -raw server_internal_ip)"
    curl -fsS "http://${SERVER_IP}:3000/admin/api/ping"
    ```
+   current default では `coder-vm` から同じコマンドをそのまま実行でき、`operator_private_source_ranges` に `coder-subnet` の CIDR が出力されます。
 
 `outputs.tf` で主に使う出力:
 - `server_instance_name`, `client_instance_name`
 - `deployment_zone`, `project_id`
+- `operator_private_source_ranges`
 - `server_internal_ip`, `client_internal_ip`
-- `server_external_ip`, `client_external_ip`（current default では `server_external_ip` は空文字、`client_external_ip` は operator access 用に値を持ちます）
 
 ## サーバーブートストラップ確認
 
@@ -95,7 +97,7 @@ Terraform による `scep-server` 側のプロビジョニングを前提とし�
    手元端末から直接 curl できない internal-only 構成では、同一 VPC 内の VM か踏み台 / VPN / IAP 経由で確認します。
 2. Linux VM サービス状態を確認:
    ```bash
-   gcloud compute ssh scep-server-vm --zone <ZONE> --project <PROJECT_ID> --command 'sudo systemctl status mysql scep-server --no-pager'
+   gcloud compute ssh scep-server-vm --zone <ZONE> --project <PROJECT_ID> --internal-ip --command 'sudo systemctl status mysql scep-server --no-pager'
    ```
 3. ブートストラップ異常時は起動ログを確認:
    - `gcloud compute instances get-serial-port-output`
@@ -104,7 +106,7 @@ Terraform による `scep-server` 側のプロビジョニングを前提とし�
 
 ## windows クライアント
 
-通常の自動検証 / helper 実行は internal URL + startup-script / serial 経由を標準とし、人手で GUI を触る場合のみ Chrome Remote Desktop / RDP を使います。以下では GUI 主経路 (A) と、検証 automation 用 helper 経路 (B) を記述します。
+release blocker の primary path は **coder-vm からの private routing + startup-script / serial + UI Automation** です。手作業の RDP は debug 用の補助経路としてだけ扱います。以下では GUI 主経路 (A) と、検証 automation 用 helper 経路 (B) を記述します。
 
 ## A.1. 接続情報の取得（手元端末）
 
@@ -112,7 +114,6 @@ Terraform による `scep-server` 側のプロビジョニングを前提とし�
 cd infra/terraform
 CLIENT_INSTANCE="$(terraform output -raw client_instance_name)"
 CLIENT_IP="$(terraform output -raw client_internal_ip)"
-CLIENT_PUBLIC_IP="$(terraform output -raw client_external_ip)"
 ZONE="$(terraform output -raw deployment_zone)"
 PROJECT_ID="$(terraform output -raw project_id)"
 SERVER_IP="$(terraform output -raw server_internal_ip)"
@@ -124,14 +125,11 @@ SERVER_IP="$(terraform output -raw server_internal_ip)"
 gcloud compute reset-windows-password "$CLIENT_INSTANCE" --zone "$ZONE" --project "$PROJECT_ID"
 ```
 
-current Terraform default では `scep-server-vm` は internal-only のままにし、`scep-client-vm` にだけ external IP を付けます。GUI 操作が必要な場合は `CLIENT_PUBLIC_IP` へ RDP 接続するか、同じ外部 IP を使って Chrome Remote Desktop bootstrap 後の operator access に使ってください。SCEP / prereg / renewal の通信先は引き続き internal `SERVER_IP` を優先します。
+current Terraform default では `scep-server-vm` / `scep-client-vm` の両方が **private-only** です。`scep-vpc` は `coder-network` と VPC peering されるため、`coder-vm` からは `SERVER_IP` と `CLIENT_IP` に private routing で到達できます。SCEP / prereg / renewal / MSI transfer の主経路はすべてこの private path を使います。
 
-Chrome Remote Desktop の one-time support code は headless / CLI では生成できません。repo には host bootstrap 用 helper として `infra/terraform/scripts/linux/prepare_windows_chrome_remote_desktop.sh` を追加しており、これは Windows VM に Chrome Remote Desktop Host を入れ、Edge があればそれを再利用し、必要なら Chrome も入れたうえで、**次回の interactive logon で** `https://remotedesktop.google.com/support` を自動表示するためのものです。実際の access code 生成は、その browser session で Google に sign in して `Generate Code` を押してください。
+`gcloud compute reset-windows-password` は Windows ログオン資格情報の取得にだけ使います。release blocker の primary evidence では Windows へ手でログインせず、後述の `windows_gui_issuance_e2e.sh` が startup-script / serial 経由で GUI を自動操作します。
 
-```bash
-./infra/terraform/scripts/linux/prepare_windows_chrome_remote_desktop.sh
-gcloud compute reset-windows-password "$CLIENT_INSTANCE" --zone "$ZONE" --project "$PROJECT_ID"
-```
+手動 RDP が必要な場合は、internal RDP / IAP など**別途確保した private access path** 上の debug 手段として扱ってください。release path ではありません。
 
 ## A.3. テスト時のみ: Linux 手元端末で MSI をローカル作成し、必要なら Windows VM へ転送
 
@@ -183,7 +181,7 @@ WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
 ```
 
 `--windows-user` を付けた場合、スクリプトは Terraform 出力から `project_id`, `deployment_zone`, `client_instance_name` を自動検出し、まず Windows VM のホームへ `~/MyTunnelApp.msi` として SCP 転送を試みます。
-Windows 側で OpenSSH が有効でない場合は、自動で fallback して一時 GCS 配布 + Windows startup script + VM 再起動を使い、`C:\Users\Public\MyTunnelApp.msi` へ配置します。
+private-only topology では `gcloud compute scp --internal-ip` 相当の private routing を優先します。Windows 側で OpenSSH が有効でない場合は、自動で fallback して一時 GCS 配布 + Windows startup script + VM 再起動を使い、`C:\Users\Public\MyTunnelApp.msi` へ配置します。
 
 5. 手動で転送したい場合は、OpenSSH が有効な Windows VM へはローカル生成後に MSI だけを SCP 転送できます。
 
@@ -194,7 +192,8 @@ MSI_PATH="$(pwd)/build/windows-msi/installer/dist/MyTunnelApp.msi"
 
 gcloud compute scp "$MSI_PATH" "${WINDOWS_USER}@${CLIENT_INSTANCE}:~/MyTunnelApp.msi" \
   --zone "$ZONE" \
-  --project "$PROJECT_ID"
+  --project "$PROJECT_ID" \
+  --internal-ip
 ```
 
 ## A.4. インストールと起動（Windows VM / 管理者 PowerShell）
@@ -203,13 +202,22 @@ gcloud compute scp "$MSI_PATH" "${WINDOWS_USER}@${CLIENT_INSTANCE}:~/MyTunnelApp
 この方針自体は現在も `installer/main.wxs` に反映されており、WiX v4 (`wix`) でビルドした MSI には GUI ダイアログが含まれます。
 
 ローカル Linux ビルドも `installer/main.wxs` を使う WiX v4 path に統一されています。
-この README では、release blocker の primary evidence である **GUI 手順**と、後続 automation 用の **silent install 手順**の両方を記載します。
+この README では、release blocker の primary evidence である **private-only UI Automation 手順**と、後続 automation 用の **silent install 手順**の両方を記載します。
 
 現時点の WiX v4-authored MSI でも、current GCP Windows / `vTPM` 制約のため、初回 TPM-backed bootstrap が成立する validated default は `LocalSystem` です。
 `LocalService` 収束は hardening 用の optional helper path (`install_windows_msi.sh --converge-to-local-service`) として扱います。
 ### A.4-1. GUI インストール（WiX v4 でビルドした MSI）
 
-この手順は、**WiX v4 でビルドされた GUI 付き MSI** を前提にします。ユーザー体験としては、Windows 上で MSI をダブルクリックして通常のインストーラー画面を進める形です。
+release blocker の primary evidence は、`infra/terraform/scripts/test/windows_gui_issuance_e2e.sh` を **coder-vm から private-only topology 上で** 実行して取得します。この harness は `windows-client-startup.ps1` を一時的な helper bootstrap として使い、`gui-mytunnelapp.ps1` による UI Automation で page 1 probe -> page 2 prereg-check -> page 3 ENROLLMENT_SECRET を通します。manual GUI 操作は人手確認用の補助経路です。
+
+```bash
+cd <this-repo>/infra/terraform/scripts/test
+
+WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
+./windows_gui_issuance_e2e.sh --windows-user "$WINDOWS_USER"
+```
+
+この手順自体は、**WiX v4 でビルドされた GUI 付き MSI** を前提にします。ユーザー体験としては、Windows 上で MSI をダブルクリックして通常のインストーラー画面を進める形です。
 
 1. `MyTunnelApp.msi` をダブルクリックします。
 2. 通常のインストーラー画面を進めると、SCEP 設定入力ダイアログが表示されます。
@@ -229,11 +237,13 @@ gcloud compute scp "$MSI_PATH" "${WINDOWS_USER}@${CLIENT_INSTANCE}:~/MyTunnelApp
 
 - GUI MSI は page 1 で canonical TPM identity を自動 probe し、page 2 で `/api/attestation/prereg-check` を叩いて `ready | client_not_found | device_id_mismatch | not_issuable_yet` を確認します。
 - GCP 検証環境で Windows VM から server VM へ到達させる場合、`SERVER_URL` は通常 `http://<server_internal_ip>:3000/scep` を使います。**`server_internal_ip`** は、Terraform が出力する **同一 VPC 内の内部 IP アドレス**です。
-- release blocker の primary issuance evidence は、この GUI flow を GCP Windows VM 上で実際に通した記録です。
+- `windows_gui_issuance_e2e.sh` は run 開始時に server/client 両 VM が external IP を持たないことを確認し、private-only でない run を release-blocker evidence として扱いません。
+- Windows client VM は GUI release-blocker evidence 用に `enable_display = true` で作成します。これは private-only のまま `get-screenshot` と interactive desktop を有効化するためで、外部 IP を戻すものではありません。
+- release blocker の primary issuance evidence は、この private-only GUI flow を GCP Windows VM 上で実際に通した記録です。
 
 ### A.4-2. サイレントインストール
 
-まず canonical TPM identity を確認します。`build_windows_msi.sh --windows-user ...` は `device-id-probe.exe` も一緒に Windows VM へ転送し、別 helper `probe_windows_device_id.sh` で JSON を取得できます。
+まず canonical TPM identity を確認します。`build_windows_msi.sh --windows-user ...` は `device-id-probe.exe` も一緒に Windows VM へ転送し、別 helper `probe_windows_device_id.sh` で JSON を取得できます。TPM / vTPM が DA lockout 中でも、この helper は serial grace 120s と lockout grace 1800s を見込んで待機します。
 
 ```bash
 cd <this-repo>
@@ -307,6 +317,8 @@ cd <this-repo>
 - `install_windows_msi.sh` / `install-mytunnelapp.ps1` は `device-id-probe.exe -json` で local TPM identity を再確認し、`/api/attestation/prereg-check` が `ready` でなければ `msiexec` 実行前に停止します。
 - helper は一時的に enrollment secret を startup-script metadata へ埋め込みます。これは GCP 検証用の one-time secret 前提で使い、正式運用の配布経路にはしません。実行後は元の startup script へ戻します。
 - シリアルログでは `MYTUNNEL_MSI_INSTALL_DONE` / `MYTUNNEL_MSI_INSTALL_FAILED` を確認できます。
+- `windows-client-startup.ps1` はここで一時的に append される helper の**土台**であり、単体では production install を行いません。
+- TPM / vTPM が DA lockout に入ると helper は `Get-Tpm` の `LockoutHealTime` を読み、`install-mytunnelapp.ps1` 側で `heal time + 30s`（上限 1800s）待機してから probe を再試行します。`install_windows_msi.sh` の outer wait は `--wait-seconds` に加え、serial grace 180s と TPM lockout grace 1800s を見込んでいます。
 
 ## A.5. 動作確認（Windows VM / 管理者 PowerShell）
 
@@ -430,11 +442,13 @@ WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
 補足:
 
 - `--server-url` を省略した場合、この harness は Terraform 出力の `server_internal_ip` から `http://<server_internal_ip>:3000/scep` を自動選択する。GCP 検証では Windows VM と server VM が同一 VPC にいるため、internal URL を既定とする
+- harness は run 開始時に server/client 両 VM が private-only であることを確認し、external IP が残っている場合は release-blocker validation を拒否する
 - harness は `build_windows_msi.sh` / `install_windows_msi.sh` を再利用し、silent reinstall 後に managed `cert.pem` と `LocalMachine\My` の thumbprint 変化を確認する
 - current policy では same-key renewal は既存証明書ベースで認可するため、この harness では `--enrollment-secret` を省略できる。fresh issuance / `--force-fresh-install` を伴う run では引き続き初回用 secret が必要
 - renewal harness は引き続き `--apply-registry-overrides` を使う。これは「reconfiguration を通す」ためではなく、「same-version reinstall のまま current-run renewal を強制観測する」ための validation wiring である
 - current release-path validation は `LocalSystem` bootstrap のまま行う。`LocalService` 収束は lower-level `install_windows_msi.sh --converge-to-local-service` による optional hardening path として別途実施する
 - 成功時は JSON で `before_thumbprint`, `after_thumbprint`, `service_state`, `present_in_machine_store` を出力する
+- lockout budget の目安は GUI harness と同様で、default `--wait-seconds 2100` は `Get-Tpm` query timeout / lockout wait / retry cadence を含む vTPM rerun 余裕を見込んでいる
 - 2026-04-01 の current WiX v4 positive run `copilot-install-20260401T083450Z-7118` では `service.start_name=LocalSystem`, `managed_thumbprint=102D4FFFB0B660C2FAD3EFB21CBE09A5B36BFF8B`, `present_in_machine_store=true`, `has_enrollment_secret=false`, `has_enrollment_secret_protected=false` を確認した
 - 2026-04-02 の secretless same-key renewal rerun `copilot-install-20260402T084540Z-30130` は、当初は thumbprint `931A82AA17DFD462E80F56A7B5646B18D4CBDF93 -> 03EF969DD79E377E59EB34DDC447BAC0C2814B76` の回転と `present_in_machine_store=true`, `service_state=Running` により成功に見えたが、後続の server-side truth probe で false positive と判明した。server の active cert は `4E8AFDAFA7829D4886702D1548A9B19CAA5BEE5F` のままで、local の `03EF969DD79E377E59EB34DDC447BAC0C2814B76` は server 上では revoked だったため、current validation は `after_thumbprint == server.active_thumbprint` を必須条件にし、helper も server-active cert が `LocalMachine\My` にない場合は別 cert へ同期しない
 - 2026-04-06 の stale-binary rerun `copilot-install-20260406T044911Z-16810` では、same-version reinstall 後の `Program Files\MyTunnelApp\service.exe` hash mismatch を helper が検出し、`phase=binary-refresh-fallback reason=same-version reinstall left stale Program Files binaries: service.exe` を live GCP で確認した。これに合わせて helper は installed `service.exe` / `scepclient.exe` hash を summary に載せ、validation も `program_files_match_expected` を success 条件に追加した
@@ -472,9 +486,10 @@ WINDOWS_USER="<reset-windows-passwordで取得したユーザー名>"
 補足:
 
 - harness は `build_windows_msi.sh` / `install_windows_msi.sh --tamper-activation-proof-renewal` を再利用し、install 後に `scepclient.exe -emit-attestation` で real canonical attestation を組み立て、`activation_proof_b64` を改ざんした renewal を送る
-- negative helper は `renewal_rejected=true`、managed certificate が `LocalMachine\\My` に残ること、managed thumbprint が変化しないことを満たした場合のみ成功として返る。`renewal_exit_code` は補助情報であり authoritative ではない
+- harness は run 開始時に server/client 両 VM が private-only であることを確認し、external IP が残っている場合は release-blocker validation を拒否する
+- negative helper は `renewal_rejected=true` と non-empty `renewal_failure_excerpt` を authoritative signal とし、managed certificate が `LocalMachine\\My` に残ること、managed thumbprint が変化しないことを満たした場合のみ成功として返る。`renewal_exit_code` は補助情報であり authoritative ではない
 - 2026-04-02 の clean rerun `copilot-install-20260402T020037Z-12035` では client `wcneg_20260402T015627Z_f4c83785f8cf` に対して `activation_negative.renewal_exit_code=0`, `renewal_rejected=true`, `managed_thumbprint_before=managed_thumbprint_after=35BC281F065042D8CABE40750555370AF332E6EC`, `service.state=Running` を summary から確認した。live `scep-server-vm` journal でも `invalid attestation: invalid_activation_proof` を記録しており、negative 判定では `renewal_exit_code` ではなく `renewal_rejected` / `renewal_failure_excerpt` を authoritative に見る
-- GCP Windows vTPM path では repeated reset に伴って guest agent が `TPM is in DA lockout mode` warning を出しうるため、harness rerun は間隔を空けて実施する
+- GCP Windows vTPM path では repeated reset に伴って guest agent が `TPM is in DA lockout mode` warning を出しうるため、harness rerun は少なくとも `LockoutHealTime + 30s` を目安に間隔を空けて実施する。helper は `Get-Tpm` を 30 秒で query し、timeout 時は追加で約 17 分、lockout 時は最大 30 分まで待ってから再試行する
 
 同じ MSI version への reinstall で advanced property を変えたい場合の補足:
 
@@ -500,7 +515,7 @@ terraform destroy -var-file=terraform.tfvars
 
 コスト注意:
 - 主コストは Compute Engine VM（Linux + Windows）、永続ディスク、ネットワーク Egress
-- パブリック IP 付き稼働 VM と Windows ライセンスでコストが増えます
+- Windows ライセンスと長時間の検証実行でコストが増えます
 - 検証時間を短くし、終了後すぐ破棄してください
 
 ## トラブルシューティング
@@ -509,15 +524,17 @@ terraform destroy -var-file=terraform.tfvars
 
 - 症状: `:3000`, `:22`, `:3389` に接続できない
 - `variables.tf` / `main.tf` の `scep_source_ranges`, `ssh_source_ranges`, `rdp_source_ranges` と VM タグを確認
-- 自端末 IP が許可 CIDR に含まれているか確認
+- `enable_operator_network_peering` が有効か、`operator_network_name` / `operator_subnet_name` / `operator_subnet_region` が実環境の `coder-vm` に一致しているか確認
+- `terraform output operator_private_source_ranges` に `coder-vm` の subnet CIDR が出ているか確認
+- `coder-vm` 以外から直接入る場合は、自端末 IP が許可 CIDR に含まれているか確認
 
 ### 2) Firewall を開けても `Could not connect to server`
 
 - 症状: `:3000` への curl が `Could not connect to server`
 - サーバー VM での確認:
   ```bash
-  gcloud compute ssh scep-server-vm --zone <ZONE> --project <PROJECT_ID> --command 'sudo systemctl status scep-server --no-pager'
-  gcloud compute ssh scep-server-vm --zone <ZONE> --project <PROJECT_ID> --command "sudo ss -lntp | grep ':3000' || true"
+  gcloud compute ssh scep-server-vm --zone <ZONE> --project <PROJECT_ID> --internal-ip --command 'sudo systemctl status scep-server --no-pager'
+  gcloud compute ssh scep-server-vm --zone <ZONE> --project <PROJECT_ID> --internal-ip --command "sudo ss -lntp | grep ':3000' || true"
   ```
 - SCP 配備ステップを再実行:
   ```bash
@@ -526,11 +543,11 @@ terraform destroy -var-file=terraform.tfvars
   （`terraform apply` 後の Terraform 出力が必要。必要に応じて `--terraform-dir` と各種 override を指定）
 - 必要ならリモートヘルパーを直接実行:
   ```bash
-  gcloud compute ssh <SERVER_INSTANCE_NAME> --zone <ZONE> --project <PROJECT_ID> --command 'sudo /usr/local/bin/deploy-scepserver-binary.sh /tmp/scepserver-opt'
+  gcloud compute ssh <SERVER_INSTANCE_NAME> --zone <ZONE> --project <PROJECT_ID> --internal-ip --command 'sudo /usr/local/bin/deploy-scepserver-binary.sh /tmp/scepserver-opt'
   ```
 - 再確認:
   ```bash
-  curl -fsS "http://<SERVER_EXTERNAL_IP>:3000/admin/api/ping"
+  curl -fsS "http://<SERVER_INTERNAL_IP>:3000/admin/api/ping"
   ```
 
 ### 3) MySQL 認証 / DSN エラー
@@ -542,5 +559,5 @@ terraform destroy -var-file=terraform.tfvars
 ### 4) Windows 起動スクリプト関連
 
 - 症状: Windows クライアントに期待したサービスやバイナリが存在しない
-- `scripts/windows/windows-client-startup.ps1` は準備処理（ディレクトリ/プレースホルダー/TODO ファイル作成）までで、製品バイナリのインストールや常駐起動は行いません
+- `scripts/windows/windows-client-startup.ps1` は placeholder / test-harness bootstrap であり、準備処理（ディレクトリ/プレースホルダー/TODO ファイル作成）までしか行いません。正式な install path は MSI + Windows Service です
 - `C:\scep-client\logs\startup-status.txt`、`C:\scep-client\runtime\artifact-acquisition.todo.ps1`、`C:\scep-client\runtime\invoke-client.todo.ps1` を確認し、本 README の「テスト時: Windows 側を手動で実行する手順」に沿って手動実行してください

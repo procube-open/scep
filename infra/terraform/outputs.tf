@@ -18,22 +18,17 @@ output "deployment_zone" {
   value       = var.zone
 }
 
+output "operator_private_source_ranges" {
+  description = "Private source CIDRs automatically allowed from the peered operator network."
+  value       = local.operator_source_ranges
+}
+
 output "server_internal_ip" {
   description = "Internal IP for Linux SCEP server VM."
   value       = google_compute_instance.scep_server.network_interface[0].network_ip
 }
 
-output "server_external_ip" {
-  description = "External IP for Linux SCEP server VM."
-  value       = try(google_compute_instance.scep_server.network_interface[0].access_config[0].nat_ip, "")
-}
-
 output "client_internal_ip" {
   description = "Internal IP for Windows SCEP client VM."
   value       = google_compute_instance.scep_client_windows.network_interface[0].network_ip
-}
-
-output "client_external_ip" {
-  description = "External IP for Windows SCEP client VM."
-  value       = try(google_compute_instance.scep_client_windows.network_interface[0].access_config[0].nat_ip, "")
 }

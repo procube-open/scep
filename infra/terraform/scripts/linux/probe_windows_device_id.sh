@@ -19,7 +19,9 @@ Options:
                                   (default: <repo-root>/infra/terraform)
   --repo-root <PATH>              Repository root
                                   (default: auto-detected)
-  --wait-seconds <SECONDS>        Wait budget for serial markers (default: 180)
+  --wait-seconds <SECONDS>        Observation-phase wait budget for serial markers
+                                  (default: 180; outer helper also adds serial
+                                  grace 120s and TPM lockout grace 1800s)
   -h, --help                      Show help
 EOF
 }
@@ -34,6 +36,7 @@ ZONE=""
 INSTANCE=""
 WAIT_SECONDS=180
 SERIAL_WAIT_GRACE_SECONDS=120
+TPM_LOCKOUT_GRACE_SECONDS=1800
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -121,7 +124,7 @@ restore_windows_startup_script() {
 wait_for_probe_result() {
   local probe_id="$1"
   local deadline serial_output probe_line
-  deadline=$(( $(date +%s) + WAIT_SECONDS + SERIAL_WAIT_GRACE_SECONDS ))
+  deadline=$(( $(date +%s) + WAIT_SECONDS + SERIAL_WAIT_GRACE_SECONDS + TPM_LOCKOUT_GRACE_SECONDS ))
 
   while (( $(date +%s) <= deadline )); do
     serial_output="$(gcloud compute instances get-serial-port-output "$INSTANCE" --project "$PROJECT_ID" --zone "$ZONE" --port 1 2>/dev/null | tr -d '\000' || true)"

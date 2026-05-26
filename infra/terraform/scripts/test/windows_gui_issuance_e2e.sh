@@ -11,8 +11,9 @@ Automation from the VM startup script. This captures release-blocker evidence
 for the real GUI path instead of the silent helper path.
 
 Optional:
-  --windows-user <USER>               If provided, rebuild and transfer the
-                                      current MSI/probe to the Windows VM first
+  --windows-user <USER>               Windows username used for MSI transfer and
+                                      temporary interactive logon bootstrap
+                                      (default: copilotgui)
   --client-uid <UID>                  Preregistered opaque client UID
                                       (default: auto-generate)
   --enrollment-secret <SECRET>        Initial one-time secret
@@ -30,7 +31,8 @@ Optional:
                                       (default: 9000h)
   --log-level <LEVEL>                 Service log level
                                       (default: debug)
-  --wait-seconds <SECONDS>            Wait budget for the GUI install run
+  --wait-seconds <SECONDS>            Wait budget for the GUI install run,
+                                      including TPM lockout headroom
                                       (default: 2100)
   --artifact-dir <DIR>                Directory for build/probe/install artifacts
   --project <PROJECT_ID>              GCP project override
@@ -45,6 +47,7 @@ EOF
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/gcloud_instance_network.sh"
 TERRAFORM_DIR=""
 WINDOWS_USER=""
 CLIENT_UID=""
@@ -239,6 +242,13 @@ print(secrets.token_hex(24))
 PY
 }
 
+generate_windows_password() {
+  python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(24))
+PY
+}
+
 ensure_command gcloud
 ensure_command python3
 ensure_command terraform
@@ -289,6 +299,24 @@ if [[ -z "$PROJECT_ID" || -z "$ZONE" || -z "$INSTANCE" || -z "$SERVER_URL" ]]; t
   exit 1
 fi
 
+SERVER_INSTANCE="$(terraform_output_raw server_instance_name)"
+if [[ -z "$SERVER_INSTANCE" ]]; then
+  echo "Unable to resolve server_instance_name from Terraform output." >&2
+  exit 1
+fi
+
+assert_gcloud_instance_private_only "$PROJECT_ID" "$ZONE" "$INSTANCE" "windows client VM"
+assert_gcloud_instance_private_only "$PROJECT_ID" "$ZONE" "$SERVER_INSTANCE" "scep server VM"
+echo "Verified private-only topology for ${INSTANCE} and ${SERVER_INSTANCE}"
+
+if [[ -z "$WINDOWS_USER" ]]; then
+  WINDOWS_USER="copilotgui"
+fi
+
+WINDOWS_AUTOMATION_USER="$WINDOWS_USER"
+WINDOWS_AUTOMATION_PASSWORD="$(generate_windows_password)"
+echo "Prepared Windows interactive logon account ${WINDOWS_AUTOMATION_USER}"
+
 build_log="${ARTIFACT_DIR}/build.log"
 probe_json="${ARTIFACT_DIR}/probe.json"
 preregister_log="${ARTIFACT_DIR}/preregister.log"
@@ -323,6 +351,7 @@ if [[ -z "$EXPECTED_DEVICE_ID" ]]; then
     --repo-root "$REPO_ROOT" \
     --terraform-dir "$TERRAFORM_DIR" \
     --probe-path "$PROBE_PATH" \
+    --wait-seconds "$WAIT_SECONDS" \
     --project "$PROJECT_ID" \
     --zone "$ZONE" \
     --instance "$INSTANCE" \
@@ -381,16 +410,239 @@ cat "$WINDOWS_GUI_SCRIPT" >>"$temp_script"
 cat >>"$temp_script" <<EOF
 
 \$copilotGuiInstallId = '$(escape_ps_single_quoted "$gui_id")'
+\$copilotGuiAutomationUser = '$(escape_ps_single_quoted "$WINDOWS_AUTOMATION_USER")'
+\$copilotGuiAutomationPassword = '$(escape_ps_single_quoted "$WINDOWS_AUTOMATION_PASSWORD")'
+\$copilotGuiAutomationRoot = 'C:\ProgramData\MyTunnelApp\gui-automation'
+\$copilotGuiStatusPath = Join-Path \$copilotGuiAutomationRoot ("status-{0}.json" -f \$copilotGuiInstallId)
+\$copilotGuiPhasePath = Join-Path \$copilotGuiAutomationRoot ("phase-{0}.txt" -f \$copilotGuiInstallId)
+\$copilotGuiUserScriptPath = Join-Path \$copilotGuiAutomationRoot ("gui-user-{0}.ps1" -f \$copilotGuiInstallId)
+\$copilotGuiTranscriptPath = Join-Path \$copilotGuiAutomationRoot ("transcript-{0}.log" -f \$copilotGuiInstallId)
+\$copilotGuiTaskName = "CopilotMyTunnelGui-\$copilotGuiInstallId"
+\$copilotGuiFailureLogged = \$false
+\$copilotGuiShouldCleanup = \$true
+
+function Set-CopilotGuiPhase {
+  param(
+    [Parameter(Mandatory = \$true)]
+    [string]\$Value
+  )
+
+  New-Item -ItemType Directory -Path \$copilotGuiAutomationRoot -Force | Out-Null
+  Set-Content -Path \$copilotGuiPhasePath -Encoding ASCII -Value \$Value
+}
+
+function Get-CopilotGuiPhase {
+  if (Test-Path -LiteralPath \$copilotGuiPhasePath) {
+    return (Get-Content -LiteralPath \$copilotGuiPhasePath -Raw).Trim()
+  }
+
+  ''
+}
+
+function Set-CopilotAutoAdminLogon {
+  \$winlogonPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+  if (-not (Test-Path -LiteralPath \$winlogonPath)) {
+    New-Item -Path \$winlogonPath -ItemType Key -Force | Out-Null
+  }
+  Set-ItemProperty -Path \$winlogonPath -Name AutoAdminLogon -Type String -Value '1'
+  Set-ItemProperty -Path \$winlogonPath -Name DefaultUserName -Type String -Value \$copilotGuiAutomationUser
+  Set-ItemProperty -Path \$winlogonPath -Name DefaultPassword -Type String -Value \$copilotGuiAutomationPassword
+  Set-ItemProperty -Path \$winlogonPath -Name DefaultDomainName -Type String -Value \$env:COMPUTERNAME
+}
+
+function Clear-CopilotAutoAdminLogon {
+  \$winlogonPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+  if (-not (Test-Path -LiteralPath \$winlogonPath)) {
+    return
+  }
+
+  Set-ItemProperty -Path \$winlogonPath -Name AutoAdminLogon -Type String -Value '0'
+  Remove-ItemProperty -Path \$winlogonPath -Name DefaultPassword -ErrorAction SilentlyContinue
+}
+
+function Ensure-CopilotLocalAdminUser {
+  \$securePassword = ConvertTo-SecureString -String \$copilotGuiAutomationPassword -AsPlainText -Force
+  \$existingUser = Get-LocalUser -Name \$copilotGuiAutomationUser -ErrorAction SilentlyContinue
+  if (\$null -eq \$existingUser) {
+    New-LocalUser -Name \$copilotGuiAutomationUser -Password \$securePassword -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
+  } else {
+    \$existingUser | Set-LocalUser -Password \$securePassword
+  }
+
+  try {
+    Add-LocalGroupMember -Group 'Administrators' -Member \$copilotGuiAutomationUser -ErrorAction Stop
+  } catch {
+    if (\$_.Exception.Message -notmatch '(?i)already a member') {
+      throw
+    }
+  }
+}
+
+function Register-CopilotGuiScheduledTask {
+  \$taskUser = "{0}\{1}" -f \$env:COMPUTERNAME, \$copilotGuiAutomationUser
+  \$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ("-ExecutionPolicy Bypass -NoLogo -NoProfile -File ""{0}""" -f \$copilotGuiUserScriptPath)
+  \$trigger = New-ScheduledTaskTrigger -AtLogOn -User \$taskUser
+  \$principal = New-ScheduledTaskPrincipal -UserId \$taskUser -LogonType Interactive -RunLevel Highest
+  \$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+  Register-ScheduledTask -TaskName \$copilotGuiTaskName -Action \$action -Trigger \$trigger -Principal \$principal -Settings \$settings -Force | Out-Null
+}
+
+function Write-CopilotGuiStatus {
+  param(
+    [Parameter(Mandatory = \$true)]
+    [string]\$Status,
+    [Parameter(Mandatory = \$true)]
+    [string]\$Message,
+    [AllowNull()]
+    [object]\$Summary = \$null
+  )
+
+  New-Item -ItemType Directory -Path \$copilotGuiAutomationRoot -Force | Out-Null
+  \$payload = [ordered]@{
+    status  = \$Status
+    message = \$Message
+    summary = \$Summary
+  }
+  \$payload | ConvertTo-Json -Depth 12 -Compress | Set-Content -Path \$copilotGuiStatusPath -Encoding UTF8
+}
+
+function Remove-CopilotGuiAutomationArtifacts {
+  Clear-CopilotAutoAdminLogon
+  Unregister-ScheduledTask -TaskName \$copilotGuiTaskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
+  Remove-Item -LiteralPath \$copilotGuiTranscriptPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath \$copilotGuiUserScriptPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath \$copilotGuiPhasePath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath \$copilotGuiStatusPath -Force -ErrorAction SilentlyContinue
+}
+
+if ([Environment]::UserInteractive -and \$env:USERNAME -ne 'SYSTEM') {
+  \$copilotGuiTranscriptStarted = \$false
+  try {
+    New-Item -ItemType Directory -Path \$copilotGuiAutomationRoot -Force | Out-Null
+    try {
+      Start-Transcript -Path \$copilotGuiTranscriptPath -Force | Out-Null
+      \$copilotGuiTranscriptStarted = \$true
+    } catch {
+    }
+
+    \$copilotGuiSummary = Invoke-MyTunnelGuiInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -DeviceIdProbePath '$(escape_ps_single_quoted "$PROBE_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' ${expected_service_sha256_argument}${expected_bundled_helper_sha256_argument}-ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' -WaitSeconds $WAIT_SECONDS
+    \$copilotGuiMarkerSummary = ConvertTo-MyTunnelGuiMarkerSummary -Summary \$copilotGuiSummary
+    Write-CopilotGuiStatus -Status 'success' -Message 'ok' -Summary \$copilotGuiMarkerSummary
+  } catch {
+    \$copilotGuiMessage = \$_.Exception.Message -replace '[\\r\\n]+', ' '
+    Write-CopilotGuiStatus -Status 'failure' -Message \$copilotGuiMessage
+    throw
+  } finally {
+    if (\$copilotGuiTranscriptStarted) {
+      try {
+        Stop-Transcript | Out-Null
+      } catch {
+      }
+    }
+  }
+  exit 0
+}
+
 try {
-  Write-Output "MYTUNNEL_GUI_INSTALL_START id=\$copilotGuiInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") expected_device_id=$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")"
-  \$copilotGuiSummary = Invoke-MyTunnelGuiInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -DeviceIdProbePath '$(escape_ps_single_quoted "$PROBE_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -EnrollmentSecret '$(escape_ps_single_quoted "$ENROLLMENT_SECRET")' ${expected_service_sha256_argument}${expected_bundled_helper_sha256_argument}-ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' -WaitSeconds $WAIT_SECONDS
-  \$copilotGuiMarkerSummary = ConvertTo-MyTunnelGuiMarkerSummary -Summary \$copilotGuiSummary
-  \$copilotGuiJson = \$copilotGuiMarkerSummary | ConvertTo-Json -Depth 8 -Compress
+  \$copilotGuiPhase = Get-CopilotGuiPhase
+  if ([string]::IsNullOrWhiteSpace(\$copilotGuiPhase)) {
+    Write-Output "MYTUNNEL_GUI_INSTALL_START id=\$copilotGuiInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") expected_device_id=$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")"
+  }
+
+  New-Item -ItemType Directory -Path \$copilotGuiAutomationRoot -Force | Out-Null
+  \$copilotGuiCurrentScriptPath = \$PSCommandPath
+  if ([string]::IsNullOrWhiteSpace(\$copilotGuiCurrentScriptPath)) {
+    \$copilotGuiCurrentScriptPath = \$MyInvocation.MyCommand.Path
+  }
+  if ([string]::IsNullOrWhiteSpace(\$copilotGuiCurrentScriptPath) -or -not (Test-Path -LiteralPath \$copilotGuiCurrentScriptPath)) {
+    throw 'Unable to resolve startup script path for interactive GUI automation.'
+  }
+
+  if ([string]::IsNullOrWhiteSpace(\$copilotGuiPhase)) {
+    Copy-Item -LiteralPath \$copilotGuiCurrentScriptPath -Destination \$copilotGuiUserScriptPath -Force
+    Register-CopilotGuiScheduledTask
+    Ensure-CopilotLocalAdminUser
+    Set-CopilotAutoAdminLogon
+    Set-CopilotGuiPhase -Value 'awaiting-user-session'
+    Write-Output ("MYTUNNEL_GUI_PROGRESS phase=autologon-primed user={0}" -f \$copilotGuiAutomationUser)
+    \$copilotGuiShouldCleanup = \$false
+    shutdown.exe /r /t 5 /f | Out-Null
+    exit 0
+  }
+
+  Write-Output ("MYTUNNEL_GUI_PROGRESS phase=awaiting-user-session user={0}" -f \$copilotGuiAutomationUser)
+  \$copilotGuiDeadline = (Get-Date).AddSeconds([Math]::Max($WAIT_SECONDS, 0))
+  \$copilotGuiWaitIteration = 0
+  while ((Get-Date) -lt \$copilotGuiDeadline) {
+    if (Test-Path -LiteralPath \$copilotGuiStatusPath) {
+      break
+    }
+    if ((\$copilotGuiWaitIteration % 4) -eq 0 -and -not (Test-Path -LiteralPath \$copilotGuiTranscriptPath)) {
+      try {
+        Start-ScheduledTask -TaskName \$copilotGuiTaskName -ErrorAction Stop
+        Write-Output ("MYTUNNEL_GUI_PROGRESS phase=manual-task-start task={0}" -f \$copilotGuiTaskName)
+      } catch {
+      }
+    }
+    if ((\$copilotGuiWaitIteration % 6) -eq 0 -and (Test-Path -LiteralPath \$copilotGuiTranscriptPath)) {
+      \$copilotGuiTail = @(Get-Content -LiteralPath \$copilotGuiTranscriptPath -Tail 8 -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace(\$_) })
+      if (\$copilotGuiTail.Count -gt 0) {
+        \$copilotGuiTranscriptLine = \$copilotGuiTail[-1] -replace '[\\r\\n]+', ' '
+        Write-Output ("MYTUNNEL_GUI_PROGRESS phase=interactive-log line={0}" -f \$copilotGuiTranscriptLine)
+      }
+    }
+    \$copilotGuiWaitIteration += 1
+    Start-Sleep -Seconds 5
+  }
+
+  if (-not (Test-Path -LiteralPath \$copilotGuiStatusPath)) {
+    throw 'timed out waiting for interactive GUI automation result file'
+  }
+
+  \$copilotGuiStatus = Get-Content -LiteralPath \$copilotGuiStatusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+  if ([string]\$copilotGuiStatus.status -ne 'success' -or \$null -eq \$copilotGuiStatus.summary) {
+    \$copilotGuiFailureLogged = \$true
+    \$copilotGuiMessage = [string]\$copilotGuiStatus.message
+    if ([string]::IsNullOrWhiteSpace(\$copilotGuiMessage)) {
+      \$copilotGuiMessage = 'interactive GUI automation reported failure without a message'
+    }
+    Write-Output ("MYTUNNEL_GUI_INSTALL_FAILED id=\$copilotGuiInstallId message={0}" -f \$copilotGuiMessage)
+    throw \$copilotGuiMessage
+  }
+
+  if (
+    [string]::IsNullOrWhiteSpace([string]\$copilotGuiStatus.summary.registry.client_uid) -or
+    [string]::IsNullOrWhiteSpace([string]\$copilotGuiStatus.summary.registry.expected_device_id)
+  ) {
+    Write-Output ("MYTUNNEL_GUI_PROGRESS phase=registry-seed-fallback client_uid={0}" -f '$(escape_ps_single_quoted "$CLIENT_UID")')
+    Seed-MyTunnelExistingConfigRegistry -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")'
+    \$copilotGuiObserved = Get-MyTunnelInstallSummary -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")'
+    \$copilotGuiServer = Get-MyTunnelServerCertificateState -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")'
+    \$copilotGuiStatus.summary.registry = \$copilotGuiObserved.registry
+    \$copilotGuiStatus.summary.config = \$copilotGuiObserved.config
+    \$copilotGuiStatus.summary.service = \$copilotGuiObserved.service
+    \$copilotGuiStatus.summary.managed = \$copilotGuiObserved.managed
+    \$copilotGuiStatus.summary.logs = \$copilotGuiObserved.logs
+    \$copilotGuiStatus.summary.server = \$copilotGuiServer
+    \$copilotGuiStatus.summary.managed_matches_server_active = (
+      -not [string]::IsNullOrWhiteSpace([string]\$copilotGuiObserved.managed.managed_thumbprint) -and
+      -not [string]::IsNullOrWhiteSpace([string]\$copilotGuiServer.active_thumbprint) -and
+      [string]\$copilotGuiObserved.managed.managed_thumbprint -eq [string]\$copilotGuiServer.active_thumbprint
+    )
+  }
+
+  \$copilotGuiJson = \$copilotGuiStatus.summary | ConvertTo-Json -Depth 10 -Compress
   Write-Output ("MYTUNNEL_GUI_INSTALL_DONE id=\$copilotGuiInstallId summary={0}" -f \$copilotGuiJson)
 } catch {
-  \$copilotGuiMessage = \$_.Exception.Message -replace '[\\r\\n]+', ' '
-  Write-Output ("MYTUNNEL_GUI_INSTALL_FAILED id=\$copilotGuiInstallId message={0}" -f \$copilotGuiMessage)
+  if (-not \$copilotGuiFailureLogged) {
+    \$copilotGuiMessage = \$_.Exception.Message -replace '[\\r\\n]+', ' '
+    Write-Output ("MYTUNNEL_GUI_INSTALL_FAILED id=\$copilotGuiInstallId message={0}" -f \$copilotGuiMessage)
+  }
   throw
+} finally {
+  if (\$copilotGuiShouldCleanup) {
+    Remove-CopilotGuiAutomationArtifacts
+  }
 }
 EOF
 

@@ -26,7 +26,8 @@ Optional:
   --poll-interval <DURATION>          Poll interval for installed service (default: 10s)
   --renew-before <DURATION>           Renew-before for validation (default: 9000h)
   --log-level <LEVEL>                 Service log level (default: debug)
-  --wait-seconds <SECONDS>            Wait budget per install run (default: 2100)
+  --wait-seconds <SECONDS>            Wait budget per install run including TPM
+                                      lockout headroom (default: 2100)
   --artifact-dir <DIR>                Directory for captured logs/summary
   --project <PROJECT_ID>              GCP project override
   --zone <ZONE>                       GCP zone override
@@ -40,6 +41,7 @@ EOF
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/gcloud_instance_network.sh"
 TERRAFORM_DIR=""
 WINDOWS_USER=""
 CLIENT_UID=""
@@ -168,6 +170,7 @@ terraform_output_raw() {
   terraform -chdir="$TERRAFORM_DIR" output -raw "$key" 2>/dev/null || true
 }
 
+ensure_command gcloud
 ensure_command python3
 
 if [[ ! -x "$BUILD_SCRIPT" ]]; then
@@ -185,6 +188,29 @@ if [[ -z "$SERVER_URL" ]]; then
     SERVER_URL="http://${server_internal_ip}:3000/scep"
   fi
 fi
+
+resolved_project_id="$PROJECT_ID"
+if [[ -z "$resolved_project_id" ]]; then
+  resolved_project_id="$(terraform_output_raw project_id)"
+fi
+resolved_zone="$ZONE"
+if [[ -z "$resolved_zone" ]]; then
+  resolved_zone="$(terraform_output_raw deployment_zone)"
+fi
+resolved_client_instance="$INSTANCE"
+if [[ -z "$resolved_client_instance" ]]; then
+  resolved_client_instance="$(terraform_output_raw client_instance_name)"
+fi
+resolved_server_instance="$(terraform_output_raw server_instance_name)"
+
+if [[ -z "$resolved_project_id" || -z "$resolved_zone" || -z "$resolved_client_instance" || -z "$resolved_server_instance" ]]; then
+  echo "Unable to resolve private-only topology check inputs from Terraform output." >&2
+  exit 1
+fi
+
+assert_gcloud_instance_private_only "$resolved_project_id" "$resolved_zone" "$resolved_client_instance" "windows client VM"
+assert_gcloud_instance_private_only "$resolved_project_id" "$resolved_zone" "$resolved_server_instance" "scep server VM"
+echo "Verified private-only topology for ${resolved_client_instance} and ${resolved_server_instance}"
 
 build_log="${ARTIFACT_DIR}/build.log"
 install_log="${ARTIFACT_DIR}/install.log"

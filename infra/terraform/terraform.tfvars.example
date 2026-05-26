@@ -6,6 +6,12 @@ network_name = "scep-vpc"
 subnet_name  = "scep-subnet"
 subnet_cidr  = "10.42.0.0/24"
 
+enable_operator_network_peering = true
+operator_network_project_id     = ""
+operator_network_name           = "coder-network"
+operator_subnet_name            = "coder-subnet"
+operator_subnet_region          = "us-west1"
+
 internal_source_ranges = ["10.42.0.0/24"]
 scep_source_ranges     = ["203.0.113.10/32"]
 mysql_source_ranges    = ["10.42.0.0/24"]

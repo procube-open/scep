@@ -1,6 +1,6 @@
 # Windows Client Certificate MSI Implementation Plan
 
-最終更新日: 2026-05-19
+最終更新日: 2026-05-26
 
 ## Purpose
 
@@ -35,7 +35,7 @@
 - **AIK**: `Attestation Identity Key`。TPM が quote 署名に使う鍵。
 - **Quote**: TPM が nonce と PCR 情報を束ねて署名した証跡。
 - **PCR**: `Platform Configuration Register`。起動状態などを表す TPM レジスタ。
-- **LocalSystem**: 権限の強い組み込みアカウント。現行 blocker の bootstrap 既定。
+- **LocalSystem**: 権限の強い組み込みアカウント。release-blocker path の bootstrap 既定。
 - **LocalService**: 権限の弱い組み込みアカウント。後続 hardening の対象。
 
 ## Fixed Decisions
@@ -146,16 +146,29 @@ Windows 側の責務は以下である。
   - page 1 TPM probe
   - page 2 prereg-check
   - page 3 enrollment secret
+- GCP private-only validation topology
+  - `scep-server-vm` / `scep-client-vm` は private-only を正式構成とする
+  - `coder-vm` からの operator access は private routing を正式構成とする
 - Windows service による `expected_device_id` mismatch block
 - `LocalMachine\\My` への証明書 install
 - 初回発行後の bootstrap secret cleanup
 - same-key renewal path
 - GUI / silent / negative renewal の validation harness
+- `windows_gui_issuance_e2e.sh` による private-only live GUI evidence
+- `windows_canonical_renewal_e2e.sh` による same-key renewal evidence
+- `windows_activation_negative_renewal_e2e.sh` による tampered activation renewal rejection evidence
+- private-only / UI Automation を primary path とする runbook 整理
+- TPM DA lockout の wait budget / cadence と validation semantics の文書化
+- `windows-client-startup.ps1` の placeholder bootstrap 位置づけの明確化
 
 ### Current Official Interpretation
 
 - TPM attestation backend は helper-backed path を正式構成とする
 - WiX v4 の blocker path は `LocalSystem` bootstrap
+- GCP 検証トポロジーは `coder-vm` から private routing で到達する private-only 構成を正式とする
+- GUI primary evidence は private-only live run の `windows_gui_issuance_e2e.sh` とする
+- negative renewal の authoritative field は `renewal_rejected` / `renewal_failure_excerpt` とする
+- `windows-client-startup.ps1` は helper / bootstrap 用であり、正式 install path ではない
 - `LocalService` は optional hardening path
 - detailed runbook は `infra/terraform/README.md`
 
@@ -178,27 +191,27 @@ Windows 側の責務は以下である。
 
 ### Release Blockers
 
-1. **private-only topology への収束**
-   - 目標は server / client とも private-only
-   - しかし current Terraform は `scep-client-vm` に external IP を付ける既定が残っている
-   - Terraform / runbook / outputs / validation assumptions を private-only に揃える必要がある
+現時点で release blocker はない。以下は解消済みである。
 
-2. **GUI primary evidence の取り直し**
-   - `windows_gui_issuance_e2e.sh` と `gui-mytunnelapp.ps1` は存在する
-   - ただし release-blocker として保持すべきは、**private-only 環境での live evidence**
+1. **private-only topology**
+   - `scep-server-vm` / `scep-client-vm` は private-only を正式構成とした
+   - Terraform / helper / outputs / validation assumptions は private-only に収束済みである
 
-3. **runbook の整理**
-   - `infra/terraform/README.md` はまだ RDP / CRD / client external IP を前提にした説明が残る
-   - primary path を UI Automation + private-only に寄せて整理する必要がある
+2. **GUI primary evidence**
+   - `windows_gui_issuance_e2e.sh` による **private-only 環境での live evidence** を取得済みである
+   - `gui-mytunnelapp.ps1` は interactive desktop 前提の UI Automation として安定化済みである
 
-4. **TPM DA lockout と validation semantics の文書化**
-   - Windows / vTPM では `Get-Tpm` lockout を踏みうる
-   - helper / runbook に wait budget と cadence を明文化する必要がある
-   - tampered renewal の判定は `renewal_exit_code` ではなく `renewal_rejected` / `renewal_failure_excerpt` を authoritative にすることを明文化する必要がある
+3. **runbook cleanup**
+   - `infra/terraform/README.md` は `coder-vm` からの private access + UI Automation を primary path とした
+   - RDP / public IP 前提の説明は fallback / debugging 用に整理済みである
 
-5. **Windows startup script の位置づけ整理**
-   - `windows-client-startup.ps1` は placeholder bootstrap のまま
-   - 正式 install path ではなく、準備用 / test harness 用であることを明確にする必要がある
+4. **TPM DA lockout と validation semantics**
+   - helper / runbook に wait budget と cadence を明文化済みである
+   - tampered renewal の authoritative fields は `renewal_rejected` / `renewal_failure_excerpt` と定義済みである
+
+5. **Windows startup script positioning**
+   - `windows-client-startup.ps1` は placeholder bootstrap / helper 用と明確化済みである
+   - 正式 install path は MSI / service / validation harness である
 
 ### Non-Blocking Hardening
 

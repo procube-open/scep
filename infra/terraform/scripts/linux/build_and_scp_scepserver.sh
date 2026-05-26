@@ -31,6 +31,7 @@ EOF
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/gcloud_instance_network.sh"
 PROJECT_ID=""
 ZONE=""
 INSTANCE=""
@@ -318,6 +319,11 @@ if [[ -z "$SSH_USER" ]]; then
 fi
 
 INSTANCE_TARGET="${SSH_USER}@${INSTANCE}"
+gcloud_connectivity_args=()
+if [[ -z "$(gcloud_instance_nat_ip "$PROJECT_ID" "$ZONE" "$INSTANCE")" ]]; then
+  gcloud_connectivity_args+=(--internal-ip)
+  echo "Server VM is private-only; using internal IP for gcloud compute scp/ssh"
+fi
 
 mkdir -p "$(dirname "$LOCAL_BINARY_PATH")"
 
@@ -329,7 +335,7 @@ echo "Building linux/amd64 scepserver binary: $LOCAL_BINARY_PATH"
 
 echo "Copying binary to ${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}"
 used_startup_fallback=0
-if ! timeout "${SSH_COPY_TIMEOUT_SECONDS}" gcloud compute scp "$LOCAL_BINARY_PATH" "${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}" --project "$PROJECT_ID" --zone "$ZONE"; then
+if ! timeout "${SSH_COPY_TIMEOUT_SECONDS}" gcloud compute scp "$LOCAL_BINARY_PATH" "${INSTANCE_TARGET}:${REMOTE_STAGED_PATH}" --project "$PROJECT_ID" --zone "$ZONE" "${gcloud_connectivity_args[@]}"; then
   transfer_via_startup_script
   used_startup_fallback=1
 fi
@@ -337,7 +343,7 @@ fi
 if [[ "$used_startup_fallback" -eq 0 ]]; then
   echo "Activating binary via ${REMOTE_HELPER_PATH}"
   remote_command="$(printf "sudo %q %q" "$REMOTE_HELPER_PATH" "$REMOTE_STAGED_PATH")"
-  gcloud compute ssh "${INSTANCE_TARGET}" --project "$PROJECT_ID" --zone "$ZONE" --command "$remote_command"
+  gcloud compute ssh "${INSTANCE_TARGET}" --project "$PROJECT_ID" --zone "$ZONE" "${gcloud_connectivity_args[@]}" --command "$remote_command"
 fi
 
 echo "SCEP server binary deployed and activated."

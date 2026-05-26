@@ -1,3 +1,7 @@
+# Placeholder bootstrap for validation helpers only.
+# The production install path is the MSI + Windows Service flow; helper scripts
+# temporarily append probe/install actions to this base startup script.
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -117,4 +121,4 @@ $payload = [ordered]@{
 $payloadPath = Join-Path $attestationDir "attestation-payload.json"
 $payload | ConvertTo-Json -Depth 8 | Set-Content -Path $payloadPath -Encoding UTF8
 
-Set-Content -Path (Join-Path $logDir "startup-status.txt") -Encoding UTF8 -Value "Windows client provisioning assets prepared."
+Set-Content -Path (Join-Path $logDir "startup-status.txt") -Encoding UTF8 -Value "Placeholder validation bootstrap prepared. Production MSI installation is not executed by windows-client-startup.ps1."

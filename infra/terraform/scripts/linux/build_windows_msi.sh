@@ -41,6 +41,7 @@ EOF
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/gcloud_instance_network.sh"
 TERRAFORM_DIR=""
 PROJECT_ID=""
 ZONE=""
@@ -473,8 +474,14 @@ else
 fi
 
 if [[ -n "$WINDOWS_USER" ]]; then
+  gcloud_connectivity_args=()
+  if [[ -z "$(gcloud_instance_nat_ip "$PROJECT_ID" "$ZONE" "$INSTANCE")" ]]; then
+    gcloud_connectivity_args+=(--internal-ip)
+    echo "Windows VM is private-only; using internal IP for gcloud compute scp"
+  fi
+
   echo "Copying MSI and device-id-probe.exe to ${WINDOWS_USER}@${INSTANCE}:~/"
-  if ! timeout "${SSH_COPY_TIMEOUT_SECONDS}" gcloud compute scp "$OUTPUT_PATH" "${REPO_ROOT}/${DEVICE_ID_PROBE_BINARY_RELATIVE}" "${WINDOWS_USER}@${INSTANCE}:~/" --project "$PROJECT_ID" --zone "$ZONE"; then
+  if ! timeout "${SSH_COPY_TIMEOUT_SECONDS}" gcloud compute scp "$OUTPUT_PATH" "${REPO_ROOT}/${DEVICE_ID_PROBE_BINARY_RELATIVE}" "${WINDOWS_USER}@${INSTANCE}:~/" --project "$PROJECT_ID" --zone "$ZONE" "${gcloud_connectivity_args[@]}"; then
     transfer_via_startup_script
   fi
 fi

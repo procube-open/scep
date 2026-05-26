@@ -22,10 +22,39 @@ locals {
     scep_cert_valid       = var.scep_cert_valid
     scep_ca_pass          = var.scep_ca_pass
   })
+  operator_network_project_id = trimspace(var.operator_network_project_id) != "" ? trimspace(var.operator_network_project_id) : var.project_id
+  operator_network_enabled    = var.enable_operator_network_peering && trimspace(var.operator_network_name) != "" && trimspace(var.operator_subnet_name) != "" && trimspace(var.operator_subnet_region) != ""
+  operator_network_distinct   = local.operator_network_enabled && (local.operator_network_project_id != var.project_id || trimspace(var.operator_network_name) != var.network_name)
+  operator_source_ranges      = local.operator_network_enabled ? [data.google_compute_subnetwork.operator[0].ip_cidr_range] : []
+  effective_scep_source_ranges = distinct(concat(
+    var.scep_source_ranges,
+    local.operator_source_ranges,
+  ))
+  effective_ssh_source_ranges = distinct(concat(
+    var.ssh_source_ranges,
+    local.operator_source_ranges,
+  ))
+  effective_rdp_source_ranges = distinct(concat(
+    var.rdp_source_ranges,
+    local.operator_source_ranges,
+  ))
 }
 
 data "google_compute_default_service_account" "default" {
   project = var.project_id
+}
+
+data "google_compute_network" "operator" {
+  count   = local.operator_network_enabled ? 1 : 0
+  name    = var.operator_network_name
+  project = local.operator_network_project_id
+}
+
+data "google_compute_subnetwork" "operator" {
+  count   = local.operator_network_enabled ? 1 : 0
+  name    = var.operator_subnet_name
+  region  = var.operator_subnet_region
+  project = local.operator_network_project_id
 }
 
 resource "google_compute_network" "scep" {
@@ -39,6 +68,20 @@ resource "google_compute_subnetwork" "scep" {
   region                   = var.region
   network                  = google_compute_network.scep.id
   private_ip_google_access = true
+}
+
+resource "google_compute_network_peering" "scep_to_operator" {
+  count        = local.operator_network_distinct ? 1 : 0
+  name         = "${var.network_name}-to-${var.operator_network_name}"
+  network      = google_compute_network.scep.self_link
+  peer_network = data.google_compute_network.operator[0].self_link
+}
+
+resource "google_compute_network_peering" "operator_to_scep" {
+  count        = local.operator_network_distinct ? 1 : 0
+  name         = "${var.operator_network_name}-to-${var.network_name}"
+  network      = data.google_compute_network.operator[0].self_link
+  peer_network = google_compute_network.scep.self_link
 }
 
 resource "google_compute_router" "scep" {
@@ -83,7 +126,7 @@ resource "google_compute_firewall" "scep" {
   name          = "${var.network_name}-allow-scep-3000"
   network       = google_compute_network.scep.name
   direction     = "INGRESS"
-  source_ranges = var.scep_source_ranges
+  source_ranges = local.effective_scep_source_ranges
   target_tags   = ["scep"]
 
   allow {
@@ -109,7 +152,7 @@ resource "google_compute_firewall" "ssh" {
   name          = "${var.network_name}-allow-ssh-22"
   network       = google_compute_network.scep.name
   direction     = "INGRESS"
-  source_ranges = var.ssh_source_ranges
+  source_ranges = local.effective_ssh_source_ranges
   target_tags   = ["ssh"]
 
   allow {
@@ -122,7 +165,7 @@ resource "google_compute_firewall" "rdp" {
   name          = "${var.network_name}-allow-rdp-3389"
   network       = google_compute_network.scep.name
   direction     = "INGRESS"
-  source_ranges = var.rdp_source_ranges
+  source_ranges = local.effective_rdp_source_ranges
   target_tags   = ["rdp"]
 
   allow {
@@ -160,10 +203,12 @@ resource "google_compute_instance" "scep_server" {
 }
 
 resource "google_compute_instance" "scep_client_windows" {
-  name         = var.client_instance_name
-  machine_type = var.client_machine_type
-  zone         = var.zone
-  tags         = var.client_tags
+  name                      = var.client_instance_name
+  machine_type              = var.client_machine_type
+  zone                      = var.zone
+  tags                      = var.client_tags
+  enable_display            = true
+  allow_stopping_for_update = true
 
   boot_disk {
     initialize_params {
@@ -175,8 +220,6 @@ resource "google_compute_instance" "scep_client_windows" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.scep.id
-    # Keep the server private, but allow direct operator access to the Windows client.
-    access_config {}
   }
 
   metadata = {

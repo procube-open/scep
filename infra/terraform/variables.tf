@@ -31,6 +31,36 @@ variable "subnet_cidr" {
   default     = "10.42.0.0/24"
 }
 
+variable "enable_operator_network_peering" {
+  description = "Whether to peer the Terraform-managed SCEP VPC with an existing operator network such as coder-vm's VPC."
+  type        = bool
+  default     = true
+}
+
+variable "operator_network_project_id" {
+  description = "Project ID that owns the existing operator network. Leave empty to reuse project_id."
+  type        = string
+  default     = ""
+}
+
+variable "operator_network_name" {
+  description = "Existing VPC name used by the operator workstation or coder-vm."
+  type        = string
+  default     = "coder-network"
+}
+
+variable "operator_subnet_name" {
+  description = "Existing subnet name used by the operator workstation or coder-vm."
+  type        = string
+  default     = "coder-subnet"
+}
+
+variable "operator_subnet_region" {
+  description = "Region of the existing operator subnet used by the operator workstation or coder-vm."
+  type        = string
+  default     = "us-west1"
+}
+
 variable "internal_source_ranges" {
   description = "Source CIDRs allowed for east-west internal traffic."
   type        = list(string)

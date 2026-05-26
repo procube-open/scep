@@ -831,6 +831,109 @@ function Sync-MyTunnelManagedCertificateFromStore {
   Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=managed-cert-sync updated=true source={0} thumbprint={1}" -f $selectionSource, $storeCert.Thumbprint)
 }
 
+function Get-MyTunnelRegistry64Properties {
+  $regExe = Join-Path $env:SystemRoot 'System32\reg.exe'
+  $result = Invoke-MyTunnelCapturedProcess -FilePath $regExe -ArgumentList @(
+    'query'
+    'HKLM\SOFTWARE\MyTunnelApp'
+    '/reg:64'
+  )
+  if ($result.exit_code -ne 0) {
+    return $null
+  }
+
+  $values = [ordered]@{}
+  foreach ($line in ($result.stdout -split "`r?`n")) {
+    if ($line -match '^\s+(.+?)\s+REG_\w+\s+(.*)$') {
+      $values[$matches[1].Trim()] = $matches[2].Trim()
+    }
+  }
+
+  if ($values.Count -eq 0) {
+    return $null
+  }
+
+  [PSCustomObject]$values
+}
+
+function Set-MyTunnelRegistry64Values {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Collections.IDictionary]$Values
+  )
+
+  $keyPath = 'SOFTWARE\MyTunnelApp'
+  $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+    [Microsoft.Win32.RegistryHive]::LocalMachine,
+    [Microsoft.Win32.RegistryView]::Registry64
+  )
+
+  try {
+    $registryKey = $baseKey.CreateSubKey($keyPath)
+    if ($null -eq $registryKey) {
+      throw "failed to open or create HKLM:\\$keyPath"
+    }
+
+    try {
+      foreach ($entry in $Values.GetEnumerator()) {
+        $registryKey.SetValue([string]$entry.Key, [string]$entry.Value, [Microsoft.Win32.RegistryValueKind]::String)
+      }
+    } finally {
+      $registryKey.Close()
+    }
+  } finally {
+    $baseKey.Close()
+  }
+}
+
+function Remove-MyTunnelRegistry64Values {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Names
+  )
+
+  $keyPath = 'SOFTWARE\MyTunnelApp'
+  $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+    [Microsoft.Win32.RegistryHive]::LocalMachine,
+    [Microsoft.Win32.RegistryView]::Registry64
+  )
+
+  try {
+    $registryKey = $baseKey.OpenSubKey($keyPath, $true)
+    if ($null -eq $registryKey) {
+      return
+    }
+
+    try {
+      foreach ($name in $Names) {
+        $registryKey.DeleteValue($name, $false)
+      }
+    } finally {
+      $registryKey.Close()
+    }
+  } finally {
+    $baseKey.Close()
+  }
+}
+
+function Remove-MyTunnelRegistry64Tree {
+  $keyPath = 'SOFTWARE\MyTunnelApp'
+  $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+    [Microsoft.Win32.RegistryHive]::LocalMachine,
+    [Microsoft.Win32.RegistryView]::Registry64
+  )
+
+  try {
+    try {
+      $baseKey.DeleteSubKeyTree($keyPath, $false)
+    } catch [System.ArgumentException] {
+    } catch [System.IO.IOException] {
+    }
+  } finally {
+    $baseKey.Close()
+  }
+}
+
 function Get-MyTunnelInstallSummary {
   param(
     [Parameter(Mandatory = $true)]
@@ -840,14 +943,13 @@ function Get-MyTunnelInstallSummary {
     [string]$ExpectedDeviceId
   )
 
-  $registryPath = 'HKLM:\SOFTWARE\MyTunnelApp'
   $managedDir = Join-Path 'C:\ProgramData\MyTunnelApp\managed' ("{0}-{1}" -f (ConvertTo-MyTunnelSafeComponent -Value $ClientUid), (ConvertTo-MyTunnelSafeComponent -Value $ExpectedDeviceId))
   $managedCertPath = Join-Path $managedDir 'cert.pem'
   $managedKeyPath = Join-Path $managedDir 'key.pem'
   $fallbackConfigPath = 'C:\ProgramData\MyTunnelApp\config.json'
   $logDir = 'C:\ProgramData\MyTunnelApp\logs'
 
-  $registry = Get-ItemProperty -Path $registryPath -ErrorAction SilentlyContinue
+  $registry = Get-MyTunnelRegistry64Properties
   $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='MyTunnelService'" -ErrorAction SilentlyContinue
   $logFiles = @(Get-ChildItem -Path $logDir -Filter 'service.log*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
 
@@ -1134,6 +1236,29 @@ function ConvertTo-MyTunnelMarkerSummary {
     [object]$Summary
   )
 
+  function Get-MyTunnelMarkerPropertyValue {
+    param(
+      [Parameter(Mandatory = $true)]
+      [object]$Source,
+
+      [Parameter(Mandatory = $true)]
+      [string]$Name
+    )
+
+    if ($Source -is [System.Collections.IDictionary]) {
+      if ($Source.Contains($Name)) {
+        return $Source[$Name]
+      }
+      return $null
+    }
+
+    if ($Source.PSObject.Properties.Match($Name).Count -gt 0) {
+      return $Source.$Name
+    }
+
+    $null
+  }
+
   $activationNegative = $null
   if ($Summary -is [System.Collections.IDictionary]) {
     if ($Summary.Contains('activation_negative')) {
@@ -1142,6 +1267,13 @@ function ConvertTo-MyTunnelMarkerSummary {
   } elseif ($Summary.PSObject.Properties.Match('activation_negative').Count -gt 0) {
     $activationNegative = $Summary.activation_negative
   }
+
+  $binaryRefreshFallbackUsed = Get-MyTunnelMarkerPropertyValue -Source $Summary -Name 'binary_refresh_fallback_used'
+  $binaryRefreshFallbackReason = Get-MyTunnelMarkerPropertyValue -Source $Summary -Name 'binary_refresh_fallback_reason'
+  $initialReinstallBinaryState = Get-MyTunnelMarkerPropertyValue -Source $Summary -Name 'initial_reinstall_binary_state'
+  $reconfigureFallbackUsed = Get-MyTunnelMarkerPropertyValue -Source $Summary -Name 'reconfigure_fallback_used'
+  $reconfigureFallbackReason = Get-MyTunnelMarkerPropertyValue -Source $Summary -Name 'reconfigure_fallback_reason'
+  $initialReinstallSummary = Get-MyTunnelMarkerPropertyValue -Source $Summary -Name 'initial_reinstall_summary'
 
   [ordered]@{
     observed_at_utc                 = $Summary.observed_at_utc
@@ -1184,12 +1316,12 @@ function ConvertTo-MyTunnelMarkerSummary {
     managed_matches_server_active   = $Summary.managed_matches_server_active
     require_managed_thumbprint_change = $Summary.require_managed_thumbprint_change
     requested_config                = $Summary.requested_config
-    binary_refresh_fallback_used    = $Summary.binary_refresh_fallback_used
-    binary_refresh_fallback_reason  = $Summary.binary_refresh_fallback_reason
-    initial_reinstall_binary_state  = $Summary.initial_reinstall_binary_state
-    reconfigure_fallback_used       = $Summary.reconfigure_fallback_used
-    reconfigure_fallback_reason     = $Summary.reconfigure_fallback_reason
-    initial_reinstall_registry      = if ($null -ne $Summary.initial_reinstall_summary) { $Summary.initial_reinstall_summary.registry } else { $null }
+    binary_refresh_fallback_used    = $binaryRefreshFallbackUsed
+    binary_refresh_fallback_reason  = $binaryRefreshFallbackReason
+    initial_reinstall_binary_state  = $initialReinstallBinaryState
+    reconfigure_fallback_used       = $reconfigureFallbackUsed
+    reconfigure_fallback_reason     = $reconfigureFallbackReason
+    initial_reinstall_registry      = if ($null -ne $initialReinstallSummary) { $initialReinstallSummary.registry } else { $null }
     activation_negative             = $activationNegative
   }
 }
@@ -1485,11 +1617,6 @@ function Seed-MyTunnelExistingConfigRegistry {
     [string]$LogLevel
   )
 
-  $registryPath = 'HKLM:\SOFTWARE\MyTunnelApp'
-  if (-not (Test-Path -LiteralPath $registryPath)) {
-    New-Item -Path $registryPath -Force | Out-Null
-  }
-
   $overrides = [ordered]@{
     ServerUrl        = $ServerUrl
     ClientUid        = $ClientUid
@@ -1499,12 +1626,8 @@ function Seed-MyTunnelExistingConfigRegistry {
     LogLevel         = $LogLevel
   }
 
-  foreach ($entry in $overrides.GetEnumerator()) {
-    Set-ItemProperty -LiteralPath $registryPath -Name $entry.Key -Value $entry.Value -Type String
-  }
-
-  Remove-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -ErrorAction SilentlyContinue
-  Remove-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecretProtected' -ErrorAction SilentlyContinue
+  Set-MyTunnelRegistry64Values -Values $overrides
+  Remove-MyTunnelRegistry64Values -Names @('EnrollmentSecret', 'EnrollmentSecretProtected')
 }
 
 function Apply-MyTunnelRegistryOverrides {
@@ -1530,11 +1653,6 @@ function Apply-MyTunnelRegistryOverrides {
     [string]$LogLevel
   )
 
-  $registryPath = 'HKLM:\SOFTWARE\MyTunnelApp'
-  if (-not (Test-Path -LiteralPath $registryPath)) {
-    New-Item -Path $registryPath -Force | Out-Null
-  }
-
   $overrides = [ordered]@{
     ServerUrl        = $ServerUrl
     ClientUid        = $ClientUid
@@ -1544,14 +1662,13 @@ function Apply-MyTunnelRegistryOverrides {
     LogLevel         = $LogLevel
   }
 
-  foreach ($entry in $overrides.GetEnumerator()) {
-    Set-ItemProperty -LiteralPath $registryPath -Name $entry.Key -Value $entry.Value -Type String
-  }
+  Set-MyTunnelRegistry64Values -Values $overrides
 
   if (-not [string]::IsNullOrWhiteSpace($EnrollmentSecret)) {
-    Set-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -Value $EnrollmentSecret -Type String
-  } elseif (Get-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -ErrorAction SilentlyContinue) {
-    Remove-ItemProperty -LiteralPath $registryPath -Name 'EnrollmentSecret' -ErrorAction SilentlyContinue
+    Set-MyTunnelRegistry64Values -Values ([ordered]@{ EnrollmentSecret = $EnrollmentSecret })
+    Remove-MyTunnelRegistry64Values -Names @('EnrollmentSecretProtected')
+  } elseif ($null -ne (Get-MyTunnelRegistry64Properties | Select-Object -ExpandProperty EnrollmentSecret -ErrorAction SilentlyContinue)) {
+    Remove-MyTunnelRegistry64Values -Names @('EnrollmentSecret', 'EnrollmentSecretProtected')
   }
 
   Sync-MyTunnelManagedCertificateFromStore -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
@@ -2056,9 +2173,7 @@ function Invoke-MyTunnelAppSilentInstall {
       }
     }
 
-    if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\MyTunnelApp') {
-      Remove-Item -LiteralPath 'HKLM:\SOFTWARE\MyTunnelApp' -Recurse -Force
-    }
+    Remove-MyTunnelRegistry64Tree
     if ([string]::IsNullOrWhiteSpace($EnrollmentSecret) -and $AllowExistingCertificateReuse -and $canReuseExistingCertificate) {
       Seed-MyTunnelExistingConfigRegistry -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
       Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=force-fresh-registry-seed client_uid={0} expected_device_id={1}" -f $ClientUid, $ExpectedDeviceId)
