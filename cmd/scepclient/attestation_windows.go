@@ -268,7 +268,7 @@ func currentDeviceIdentity() (*deviceIdentity, error) {
 	}
 	defer tpm.Close()
 
-	ekPublicSPKIDER, _, _, err := readWindowsEndorsementKey(tpm)
+	ekPublicSPKIDER, ekCertDER, _, err := readWindowsEndorsementKey(tpm)
 	if err != nil {
 		return nil, err
 	}
@@ -282,10 +282,27 @@ func currentDeviceIdentity() (*deviceIdentity, error) {
 	}
 
 	return &deviceIdentity{
-		ExpectedDeviceID: deviceID,
-		DeviceID:         deviceID,
-		EKPublicB64:      base64.RawURLEncoding.EncodeToString(ekPublicSPKIDER),
+		ExpectedDeviceID:        deviceID,
+		DeviceID:                deviceID,
+		EKPublicB64:             base64.RawURLEncoding.EncodeToString(ekPublicSPKIDER),
+		EKCertB64:               encodeEKCertB64(ekCertDER),
+		AttestationEKCertSHA256: sha256FingerprintOfEKCert(ekCertDER),
 	}, nil
+}
+
+func encodeEKCertB64(ekCertDER []byte) string {
+	if len(ekCertDER) == 0 {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(ekCertDER)
+}
+
+func sha256FingerprintOfEKCert(ekCertDER []byte) string {
+	if len(ekCertDER) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(ekCertDER)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func validateCanonicalWindowsDeviceID(claims *attestationClaims) error {

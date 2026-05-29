@@ -376,8 +376,14 @@ func main() {
 	}
 
 	if *flPrintDeviceID || (defaultProbeMode && !*flEmitAttestation) {
-		if err := printCurrentDeviceIdentity(*flJSONOutput); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		presented, err := printCurrentDeviceIdentity(
+			*flJSONOutput,
+			shouldShowDeviceIdentityReport(defaultProbeMode, *flJSONOutput),
+		)
+		if err != nil {
+			if !presented {
+				fmt.Fprintln(os.Stderr, err)
+			}
 			os.Exit(1)
 		}
 		os.Exit(0)

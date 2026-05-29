@@ -24,8 +24,8 @@ Options:
                                       (default: 300; outer script also adds TPM lockout grace)
   --force-fresh-install               Uninstall existing MSI-managed config before reinstalling
                                       (the helper also auto-falls back to this path if same-version reinstall leaves stale config)
-  --reuse-existing-certificate        Allow force-fresh-install without ENROLLMENT_SECRET when
-                                      an existing managed certificate should be reused
+  --reuse-existing-certificate        Deprecated; rejected because uninstall now removes
+                                      issued certificates and TPM-backed keys
   --apply-registry-overrides          Rewrite HKLM config after msiexec and restart the service
   --converge-to-local-service         Grant HKLM config access to LocalService and reconfigure
                                       MyTunnelService to run as NT AUTHORITY\LocalService
@@ -164,8 +164,13 @@ if [[ -z "$CLIENT_UID" || -z "$EXPECTED_DEVICE_ID" ]]; then
   exit 1
 fi
 
-if [[ "$FORCE_FRESH_INSTALL" -eq 1 && -z "$ENROLLMENT_SECRET" && "$REUSE_EXISTING_CERTIFICATE" -ne 1 ]]; then
-  echo "--enrollment-secret is required when --force-fresh-install is used unless --reuse-existing-certificate is set." >&2
+if [[ "$REUSE_EXISTING_CERTIFICATE" -eq 1 ]]; then
+  echo "--reuse-existing-certificate is no longer supported because uninstall removes issued certificates and TPM-backed keys." >&2
+  exit 1
+fi
+
+if [[ "$FORCE_FRESH_INSTALL" -eq 1 && -z "$ENROLLMENT_SECRET" ]]; then
+  echo "--enrollment-secret is required when --force-fresh-install is used because uninstall removes issued certificates and TPM-backed keys." >&2
   exit 1
 fi
 
@@ -300,7 +305,7 @@ cat >> "$temp_script" <<EOF
 \$copilotInstallId = '$(escape_ps_single_quoted "$install_id")'
 try {
   Write-Output "MYTUNNEL_MSI_INSTALL_START id=\$copilotInstallId client_uid=$(escape_ps_single_quoted "$CLIENT_UID") expected_device_id=$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")"
-  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' ${enrollment_secret_argument}${expected_service_sha256_argument}${expected_bundled_helper_sha256_argument}-ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$REUSE_EXISTING_CERTIFICATE" -eq 1 ]]; then printf -- "-AllowExistingCertificateReuse "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
+  \$copilotInstallSummary = Invoke-MyTunnelAppSilentInstall -MsiPath '$(escape_ps_single_quoted "$MSI_PATH")' -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' ${enrollment_secret_argument}${expected_service_sha256_argument}${expected_bundled_helper_sha256_argument}-ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")' -PollInterval '$(escape_ps_single_quoted "$POLL_INTERVAL")' -RenewBefore '$(escape_ps_single_quoted "$RENEW_BEFORE")' -LogLevel '$(escape_ps_single_quoted "$LOG_LEVEL")' $(if [[ "$FORCE_FRESH_INSTALL" -eq 1 ]]; then printf -- "-ForceFreshInstall "; fi)$(if [[ "$APPLY_REGISTRY_OVERRIDES" -eq 1 ]]; then printf -- "-ApplyRegistryOverrides "; fi)$(if [[ "$CONVERGE_TO_LOCAL_SERVICE" -eq 1 ]]; then printf -- "-ConvergeToLocalService "; fi)$(if [[ "$REQUIRE_THUMBPRINT_CHANGE" -eq 1 ]]; then printf -- "-RequireManagedThumbprintChange "; fi)-WaitSeconds $WAIT_SECONDS
 $(if [[ "$TAMPER_ACTIVATION_PROOF_RENEWAL" -eq 1 ]]; then cat <<PS
   \$copilotActivationNegative = Invoke-MyTunnelTamperedActivationRenewal -ServerUrl '$(escape_ps_single_quoted "$SERVER_URL")' -ClientUid '$(escape_ps_single_quoted "$CLIENT_UID")' -ExpectedDeviceId '$(escape_ps_single_quoted "$EXPECTED_DEVICE_ID")'
   \$copilotInstallSummary['activation_negative'] = \$copilotActivationNegative

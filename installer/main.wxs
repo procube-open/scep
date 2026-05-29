@@ -84,7 +84,7 @@
     <CustomAction Id="SetProbeStatusDefault" Property="PROBE_STATUS_MESSAGE" Value="Reading the canonical TPM device identity from the local endorsement key." Execute="firstSequence" />
     <CustomAction Id="SetPreregStatusDefault" Property="PREREG_STATUS_MESSAGE" Value="Enter SERVER_URL and CLIENT_UID, then click Check preregistration." Execute="firstSequence" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
-              Value="MyTunnelService is installed for machine-wide certificate enrollment and renewal. Uninstall removes installer-managed configuration but intentionally leaves issued certificates and TPM-backed keys in place." />
+              Value="MyTunnelService is installed for machine-wide certificate enrollment and renewal. Uninstall removes installer-managed configuration, machine certificates bound to MyTunnelApp TPM keys, MyTunnelApp TPM-backed keys, and MyTunnelApp-managed logs/certificate cache for this installation." />
     <Binary Id="DeviceIdentityPreregScript"
             SourceFile="device_identity_prereg.vbs" />
     <CustomAction Id="RunProbeCurrentDeviceIdentityUI"
@@ -96,6 +96,16 @@
                   BinaryRef="DeviceIdentityPreregScript"
                   VBScriptCall="CheckPreregistration"
                   Execute="immediate"
+                  Return="check" />
+    <CustomAction Id="SetRunUninstallCleanupData"
+                  Property="RunUninstallCleanup"
+                  Value="CLIENT_UID=[EXISTING_CLIENT_UID];EXPECTED_DEVICE_ID=[EXISTING_EXPECTED_DEVICE_ID]"
+                  Execute="firstSequence" />
+    <CustomAction Id="RunUninstallCleanup"
+                  BinaryRef="DeviceIdentityPreregScript"
+                  VBScriptCall="CleanupIssuanceArtifacts"
+                  Execute="deferred"
+                  Impersonate="no"
                   Return="check" />
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
@@ -137,6 +147,8 @@
       <Custom Action="SetRenewBeforeDefault" After="SetRenewBeforeFromExisting" Condition="NOT RENEW_BEFORE" />
       <Custom Action="SetLogLevelFromExisting" After="SetRenewBeforeDefault" Condition="NOT LOG_LEVEL AND EXISTING_LOG_LEVEL" />
       <Custom Action="SetLogLevelDefault" After="SetLogLevelFromExisting" Condition="NOT LOG_LEVEL" />
+      <Custom Action="SetRunUninstallCleanupData" After="SetLogLevelDefault" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RunUninstallCleanup" After="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <UI>

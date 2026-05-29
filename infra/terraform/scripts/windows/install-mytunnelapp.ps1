@@ -2147,6 +2147,9 @@ function Invoke-MyTunnelAppSilentInstall {
   Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=silent-install-enter requested_msi_path={0} client_uid={1}" -f (ConvertTo-MyTunnelCompactText -Value $MsiPath -MaxLength 160), $ClientUid)
   $resolvedMsiPath = Resolve-MyTunnelMsiPath -PreferredPath $MsiPath
   Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=silent-install-path-resolved msi_path={0}" -f $resolvedMsiPath)
+  if ($AllowExistingCertificateReuse) {
+    throw 'AllowExistingCertificateReuse is no longer supported because MSI uninstall now removes issued certificates and TPM-backed keys'
+  }
   New-Item -ItemType Directory -Path 'C:\ProgramData\MyTunnelApp' -Force | Out-Null
   Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=prereg-check-start client_uid={0}" -f $ClientUid)
   $preregCheck = Invoke-MyTunnelAttestationPreregCheck -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
@@ -2154,12 +2157,11 @@ function Invoke-MyTunnelAppSilentInstall {
   $removedProducts = @()
   $preInstallSummary = Get-MyTunnelInstallSummary -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId
   $preInstallServerState = Get-MyTunnelServerCertificateState -ServerUrl $ServerUrl -ClientUid $ClientUid
-  $canReuseExistingCertificate = [bool]$preInstallSummary.managed.cert_exists
   $existingProductCodes = @()
 
   if ($ForceFreshInstall) {
-    if ([string]::IsNullOrWhiteSpace($EnrollmentSecret) -and ((-not $AllowExistingCertificateReuse) -or (-not $canReuseExistingCertificate))) {
-      throw 'EnrollmentSecret is required for force-fresh-install unless an existing managed certificate is being reused'
+    if ([string]::IsNullOrWhiteSpace($EnrollmentSecret)) {
+      throw 'EnrollmentSecret is required for force-fresh-install because MSI uninstall now removes issued certificates and TPM-backed keys'
     }
     foreach ($productCode in Get-MyTunnelInstalledProductCodes) {
       $uninstallProcess = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart') -PassThru -Wait -NoNewWindow
@@ -2174,10 +2176,6 @@ function Invoke-MyTunnelAppSilentInstall {
     }
 
     Remove-MyTunnelRegistry64Tree
-    if ([string]::IsNullOrWhiteSpace($EnrollmentSecret) -and $AllowExistingCertificateReuse -and $canReuseExistingCertificate) {
-      Seed-MyTunnelExistingConfigRegistry -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel
-      Write-MyTunnelProgress ("MYTUNNEL_INSTALL_PROGRESS phase=force-fresh-registry-seed client_uid={0} expected_device_id={1}" -f $ClientUid, $ExpectedDeviceId)
-    }
   } else {
     $existingProductCodes = @(Get-MyTunnelInstalledProductCodes)
   }
@@ -2228,7 +2226,11 @@ function Invoke-MyTunnelAppSilentInstall {
         (ConvertTo-MyTunnelCompactText -Value $binaryFallbackReason -MaxLength 500)
     )
 
-    $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256 -ForceFreshInstall -AllowExistingCertificateReuse -ApplyRegistryOverrides:$ApplyRegistryOverrides -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
+    if ([string]::IsNullOrWhiteSpace($EnrollmentSecret)) {
+      throw "same-version reinstall left stale Program Files binaries: $($binaryMismatchList -join ', '); automatic fresh-install fallback now requires EnrollmentSecret because MSI uninstall removes issued certificates and TPM-backed keys"
+    }
+
+    $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256 -ForceFreshInstall -ApplyRegistryOverrides:$ApplyRegistryOverrides -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
     $fallbackSummary['binary_refresh_fallback_used'] = $true
     $fallbackSummary['binary_refresh_fallback_reason'] = $binaryFallbackReason
     $fallbackSummary['initial_reinstall_binary_state'] = $postMsiexecBinaryState
@@ -2256,7 +2258,11 @@ function Invoke-MyTunnelAppSilentInstall {
   if ((-not $ForceFreshInstall) -and (-not $ApplyRegistryOverrides) -and $existingProductCodes.Count -gt 0) {
     $mismatchList = @(Get-MyTunnelConfigMismatchList -Summary $summary -ServerUrl $ServerUrl -ClientUid $ClientUid -ExpectedDeviceId $ExpectedDeviceId -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel)
     if ($mismatchList.Count -gt 0) {
-      $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256 -ForceFreshInstall -AllowExistingCertificateReuse -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
+      if ([string]::IsNullOrWhiteSpace($EnrollmentSecret)) {
+        throw "same-version reinstall left stale config for: $($mismatchList -join ', '); automatic fresh-install fallback now requires EnrollmentSecret because MSI uninstall removes issued certificates and TPM-backed keys"
+      }
+
+      $fallbackSummary = Invoke-MyTunnelAppSilentInstall -ServerUrl $ServerUrl -ClientUid $ClientUid -EnrollmentSecret $EnrollmentSecret -ExpectedDeviceId $ExpectedDeviceId -MsiPath $resolvedMsiPath -PollInterval $PollInterval -RenewBefore $RenewBefore -LogLevel $LogLevel -ExpectedServiceSha256 $ExpectedServiceSha256 -ExpectedBundledHelperSha256 $ExpectedBundledHelperSha256 -ForceFreshInstall -ConvergeToLocalService:$ConvergeToLocalService -RequireManagedThumbprintChange:$RequireManagedThumbprintChange -WaitSeconds $WaitSeconds
       $fallbackSummary['reconfigure_fallback_used'] = $true
       $fallbackSummary['reconfigure_fallback_reason'] = "same-version reinstall left stale config for: $($mismatchList -join ', ')"
       $fallbackSummary['initial_reinstall_summary'] = $summary

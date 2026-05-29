@@ -72,9 +72,11 @@ func TestFormatDeviceIdentityOutputText(t *testing.T) {
 	t.Parallel()
 
 	output, err := formatDeviceIdentityOutput(&deviceIdentity{
-		ExpectedDeviceID: "abc123",
-		DeviceID:         "abc123",
-		EKPublicB64:      "Zm9v",
+		ExpectedDeviceID:        "abc123",
+		DeviceID:                "abc123",
+		EKPublicB64:             "Zm9v",
+		EKCertB64:               "YmFy",
+		AttestationEKCertSHA256: "deadbeef",
 	}, false)
 	if err != nil {
 		t.Fatalf("formatDeviceIdentityOutput returned error: %v", err)
@@ -88,15 +90,23 @@ func TestFormatDeviceIdentityOutputText(t *testing.T) {
 	if !strings.Contains(output, "ek_public_b64: Zm9v\n") {
 		t.Fatalf("expected human-readable output to contain ek_public_b64, got %q", output)
 	}
+	if !strings.Contains(output, "ek_cert_b64: YmFy\n") {
+		t.Fatalf("expected human-readable output to contain ek_cert_b64, got %q", output)
+	}
+	if !strings.Contains(output, "attestation_ek_cert_sha256: deadbeef\n") {
+		t.Fatalf("expected human-readable output to contain attestation_ek_cert_sha256, got %q", output)
+	}
 }
 
 func TestFormatDeviceIdentityOutputJSON(t *testing.T) {
 	t.Parallel()
 
 	output, err := formatDeviceIdentityOutput(&deviceIdentity{
-		ExpectedDeviceID: "abc123",
-		DeviceID:         "abc123",
-		EKPublicB64:      "Zm9v",
+		ExpectedDeviceID:        "abc123",
+		DeviceID:                "abc123",
+		EKPublicB64:             "Zm9v",
+		EKCertB64:               "YmFy",
+		AttestationEKCertSHA256: "deadbeef",
 	}, true)
 	if err != nil {
 		t.Fatalf("formatDeviceIdentityOutput returned error: %v", err)
@@ -106,8 +116,35 @@ func TestFormatDeviceIdentityOutputJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &decoded); err != nil {
 		t.Fatalf("output was not valid JSON: %v", err)
 	}
-	if decoded.ExpectedDeviceID != "abc123" || decoded.DeviceID != "abc123" || decoded.EKPublicB64 != "Zm9v" {
+	if decoded.ExpectedDeviceID != "abc123" || decoded.DeviceID != "abc123" || decoded.EKPublicB64 != "Zm9v" || decoded.EKCertB64 != "YmFy" || decoded.AttestationEKCertSHA256 != "deadbeef" {
 		t.Fatalf("unexpected decoded payload: %+v", decoded)
+	}
+}
+
+func TestShouldShowDeviceIdentityInteractive(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name              string
+		defaultProbeMode  bool
+		jsonOutput        bool
+		standaloneConsole bool
+		want              bool
+	}{
+		{name: "double click default mode", defaultProbeMode: true, jsonOutput: false, standaloneConsole: true, want: true},
+		{name: "json output stays stdout", defaultProbeMode: true, jsonOutput: true, standaloneConsole: true, want: false},
+		{name: "terminal invocation stays stdout", defaultProbeMode: true, jsonOutput: false, standaloneConsole: false, want: false},
+		{name: "non probe command stays stdout", defaultProbeMode: false, jsonOutput: false, standaloneConsole: true, want: false},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shouldShowDeviceIdentityInteractive(tc.defaultProbeMode, tc.jsonOutput, tc.standaloneConsole); got != tc.want {
+				t.Fatalf("shouldShowDeviceIdentityInteractive(%v, %v, %v) = %v, want %v", tc.defaultProbeMode, tc.jsonOutput, tc.standaloneConsole, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -59,6 +59,21 @@ WINDOWS_STARTUP_SCRIPT_RELATIVE="infra/terraform/scripts/windows/windows-client-
 WINDOWS_PUBLIC_MSI_PATH='C:\Users\Public\MyTunnelApp.msi'
 WINDOWS_PUBLIC_PROBE_PATH='C:\Users\Public\device-id-probe.exe'
 SSH_COPY_TIMEOUT_SECONDS=45
+
+resolve_dotnet_root() {
+  local dotnet_path
+  dotnet_path="$(command -v dotnet 2>/dev/null || true)"
+  [[ -n "$dotnet_path" ]] || return 1
+  dotnet_path="$(readlink -f "$dotnet_path" 2>/dev/null || printf '%s' "$dotnet_path")"
+  printf '%s' "$(dirname "$dotnet_path")"
+}
+
+if [[ -z "${DOTNET_ROOT:-}" ]]; then
+  if resolved_dotnet_root="$(resolve_dotnet_root)"; then
+    export DOTNET_ROOT="$resolved_dotnet_root"
+  fi
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --windows-user)
@@ -158,6 +173,7 @@ wix_store_root() {
   local wix_path
   wix_path="$(command -v wix 2>/dev/null || true)"
   [[ -n "$wix_path" ]] || return 1
+  wix_path="$(readlink -f "$wix_path" 2>/dev/null || printf '%s' "$wix_path")"
   printf '%s' "$(dirname "$wix_path")/.store/wix"
 }
 
