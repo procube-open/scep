@@ -9,7 +9,7 @@
 			"moby": false
 		},
 		//npm feature
-		"ghcr.io/devcontainers/features/node:1": {}
+		"ghcr.io/devcontainers/features/node:2": {}
 	},
 	"remoteEnv": {
 		"DOCKER_API_VERSION": "1.43"
