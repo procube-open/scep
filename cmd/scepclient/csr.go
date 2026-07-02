@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -18,7 +18,7 @@ const (
 
 type csrOptions struct {
 	cn, org, country, ou, locality, province, dnsName, challenge string
-	key                                                          *rsa.PrivateKey
+	key                                                          crypto.Signer
 }
 
 func loadOrMakeCSR(path string, opts *csrOptions) (*x509.CertificateRequest, error) {
@@ -50,12 +50,42 @@ func loadOrMakeCSR(path string, opts *csrOptions) (*x509.CertificateRequest, err
 		template.ChallengePassword = opts.challenge
 	}
 
-	derBytes, _ := x509util.CreateCertificateRequest(rand.Reader, &template, opts.key)
+	derBytes, err := x509util.CreateCertificateRequest(rand.Reader, &template, opts.key)
+	if err != nil {
+		return nil, err
+	}
 	pemBlock := &pem.Block{
 		Type:  csrPEMBlockType,
 		Bytes: derBytes,
 	}
 	if err := pem.Encode(file, pemBlock); err != nil {
+		return nil, err
+	}
+	return x509.ParseCertificateRequest(derBytes)
+}
+
+func makeCSR(opts *csrOptions) (*x509.CertificateRequest, error) {
+	subject := pkix.Name{
+		CommonName:         opts.cn,
+		Organization:       subjOrNil(opts.org),
+		OrganizationalUnit: subjOrNil(opts.ou),
+		Province:           subjOrNil(opts.province),
+		Locality:           subjOrNil(opts.locality),
+		Country:            subjOrNil(opts.country),
+	}
+	template := x509util.CertificateRequest{
+		CertificateRequest: x509.CertificateRequest{
+			Subject:            subject,
+			SignatureAlgorithm: x509.SHA256WithRSA,
+			DNSNames:           subjOrNil(opts.dnsName),
+		},
+	}
+	if opts.challenge != "" {
+		template.ChallengePassword = opts.challenge
+	}
+
+	derBytes, err := x509util.CreateCertificateRequest(rand.Reader, &template, opts.key)
+	if err != nil {
 		return nil, err
 	}
 	return x509.ParseCertificateRequest(derBytes)
@@ -67,16 +97,6 @@ func subjOrNil(input string) []string {
 		return nil
 	}
 	return []string{input}
-}
-
-// convert DER to PEM format
-func pemCSR(derBytes []byte) []byte {
-	pemBlock := &pem.Block{
-		Type:    csrPEMBlockType,
-		Headers: nil,
-		Bytes:   derBytes,
-	}
-	return pem.EncodeToMemory(pemBlock)
 }
 
 // load PEM encoded CSR from file

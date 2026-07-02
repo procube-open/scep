@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -190,14 +191,16 @@ func (d *MySQLDepot) writeDB(cn string, serial *big.Int, challenge string, cert 
 	if err != nil {
 		return err
 	}
-	if client.Status == "ISSUABLE" {
+	challenge = strings.TrimSpace(challenge)
+	switch {
+	case client.Status == "ISSUABLE":
 		if _, err := d.HasCN(cn, 0, cert, true); err != nil {
 			return err
 		}
 		if err := d.UpdateStatusClient(cn, "ISSUED"); err != nil {
 			return err
 		}
-	} else if client.Status == "UPDATABLE" {
+	case client.Status == "UPDATABLE" && challenge != "":
 		if _, err := d.HasCN(cn, 0, cert, false); err != nil {
 			return err
 		}
@@ -217,7 +220,16 @@ func (d *MySQLDepot) writeDB(cn string, serial *big.Int, challenge string, cert 
 		if err != nil {
 			return err
 		}
-	} else {
+	case (client.Status == "ISSUED" || client.Status == "UPDATABLE") && challenge == "":
+		if _, err := d.HasCN(cn, 0, cert, true); err != nil {
+			return err
+		}
+		if client.Status != "ISSUED" {
+			if err := d.UpdateStatusClient(cn, "ISSUED"); err != nil {
+				return err
+			}
+		}
+	default:
 		return errors.New("client is not issuable or updatable")
 	}
 

@@ -255,9 +255,9 @@
     fastq "^1.6.0"
 
 "@procube/cs-tools@^1.0.8":
-  version "1.0.8"
-  resolved "https://registry.npmjs.org/@procube/cs-tools/-/cs-tools-1.0.8.tgz"
-  integrity sha512-plO+Bg2o3Ypr+K5wmddj2NCDiMRlLBUUazXff2KQ7U2O6NUC6qYrB/vapBY9PpH+HF1TpWTMDBeZR7oGm2EVOw==
+  version "1.0.11"
+  resolved "https://registry.yarnpkg.com/@procube/cs-tools/-/cs-tools-1.0.11.tgz#befd879900442dfbc6f41b40f6734b9202836be9"
+  integrity sha512-gyp6yXBgPqwG4epsI66Q1lmRTWNbUWiwD03L6w+PXB3BXrNCRcwOzP1Zx0enlpZQhYoPDwXQQsiIzzJUiTfaig==
 
 "@types/node@^12.7.1":
   version "12.20.55"

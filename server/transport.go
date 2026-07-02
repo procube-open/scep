@@ -19,7 +19,7 @@ import (
 	"github.com/procube-open/scep/utils"
 )
 
-func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger) http.Handler {
+func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger kitlog.Logger, nonces *AttestationNonceService, activations *AttestationActivationService) http.Handler {
 	opts := []kithttp.ServerOption{
 		kithttp.ServerErrorLogger(logger),
 		kithttp.ServerFinalizer(logutil.NewHTTPLogger(logger).LoggingFinalizer),
@@ -60,6 +60,9 @@ func MakeHTTPHandler(depot *mysql.MySQLDepot, e *Endpoints, svc Service, logger 
 
 	r.Methods("GET").Path("/api/client").HandlerFunc(handler.ListClientHandler(depot))
 	r.Methods("GET").Path("/api/client/{CN}").HandlerFunc(handler.GetClientHandler(depot))
+	r.Methods("POST").Path("/api/attestation/prereg-check").HandlerFunc(NewAttestationPreregCheckHandler(depot, nil))
+	r.Methods("POST").Path("/api/attestation/nonce").HandlerFunc(NewAttestationNonceHandler(depot, nonces))
+	r.Methods("POST").Path("/api/attestation/activation/start").HandlerFunc(NewAttestationActivationHandler(depot, nonces, activations))
 
 	pingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) })
 	r.Methods("GET").Path("/admin/api/ping").HandlerFunc(pingHandler)
@@ -80,6 +83,9 @@ func EncodeSCEPRequest(ctx context.Context, r *http.Request, request interface{}
 	req := request.(SCEPRequest)
 	params := r.URL.Query()
 	params.Set("operation", req.Operation)
+	if req.Attestation != "" {
+		params.Set("attestation", req.Attestation)
+	}
 	switch r.Method {
 	case "GET":
 		if len(req.Message) > 0 {
@@ -121,8 +127,10 @@ func decodeSCEPRequest(ctx context.Context, r *http.Request) (interface{}, error
 	defer r.Body.Close()
 
 	request := SCEPRequest{
-		Message:   msg,
-		Operation: r.URL.Query().Get("operation"),
+		Message:     msg,
+		Operation:   r.URL.Query().Get("operation"),
+		Attestation: r.URL.Query().Get("attestation"),
+		Method:      r.Method,
 	}
 
 	return request, nil

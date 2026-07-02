@@ -89,6 +89,9 @@ func (svc *service) PKIOperation(ctx context.Context, data []byte) ([]byte, erro
 		return nil, err
 	}
 
+	ctx = ContextWithSCEPMessageType(ctx, msg.MessageType)
+	ctx = ContextWithSignerCertificate(ctx, msg.SignerCert)
+
 	crt, err := svc.signer.SignCSRContext(ctx, msg.CSRReqMessage)
 	if err == nil && crt == nil {
 		err = errors.New("no signed certificate")

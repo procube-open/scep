@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/pem"
@@ -91,6 +92,27 @@ func (d *MySQLDepot) GetCertsByCN(cn string) ([]certForJSON, error) {
 		return nil, err
 	}
 	return certs, nil
+}
+
+func (d *MySQLDepot) HasActiveCertificate(cn string, cert *x509.Certificate) (bool, error) {
+	if cert == nil {
+		return false, nil
+	}
+
+	var exists int
+	err := d.db.QueryRow(
+		"SELECT 1 FROM certificates WHERE cn = ? AND cert_data = ? AND status = ? LIMIT 1",
+		cn,
+		cert.Raw,
+		"V",
+	).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return exists == 1, nil
 }
 
 func (d *MySQLDepot) GetNextSerial() (*big.Int, error) {

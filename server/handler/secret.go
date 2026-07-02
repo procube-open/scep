@@ -9,9 +9,17 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/procube-open/scep/depot/mysql"
+	"github.com/procube-open/scep/utils"
 )
 
-func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
+type secretStore interface {
+	GetClient(uid string) (*mysql.Client, error)
+	UpdateStatusClient(uid string, status string) error
+	CreateSecret(info mysql.CreateSecretInfo) error
+	GetSecret(target string) (mysql.GetSecretInfo, error)
+}
+
+func CreateSecretHandler(depot secretStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -34,6 +42,10 @@ func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			http.Error(w, "Target not found", http.StatusInternalServerError)
 			return
 		}
+		if client == nil {
+			http.Error(w, "Target not found", http.StatusNotFound)
+			return
+		}
 		if client.Status == "INACTIVE" {
 			err = depot.UpdateStatusClient(secret.Target, "ISSUABLE")
 			if err != nil {
@@ -42,6 +54,10 @@ func CreateSecretHandler(depot *mysql.MySQLDepot) http.HandlerFunc {
 			}
 			secret.Type = "ACTIVATE"
 		} else if client.Status == "ISSUED" {
+			if managedClientType, ok := client.Attributes[utils.ClientAttributeManagedClientType].(string); ok && utils.NormalizeManagedClientType(managedClientType) == utils.ManagedClientTypeWindowsMSI {
+				http.Error(w, "windows-msi clients do not support update secrets", http.StatusBadRequest)
+				return
+			}
 			if _, err := time.ParseDuration(secret.Pending_Period); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return

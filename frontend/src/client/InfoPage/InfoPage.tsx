@@ -23,6 +23,7 @@ import BackButton from '../../layouts/Buttons/BackButton';
 import PEMDialog from './PEMDialog';
 import CertList from './CertList';
 import SecretInfo from './SecretInfo';
+import ClientAttributesInfo from './ClientAttributesInfo';
 import { IsAdminContext } from '../../isAdminContext';
 
 const InfoToolbar = () => {
@@ -180,6 +181,7 @@ const ClientInfo = () => {
           <StatusError />
         </SimpleForm>
       </Edit>
+      {adminMode && <ClientAttributesInfo uid={uid} />}
       {adminMode && <SecretInfo uid={uid} />}
       <CertList uid={uid} handleClickOpen={handleClickOpen} />
       <PEMDialog pem={pem} open={open} handleClose={handleClose} />

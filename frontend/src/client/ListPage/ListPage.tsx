@@ -17,6 +17,25 @@ import { IsAdminContext } from '../../isAdminContext';
 import CreateDialog from './CreateDialog';
 import { IoPersonAddSharp } from "react-icons/io5";
 
+const windowsManagedClientType = 'windows-msi';
+
+const parseAttributes = (value: unknown): Record<string, unknown> | null => {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    return null;
+  }
+
+  return null;
+};
+
 const AdminActions = (props: ButtonProps) => {
   return (
     <Button
@@ -55,6 +74,13 @@ const ClientList = () => {
           <TextField source="uid" label={"client.fields.uid"} />
           <FunctionField source="status" label={"client.fields.status"} render={(record: any) => {
             return <Typography variant="body2"> {translate(`client.status.${record.status}`)}</Typography>
+          }} />
+          <FunctionField source="attributes" label={"client.fields.managed_client_type"} render={(record: any) => {
+            const attributes = parseAttributes(record.attributes);
+            if (attributes?.managed_client_type === windowsManagedClientType) {
+              return <Typography variant="body2">{translate('client.managedClientType.windows_msi')}</Typography>;
+            }
+            return <Typography variant="body2">{translate('client.managedClientType.none')}</Typography>;
           }} />
           <TextField source="attributes" label={"client.fields.attributes"} />
         </Datagrid>

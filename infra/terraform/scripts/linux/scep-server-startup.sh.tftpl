@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Assumptions:
+# - Script runs on a Debian/Ubuntu-like image with apt and systemd.
+# - mysql_password avoids single quotes to keep SQL bootstrap simple.
+
+export DEBIAN_FRONTEND=noninteractive
+
+MYSQL_DATABASE='${mysql_database}'
+MYSQL_USER='${mysql_user}'
+MYSQL_PASSWORD='${mysql_password}'
+SCEP_DSN='${scep_dsn}'
+SCEP_HTTP_LISTEN_PORT='${scep_http_listen_port}'
+SCEP_FILE_DEPOT='${scep_file_depot}'
+SCEP_DOWNLOAD_PATH='${scep_download_path}'
+SCEP_TICKER='${scep_ticker}'
+SCEP_CERT_VALID='${scep_cert_valid}'
+SCEP_CA_PASS='${scep_ca_pass}'
+
+apt-get update -y
+apt-get install -y --no-install-recommends ca-certificates default-mysql-server
+
+MYSQL_SERVICE="mysql"
+if ! systemctl list-unit-files --type=service | grep -q '^mysql\.service'; then
+  MYSQL_SERVICE="mariadb"
+fi
+systemctl enable --now "$MYSQL_SERVICE"
+
+mysql --protocol=socket <<SQL
+CREATE DATABASE IF NOT EXISTS \`$MYSQL_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';
+ALTER USER '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';
+GRANT ALL PRIVILEGES ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_USER'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+
+id -u scep >/dev/null 2>&1 || useradd --system --home-dir /var/lib/scep --create-home --shell /usr/sbin/nologin scep
+
+install -d -m 0750 -o scep -g scep /var/lib/scep "$SCEP_FILE_DEPOT" "$SCEP_DOWNLOAD_PATH"
+
+cat > /etc/default/scep-server <<EOF
+# Managed by infra/terraform/scripts/linux/scep-server-startup.sh.tftpl
+SCEP_DSN="$SCEP_DSN"
+SCEP_HTTP_LISTEN_PORT="$SCEP_HTTP_LISTEN_PORT"
+SCEP_FILE_DEPOT="$SCEP_FILE_DEPOT"
+SCEP_DOWNLOAD_PATH="$SCEP_DOWNLOAD_PATH"
+SCEP_TICKER="$SCEP_TICKER"
+SCEP_CERT_VALID="$SCEP_CERT_VALID"
+SCEP_CA_PASS="$SCEP_CA_PASS"
+EOF
+chmod 0600 /etc/default/scep-server
+
+cat > /usr/local/bin/deploy-scepserver-binary.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+STAGED_BINARY_PATH="$${1:-/tmp/scepserver-opt}"
+TARGET_BINARY_PATH="/usr/local/bin/scepserver-opt"
+ENV_FILE="/etc/default/scep-server"
+
+if [[ ! -f "$STAGED_BINARY_PATH" ]]; then
+  echo "Staged binary not found: $STAGED_BINARY_PATH" >&2
+  exit 1
+fi
+
+if [[ "$STAGED_BINARY_PATH" != "$TARGET_BINARY_PATH" ]]; then
+  install -m 0755 "$STAGED_BINARY_PATH" "$TARGET_BINARY_PATH"
+else
+  chmod 0755 "$TARGET_BINARY_PATH"
+fi
+
+if [[ ! -x "$TARGET_BINARY_PATH" ]]; then
+  echo "Installed scepserver binary is not executable: $TARGET_BINARY_PATH" >&2
+  exit 1
+fi
+
+if ! "$TARGET_BINARY_PATH" -version >/dev/null 2>&1; then
+  echo "Installed scepserver binary failed version check (-version)." >&2
+  exit 1
+fi
+
+SCEP_FILE_DEPOT="/var/lib/scep/ca-certs"
+SCEP_CA_PASS=""
+
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+
+if [[ ! -f "$SCEP_FILE_DEPOT/ca.crt" || ! -f "$SCEP_FILE_DEPOT/ca.key" ]]; then
+  if [[ -n "$SCEP_CA_PASS" ]]; then
+    runuser -u scep -- "$TARGET_BINARY_PATH" ca -init -depot "$SCEP_FILE_DEPOT" -key-password "$SCEP_CA_PASS"
+  else
+    runuser -u scep -- "$TARGET_BINARY_PATH" ca -init -depot "$SCEP_FILE_DEPOT"
+  fi
+fi
+
+systemctl daemon-reload
+systemctl enable scep-server.service
+systemctl restart scep-server.service
+echo "scepserver binary deployed and scep-server.service restarted."
+EOF
+chmod 0755 /usr/local/bin/deploy-scepserver-binary.sh
+
+cat > /etc/systemd/system/scep-server.service <<'EOF'
+[Unit]
+Description=SCEP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scep
+Group=scep
+WorkingDirectory=/var/lib/scep
+EnvironmentFile=/etc/default/scep-server
+ExecStart=/usr/local/bin/scepserver-opt
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+if [[ -x /usr/local/bin/scepserver-opt ]]; then
+  /usr/local/bin/deploy-scepserver-binary.sh /usr/local/bin/scepserver-opt
+else
+  echo "SCP deployment required: copy scepserver binary to /tmp/scepserver-opt and run /usr/local/bin/deploy-scepserver-binary.sh."
+fi
