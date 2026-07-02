@@ -145,6 +145,164 @@ Windows MSI の正式ライフサイクルは、次を前提にします。
 
 ---
 
+## 実TPM / vTPM 別の運用シーケンス
+
+ここまでは Windows MSI 管理対象 client の共通前提でした。  
+ここからは、**運用手順としての見取り図**を **実TPM** と **GCP `vTPM`** に分けて整理します。
+
+詳細な protocol-level の分解は、この後の「初回発行の時系列」と「自動更新の時系列」で扱います。
+
+### 共通運用ルール
+
+1. `device_id` は **EK public の SubjectPublicKeyInfo DER 全体の SHA-256 を lowercase 64 文字 hex 化した canonical 値**を使います。
+2. `managed_client_type=windows-msi` では、**install 前 preregistration** が前提です。GUI MSI の正規手順は **Step 1 probe -> Step 2 prereg-check -> Step 3 ENROLLMENT_SECRET** です。
+3. 初回発行だけが **one-time `enrollment_secret`** を使います。自動更新では使わず、**既存証明書 + same-key renewal + fresh attestation** で更新します。
+4. Windows Service は runtime で `expected_device_id` を再導出して照合し、不一致時は enrollment / renewal を停止します。
+5. bootstrap secret は **DPAPI Machine Scope** で保護し、初回発行成功後に Windows 側から削除します。発行済み証明書は **`LocalMachine\My`** に格納します。
+6. `managed_client_type=windows-msi` の通常運用 state は **`INACTIVE` / `ISSUABLE` / `ISSUED`** のみです。`UPDATABLE` / `PENDING` の legacy update-secret flow は使いません。
+
+### 実TPM 端末の運用シーケンス
+
+対象は、GCP `vTPM` ではなく、**物理 TPM を持つ Windows 端末**です。端末が GCP VPC 外にある場合は、`prepare_real_tpm_handoff.sh` 相当の手順で **source-IP 制限付きの到達経路**と handoff folder を事前に用意します。実TPM では、通常の `device_id` に加えて、server 側 client attributes に **`attestation_ek_cert_sha256`** を事前登録しておくことで、`EK certificate` を含めた stricter validation を行えます。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as 運用者
+    participant User as Windows 利用者
+    participant Probe as 01-preregister-and-check.ps1 / device-id-probe.exe
+    participant MSI as MyTunnelApp.msi
+    participant Svc as Windows Service
+    participant Helper as scepclient.exe
+    participant TPM as 実TPM
+    participant Server as SCEP server
+
+    Op->>Server: source-IP 制限付き到達経路を用意し、client_uid を準備
+    Op->>Server: one-time enrollment_secret を発行し、managed_client_type=windows-msi / state=ISSUABLE を準備
+    Op-->>User: handoff folder を配布<br/>(MSI, probe, prereg helper, SERVER_URL, CLIENT_UID, ENROLLMENT_SECRET)
+    User->>Probe: 01-preregister-and-check.ps1 を実行
+    Probe->>TPM: EK public を読み出し、canonical device_id を計算
+    TPM-->>Probe: EK public (+ EK certificate if available)
+    Probe->>Server: admin path で registered device_id を更新し、必要なら attestation_ek_cert_sha256 も登録
+    Probe->>Server: POST /api/attestation/prereg-check {client_uid, device_id}
+    Server-->>Probe: ready
+    User->>MSI: Step 1 で CURRENT_DEVICE_ID を確認
+    User->>MSI: Step 2 で SERVER_URL / CLIENT_UID を入力
+    MSI->>Server: POST /api/attestation/prereg-check {client_uid, device_id}
+    Server-->>MSI: ready
+    User->>MSI: Step 3 で ENROLLMENT_SECRET を入力し Install
+    MSI->>Svc: expected_device_id を含む設定を配置し service を起動
+    Svc->>TPM: TPM-backed persisted key を作成/再利用し、device_id を再導出
+    Svc->>Server: POST /api/attestation/nonce {client_uid, device_id, ek_public_b64}
+    Server->>Server: registered device_id と ek_public 由来 device_id を照合
+    Server-->>Svc: nonce
+    Svc->>Helper: -emit-attestation で初回発行を依頼
+    Helper->>TPM: AK を作成し、quote(public-key-hash + nonce) を生成
+    Helper->>Server: POST /api/attestation/activation/start {AIK TPM public, EK public, nonce, ...}
+    Server-->>Helper: activation_id + encrypted credential
+    Helper->>TPM: ActivateCredential(...)
+    TPM-->>Helper: activation_proof
+    Note over Helper,Server: challengePassword = client_uid\enrollment_secret
+    Helper->>Server: POST /scep?operation=PKIOperation&attestation=... (PKCSReq)
+    Server->>Server: device_id / CSR公開鍵 / quote / activation proof / secret を検証
+    Server->>Server: state を ISSUED に更新
+    Server-->>Helper: 発行済み証明書
+    Helper-->>Svc: cert.pem
+    Svc->>Svc: LocalMachine\My に登録し、DPAPI 保護済み bootstrap secret を削除
+    loop 定常運用 / same-key renewal
+        Svc->>Server: POST /api/attestation/nonce {client_uid, device_id, ek_public_b64}
+        Server-->>Svc: new nonce
+        Svc->>Helper: 既存証明書 + 同一 TPM 鍵で renewal を依頼
+        Helper->>TPM: 新しい quote と activation_proof を生成
+        Helper->>Server: RenewalReq + fresh attestation
+        Server->>Server: ISSUED state のまま既存証明書 + TPM 証明を検証
+        Server-->>Helper: 更新済み証明書
+        Helper-->>Svc: renewed cert.pem
+        Svc->>Svc: LocalMachine\My を更新
+    end
+```
+
+#### 実TPM 運用メモ
+
+- `01-preregister-and-check.ps1` を使うと、**canonical `device_id` probe -> server-side device binding 更新 -> prereg-check=ready 確認** を 1 回で実施できます。
+- 実TPM では `device-id-probe.exe` から `ek_cert_b64` と `attestation_ek_cert_sha256` も取得でき、server 側 client attributes に **`attestation_ek_cert_sha256`** を事前登録すると、attestation の `ek_cert_b64` がそのフィンガープリントと一致しない要求を拒否できます。
+- 実TPM では `EK certificate` を取得できる場合がありますが、Windows MSI path では**credential activation 必須**が基準です。`EK certificate` は evidence として保持できても、必須条件ではありません。
+- TPM を交換した場合は、既存証明書の revoke と `device_id` 更新を行い、state を `INACTIVE -> ISSUABLE -> ISSUED` へ戻します。
+
+### GCP `vTPM` 端末の運用シーケンス
+
+対象は、**GCP Windows VM 上の `vTPM`** です。現行の正式検証トポロジーは **server / client とも private-only** で、`coder-vm` から private routing で運用します。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as 運用者 (coder-vm)
+    participant User as Windows VM 利用者 / UI Automation
+    participant MSI as MyTunnelApp.msi
+    participant Svc as Windows Service (LocalSystem bootstrap)
+    participant Helper as scepclient.exe
+    participant vTPM as GCP vTPM
+    participant Server as SCEP server (private-only)
+
+    Op->>Op: Terraform ADC で private-only 環境を準備
+    Op->>Op: build_windows_msi.sh で MSI を生成し、private routing で Windows VM へ転送
+    User->>MSI: GUI MSI を開始
+    MSI->>vTPM: Step 1 で EK public を probe し canonical device_id を表示
+    vTPM-->>MSI: EK public (EK certificate may be unavailable)
+    MSI-->>Op: CURRENT_DEVICE_ID
+    Op->>Server: device_id / client_uid / managed_client_type=windows-msi を preregister
+    Op->>Server: one-time enrollment_secret を発行し、state を ISSUABLE にする
+    User->>MSI: Step 2 で SERVER_URL=http://server_internal_ip:3000/scep と CLIENT_UID を入力
+    loop ready になるまで prereg-check
+        MSI->>Server: POST /api/attestation/prereg-check {client_uid, device_id}
+        Server-->>MSI: ready | not_issuable_yet | device_id_mismatch | client_not_found
+    end
+    User->>MSI: Step 3 で ENROLLMENT_SECRET を入力し Install
+    MSI->>Svc: expected_device_id を含む設定を配置し service を起動
+    Note over Svc,vTPM: current validated default は LocalSystem bootstrap
+    Svc->>vTPM: TPM-backed persisted key を作成/再利用し、device_id を再導出
+    Svc->>Server: POST /api/attestation/nonce {client_uid, device_id, ek_public_b64}
+    Server->>Server: registered device_id と ek_public 由来 device_id を照合
+    Server-->>Svc: nonce
+    Svc->>Helper: -emit-attestation で初回発行を依頼
+    Helper->>vTPM: AK を作成し、quote(public-key-hash + nonce) を生成
+    Note over Helper,Server: vTPM path でも credential activation は必須
+    Helper->>Server: POST /api/attestation/activation/start {AIK TPM public, EK public, nonce, ...}
+    Server-->>Helper: activation_id + encrypted credential
+    Helper->>vTPM: ActivateCredential(...)
+    vTPM-->>Helper: activation_proof
+    Helper->>Server: POST /scep?operation=PKIOperation&attestation=... (PKCSReq)
+    Server->>Server: device_id / CSR公開鍵 / quote / activation proof / secret を検証
+    Server->>Server: state を ISSUED に更新
+    Server-->>Helper: 発行済み証明書
+    Helper-->>Svc: cert.pem
+    Svc->>Svc: LocalMachine\My に登録し、DPAPI 保護済み bootstrap secret を削除
+    loop 定常運用 / same-key renewal
+        Svc->>Svc: 証明書期限を監視し、renew_before に入ったら更新開始
+        Svc->>Server: POST /api/attestation/nonce {client_uid, device_id, ek_public_b64}
+        Server-->>Svc: new nonce
+        opt vTPM が DA lockout 中
+            Svc->>Svc: LockoutHealTime + 30s を目安に待機して再試行
+        end
+        Svc->>Helper: 既存証明書 + 同一 TPM 鍵で renewal を依頼
+        Helper->>vTPM: 新しい quote と activation_proof を生成
+        Helper->>Server: RenewalReq + fresh attestation
+        Server->>Server: ISSUED state のまま既存証明書 + TPM 証明を検証
+        Server-->>Helper: 更新済み証明書
+        Helper-->>Svc: renewed cert.pem
+        Svc->>Svc: LocalMachine\My を更新
+    end
+```
+
+#### `vTPM` 運用メモ
+
+- `SERVER_URL` は原則として **Terraform 出力の internal URL** を使います。primary path に external IP は含めません。
+- GCP `vTPM` では `EK certificate` を取得できない場合があるため、**`quote` + `credential activation`** が TPM 側確認の主経路です。
+- release-blocker evidence は `windows_gui_issuance_e2e.sh` による **private-only GUI flow** です。`windows-client-startup.ps1` は helper bootstrap であり、正式 install path ではありません。
+- repeated reset や短時間の rerun では **DA lockout** に入り得るため、再試行は `LockoutHealTime + 30s` を目安に待機します。
+
+---
+
 ## 初回発行の時系列
 
 ### 0. GUI MSI または `device-id-probe` が canonical `device_id` を出す
@@ -153,14 +311,17 @@ GUI MSI の primary flow では、1 ページ目が `EK public` から canonical
 
 silent install では別配布の `device-id-probe` を使います。これは通常は人間向け表示を行い、`--json` で machine-readable output も返します。
 
+実TPM で `EK certificate` を取得できる場合は、strict pinning 用に `attestation_ek_cert_sha256` も採取し、server 側 client attributes に登録できます。
+
 ### 1. 管理者が preregistration を完了させる
 
 server 側では次を行います。
 
 1. 高 entropy の opaque `client_uid` を払い出す
 2. canonical `device_id` を登録する
-3. `managed_client_type=windows-msi` を登録する
-4. preregistration 完了後にだけ初回発行用 `enrollment_secret` を発行し、client state を `ISSUABLE` にする
+3. 必要に応じて、実TPM から採取した `attestation_ek_cert_sha256` を登録する
+4. `managed_client_type=windows-msi` を登録する
+5. preregistration 完了後にだけ初回発行用 `enrollment_secret` を発行し、client state を `ISSUABLE` にする
 
 ### 2. GUI MSI が prereg-check を行う
 
@@ -669,6 +830,8 @@ sequenceDiagram
 - Windows 管理対象 client では `activation_proof_b64` が必須
 
 つまり現在の GCP 向け実装は、「`EK certificate` が無くても、`quote` と `credential activation` で TPM 側確認を成立させる」方針です。
+
+一方で、実TPM で `EK certificate` を安定して取得できる環境では、server 側 client attributes の **`attestation_ek_cert_sha256`** を事前登録することで、`ek_cert_b64` のフィンガープリント pinning を追加できます。
 
 ---
 
